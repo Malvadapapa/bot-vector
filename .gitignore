@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Session and auth data (SENSITIVE - Never commit)
+session/
+auth_info_baileys/
+
+# Database and data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Cache
+.cache/
+tmp/
+temp/
+
+# IDE
+*.swp
+*.swo
+*~

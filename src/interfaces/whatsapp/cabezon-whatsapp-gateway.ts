@@ -1,0 +1,777 @@
+import makeWASocket, {
+  Browsers,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+} from '@whiskeysockets/baileys';
+import * as pino from 'pino';
+import * as fs from 'fs';
+import * as path from 'path';
+import { createRequire } from 'module';
+import { MessageRouter } from '../../application/messages/message-router.service.js';
+import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
+import { RateLimitService } from '../../application/ai/rate-limit.service.js';
+import { UserModerationService } from '../../application/moderation/user-moderation.service.js';
+import { AdminRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
+
+const require = createRequire(import.meta.url);
+const qrcodeTerminal = require('qrcode-terminal');
+
+const ANSI = {
+  reset: '\x1b[0m',
+  dim: '\x1b[2m',
+  bright: '\x1b[1m',
+  cyan: '\x1b[36m',
+  yellow: '\x1b[33m',
+  magenta: '\x1b[35m',
+  green: '\x1b[32m',
+};
+
+const NEW_USER_REGISTRATION_MESSAGES = [
+  '¡Hola! Soy Cabezón, el bot del ISPC. Antes de que podamos charlar, necesito que te registres por privado 🙂\nMandame un "hola" al privado y lo hacemos en un toque.',
+  '¡Buenas! Para poder responderte necesito conocerte un poco. ¿Me mandás un "hola" por privado para registrarte? Es súper rápido 🙂',
+  '¡Ey! Bienvenido. Porfa, escribime "hola" por privado así te registro y te puedo ayudar con lo que necesites del ISPC.',
+];
+
+const PROFILE_UPDATE_GROUP_MESSAGES = [
+  'Che, por una actualización del bot del ISPC necesito que completes tus datos por privado. Gracias 🙂\nEscribime por privado con un "hola" y lo hacemos rápido.',
+  '¡Ey! Hubo actualización del bot del ISPC y me faltan tus datos. Mandame "hola" por privado así los completamos 🙂',
+  'Amigo, para seguir con IA primero completame unos datos por privado por una actualización del bot del ISPC 🙂\nEscribime "hola" en privado.',
+];
+
+const NO_PENDING_APPROVAL_MESSAGES = [
+  'No tengo ninguna solicitud pendiente para aprobar ahora.',
+  'Por ahora no hay pedidos de aprobación en cola.',
+  'Todavía no veo solicitudes pendientes para habilitar.',
+];
+
+export class CabezonWhatsAppGateway {
+  private whatsappSocket: any;
+  private isConnecting = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private sawQrInCurrentSession = false;
+  private sessionResetAttempted = false;
+  private consecutive401WithoutQr = 0;
+  private connectionReplacedResetAttempted = false;
+  private consecutiveConnectionReplaced = 0;
+  private processedIds = new Set<string>();
+  private autoPersistedGroupId = false;
+  private unauthorizedGroupNoticeSent = new Set<string>();
+  private cachedBotLid: string | null = null;
+  private cachedBotLidAtMs = 0;
+  private static noisySessionLogPatterns = [
+    /^Closing open session in favor of incoming prekey bundle/i,
+    /^Closing session:/i,
+    /^Removing old closed session:/i,
+    /^SessionEntry/i,
+  ];
+
+  constructor(
+    private router: MessageRouter,
+    private privateChatWorkflow: PrivateChatWorkflowService,
+    private userProfileRepository: UserProfileRepository,
+    private adminRepository: AdminRepository,
+    private rateLimitService: RateLimitService,
+    private moderationService: UserModerationService,
+    private allowedGroupIds: string[],
+  ) {
+    this.installConsoleNoiseFilter();
+  }
+
+  private scheduleReconnect(delayMs: number) {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.startConnection();
+    }, delayMs);
+  }
+
+  public async startConnection() {
+    if (this.isConnecting) return;
+    this.isConnecting = true;
+
+    try {
+      const { state, saveCreds } = await useMultiFileAuthState('./session');
+      const { version } = await fetchLatestBaileysVersion();
+
+      this.whatsappSocket = makeWASocket({
+        version,
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys, pino.default({ level: 'fatal' })),
+        },
+        printQRInTerminal: false,
+        logger: pino.default({ level: 'silent' }),
+        browser: Browsers.ubuntu('CabezonBot'),
+        markOnlineOnConnect: true,
+        syncFullHistory: true,
+        connectTimeoutMs: 60_000,
+        defaultQueryTimeoutMs: 60_000,
+      });
+
+      this.whatsappSocket.ev.on('creds.update', saveCreds);
+      this.whatsappSocket.ev.on('group-participants.update', async (update: any) => {
+        await this.handleGroupParticipantsUpdate(update);
+      });
+
+      if (!this.whatsappSocket.authState.creds.registered) {
+        console.log('\n[WhatsApp] Sesión nueva: se requiere escanear QR.');
+      }
+
+      this.whatsappSocket.ev.on('connection.update', async (update: any) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+          this.sawQrInCurrentSession = true;
+          this.consecutive401WithoutQr = 0;
+          console.log('\n[WhatsApp] QR recibido. Escanealo desde tu teléfono:');
+          qrcodeTerminal.generate(qr, { small: true });
+        }
+
+        if (connection === 'close') {
+          const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+          const reasonText = (lastDisconnect?.error as any)?.message || 'sin detalle';
+          const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+          const isRestartRequired = statusCode === DisconnectReason.restartRequired;
+          const isConnectionReplaced = statusCode === DisconnectReason.connectionReplaced;
+
+          console.log(`\n[WhatsApp] Conexión cerrada. Código=${statusCode ?? 'N/A'} Motivo=${reasonText}`);
+
+          if (statusCode === 401 && !this.sawQrInCurrentSession) {
+            this.consecutive401WithoutQr += 1;
+
+            if (!this.sessionResetAttempted) {
+              this.sessionResetAttempted = true;
+              console.log('\n[WhatsApp] 401 sin QR: limpiando session para reintentar.');
+              try {
+                if (fs.existsSync('./session')) {
+                  fs.rmSync('./session', { recursive: true, force: true });
+                }
+              } catch (cleanupErr) {
+                const cleanupMsg = (cleanupErr as any)?.message || 'error desconocido';
+                console.log(`[WhatsApp] No se pudo limpiar session automáticamente: ${cleanupMsg}`);
+              }
+
+              this.isConnecting = false;
+              console.log('[WhatsApp] Reintentando con sesión limpia en 2 segundos...');
+              this.scheduleReconnect(2000);
+              return;
+            }
+
+            if (this.consecutive401WithoutQr >= 6) {
+              console.error('\n[WhatsApp] 401 persistente sin QR. Revisar session y volver a vincular.');
+              process.exit(1);
+            }
+          }
+
+          if (isConnectionReplaced) {
+            this.consecutiveConnectionReplaced += 1;
+
+            if (!this.connectionReplacedResetAttempted) {
+              this.connectionReplacedResetAttempted = true;
+              console.log('\n[WhatsApp] Conflicto de sesión (440). Limpiando session y reintentando.');
+              try {
+                if (fs.existsSync('./session')) {
+                  fs.rmSync('./session', { recursive: true, force: true });
+                }
+              } catch (cleanupErr) {
+                const cleanupMsg = (cleanupErr as any)?.message || 'error desconocido';
+                console.log(`[WhatsApp] No se pudo limpiar session automáticamente: ${cleanupMsg}`);
+              }
+
+              this.isConnecting = false;
+              console.log('[WhatsApp] Reintentando con sesión limpia en 3 segundos...');
+              this.scheduleReconnect(3000);
+              return;
+            }
+
+            if (this.consecutiveConnectionReplaced >= 2) {
+              console.error('\n[WhatsApp] Otra sesión está reemplazando esta conexión (440).');
+              console.error('[WhatsApp] Cerrá otra instancia del bot y eliminá el dispositivo duplicado en WhatsApp > Dispositivos vinculados.');
+              process.exit(1);
+            }
+          } else {
+            this.consecutiveConnectionReplaced = 0;
+          }
+
+          if (isLoggedOut && this.whatsappSocket.authState.creds.registered) {
+            console.log('\n[WhatsApp] Sesión cerrada por WhatsApp. Borrá session y escaneá un QR nuevo.');
+            process.exit(1);
+          }
+
+          if (isRestartRequired) {
+            this.isConnecting = false;
+            console.log('\n[WhatsApp] WhatsApp pidió reinicio del socket (515). Reconectando...');
+            this.scheduleReconnect(1000);
+            return;
+          }
+
+          this.isConnecting = false;
+          console.log('\n[WhatsApp] Conexión cerrada. Reintentando en 5 segundos...');
+          this.scheduleReconnect(5000);
+        } else if (connection === 'open') {
+          this.isConnecting = false;
+          this.consecutiveConnectionReplaced = 0;
+          console.log('\n[WhatsApp] Conectado correctamente a WhatsApp.');
+        }
+      });
+
+      this.whatsappSocket.ev.on('messages.upsert', async (event: any) => {
+        try {
+          const incomingMessage = event?.messages?.[0];
+          if (!incomingMessage?.message || incomingMessage?.key?.fromMe) return;
+          await this.markMessageAsRead(incomingMessage);
+
+          const eventId = String(incomingMessage?.key?.id || '');
+          if (!eventId || this.isDuplicate(eventId)) return;
+
+          const rawChatId = String(incomingMessage?.key?.remoteJid || '');
+          if (!rawChatId) return;
+          const chatId = rawChatId.split(' ')[0];
+
+          const isGroup = chatId.includes('@g.us');
+          const rawSenderJid = String(incomingMessage?.key?.participant || chatId);
+          const senderJid = rawSenderJid.split(' ')[0];
+
+          const incomingText = this.extractMessageText(incomingMessage).trim();
+          const isAdmin = await this.adminRepository.isRegistered(senderJid);
+          if (isGroup && !this.isAllowedGroup(chatId, isAdmin)) {
+            await this.handleUnauthorizedGroup(chatId);
+            return;
+          }
+          if (isGroup) {
+            this.persistGroupIdInEnvIfMissing(chatId, isAdmin);
+          }
+          if (!incomingText) return;
+          this.logIncoming(chatId, senderJid, incomingText, isGroup, isAdmin);
+
+          if (!isGroup) {
+            const privateReply = await this.privateChatWorkflow.handlePrivateMessage(senderJid, incomingText);
+            if (!privateReply) return;
+            const parts = privateReply.split('|||SPLIT|||');
+            for (const part of parts) {
+              if (part.trim()) {
+                await this.sendTextMessage(chatId, part, senderJid, true);
+              }
+            }
+            return;
+          }
+
+          const mentionedJids = this.extractMentionedJids(incomingMessage);
+
+          // Detectar mención real por JID y, como respaldo, por alias dinámicos del bot.
+          const messageMentionsBot = this.isBotMentioned(mentionedJids, incomingText);
+          if (incomingText.includes('@')) {
+            const botIdDebug = String(this.whatsappSocket?.user?.id || this.whatsappSocket?.user?.jid || '');
+            console.log(`🔎 [MentionDebug] bot=${botIdDebug || 'sin-id'} mentioned=${mentionedJids.join(',') || 'ninguno'} text="${incomingText}" result=${messageMentionsBot}`);
+          }
+
+          // Limpiar el texto de basura de sesión y menciones para la IA
+          const normalizedGroupText = incomingText
+            .replace(/@session\\[^\s]+/g, '') // Quitar rutas de sesión primero
+            .replace(/@\d[\d\-\s]{5,}/g, '') // Quitar menciones numéricas
+            .trim() || incomingText;
+
+          const senderProfile = await this.userProfileRepository.get(senderJid);
+          const isRegisteredUser = !!senderProfile && !!senderProfile.name?.trim() && !!senderProfile.birthday_day_month?.trim() && !!senderProfile.email?.trim();
+          const isNewUser = !senderProfile || !senderProfile.name?.trim();
+
+          const cleanForApproval = this.stripBotMentions(normalizedGroupText.trim())
+            .replace(/^!/, '')
+            .trim();
+
+          if (isAdmin && /^(si|sí|aprobado)$/i.test(cleanForApproval)) {
+            const approval = await this.rateLimitService.approveNextPendingRequest(new Date());
+            if (!approval) {
+              await this.sendTextMessage(chatId, this.pickOne(NO_PENDING_APPROVAL_MESSAGES), senderJid, false);
+              return;
+            }
+
+            const approvedProfile = await this.userProfileRepository.get(approval.userId);
+            const approvedLabel = approvedProfile?.name || approval.userId;
+            await this.sendTextMessage(
+              chatId,
+              `Aprobado ✅ ${approvedLabel} recibió ${approval.extraQuestionsGranted} preguntas extra para seguir con la IA.`,
+              senderJid,
+              false,
+            );
+            return;
+          }
+
+          const isCommand = normalizedGroupText.trim().startsWith('!');
+          const isNumericReply = /^\d+$/.test(normalizedGroupText.trim());
+          const hasPendingMenu = this.router.hasActiveMenuState(senderJid);
+
+          if (isGroup && isCommand && normalizedGroupText.toLowerCase().startsWith('!soyadmin ')) {
+            const result = await this.privateChatWorkflow.handleGroupAdminLink(senderJid, normalizedGroupText);
+            if (result) {
+              await this.sendTextMessage(chatId, result, senderJid, false);
+              try {
+                // Intentar borrar el mensaje del grupo para ocultar el código
+                if (this.whatsappSocket?.sendMessage) {
+                  await this.whatsappSocket.sendMessage(chatId, { delete: incomingMessage.key });
+                }
+              } catch (e) {
+                console.warn('No se pudo borrar el mensaje del código en el grupo.');
+              }
+            }
+            return;
+          }
+
+          // Si es un número y NO hay menú activo, ignorar completamente
+          if (isNumericReply && !hasPendingMenu && !messageMentionsBot) {
+            return;
+          }
+
+          if (messageMentionsBot && !isRegisteredUser && !isCommand) {
+            // Solo interrumpir si es una pregunta de IA, no si es un comando público
+            const messages = isNewUser ? NEW_USER_REGISTRATION_MESSAGES : PROFILE_UPDATE_GROUP_MESSAGES;
+            await this.sendTextMessage(
+              chatId,
+              this.pickOne(messages),
+              senderJid,
+              false,
+            );
+            return;
+          }
+
+          // Procesar solo comandos, menciones al bot o números dentro de un menú activo.
+          const shouldProcess = isCommand || messageMentionsBot || (hasPendingMenu && isNumericReply);
+          if (!shouldProcess) return;
+
+          const invokedByMention = messageMentionsBot;
+
+          if (!isAdmin && !isCommand && !(hasPendingMenu && isNumericReply)) {
+            const moderation = await this.moderationService.evaluate(senderJid, normalizedGroupText, isAdmin, new Date());
+            if (moderation.warningMessage) {
+              await this.sendTextMessage(chatId, moderation.warningMessage, senderJid, false);
+              return;
+            }
+            if (moderation.blocked) {
+              if (invokedByMention) {
+                await this.sendTextMessage(chatId, '⚠️ Ahora no puedo responderte. Si creés que es un error, hablá con un admin.', senderJid, false);
+              }
+              return;
+            }
+          }
+
+          const groupReply = await this.router.route(
+            senderJid,
+            normalizedGroupText,
+            new Date(),
+            invokedByMention || isCommand,
+            isAdmin,
+            invokedByMention,
+          );
+          if (groupReply == null) return;
+
+          const safeReply = String(groupReply).trim() || 'No pude generar una respuesta en este momento.';
+
+          // 🔍 Detección dinámica de intención de respuesta IA
+          const intentMatch = safeReply.match(/^\s*\[([^\]]+)\]\s*/);
+          if (intentMatch) {
+            const intent = intentMatch[1].toLowerCase();
+            const isOutOfScope = intent.includes('fuera de lugar') || 
+                               intent.includes('off-topic') || 
+                               intent.includes('no relacionado') ||
+                               intent.includes('fuera de contexto');
+            
+            if (isOutOfScope && messageMentionsBot) {
+              console.log(`⚠️ [IntentDetect] Pregunta fuera de contexto detectada: ${intent}`);
+              const warning = `⚠️ Esa pregunta está fuera de mis funciones del ISPC.\n\nIntenta preguntar algo sobre:\n• Materias y clases\n• Horarios y agenda\n• Coordinación y profesores\n• Noticias del ISPC\n\nSi insistís con temas off-topic, podrías recibir una restricción.`;
+              await this.sendTextMessage(chatId, warning, senderJid, false);
+              return;
+            }
+          }
+
+          const parts = safeReply.split('|||SPLIT|||');
+          for (const part of parts) {
+            const cleaned = part.trim();
+            if (!cleaned) continue;
+            // Remover encabezado de intención si está presente (solo para envío)
+            const cleanedForSend = cleaned.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+            if (cleanedForSend) {
+              await this.sendTextMessage(chatId, cleanedForSend, senderJid, false);
+            }
+          }
+        } catch (msgErr) {
+          const msg = (msgErr as any)?.message || 'error desconocido';
+          console.error(`❌ Error procesando mensaje entrante: ${msg}`);
+        }
+      });
+    } catch (err) {
+      this.isConnecting = false;
+      const errorMsg = (err as any)?.message || 'Error desconocido';
+      console.error('❌ Error conectando:', errorMsg);
+      process.exit(1);
+    }
+  }
+
+  public async sendTextMessage(destinationJid: string, text: string, senderId?: string, sourceWasPrivate?: boolean): Promise<void> {
+    this.logOutgoing(destinationJid, text, senderId, sourceWasPrivate);
+    await this.whatsappSocket.sendMessage(destinationJid, { text });
+  }
+
+  public close() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.whatsappSocket) {
+      this.whatsappSocket.end(new Error('Bot cerrado'));
+    }
+  }
+
+  private async markMessageAsRead(incomingMessage: any): Promise<void> {
+    try {
+      const key = incomingMessage?.key;
+      if (!key || !this.whatsappSocket?.readMessages) return;
+      await this.whatsappSocket.readMessages([key]);
+    } catch {
+      // Ignorado: no queremos cortar el flujo principal por un ack de lectura.
+    }
+  }
+
+  private extractMessageText(msg: any): string {
+    const m = msg?.message;
+    if (!m) return '';
+
+    if (m.conversation) return m.conversation;
+    if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
+    if (m.imageMessage?.caption) return m.imageMessage.caption;
+    if (m.videoMessage?.caption) return m.videoMessage.caption;
+    if (m.buttonsResponseMessage?.selectedDisplayText) return m.buttonsResponseMessage.selectedDisplayText;
+    if (m.listResponseMessage?.title) return m.listResponseMessage.title;
+    if (m.templateButtonReplyMessage?.selectedDisplayText) return m.templateButtonReplyMessage.selectedDisplayText;
+    if (m.ephemeralMessage?.message) return this.extractMessageText({ message: m.ephemeralMessage.message });
+    if (m.viewOnceMessage?.message) return this.extractMessageText({ message: m.viewOnceMessage.message });
+    if (m.viewOnceMessageV2?.message) return this.extractMessageText({ message: m.viewOnceMessageV2.message });
+
+    return '';
+  }
+
+  private isDuplicate(eventId: string): boolean {
+    if (this.processedIds.has(eventId)) {
+      return true;
+    }
+
+    this.processedIds.add(eventId);
+    if (this.processedIds.size > 5000) {
+      this.processedIds.clear();
+    }
+    return false;
+  }
+
+  private logIncoming(chatId: string, sender: string, text: string, isGroup: boolean, isAdmin: boolean): void {
+    const msg = this.compactText(text);
+    const scopeLabel = isGroup ? '[GRUPO]' : '[PRIVADO]';
+    const baseColor = isGroup ? ANSI.cyan : ANSI.yellow;
+    const senderLabel = isAdmin
+      ? `${ANSI.magenta}${ANSI.bright}[ADMIN]${ANSI.reset} ${sender}`
+      : `${ANSI.dim}${sender}${ANSI.reset}`;
+
+    console.log(`${baseColor}📩 ${scopeLabel}${ANSI.reset} ${senderLabel} ${ANSI.dim}chat=${chatId}${ANSI.reset} -> "${msg}"`);
+  }
+
+  private logOutgoing(jid: string, text: string, senderId?: string, sourceWasPrivate?: boolean): void {
+    const msg = this.compactText(text);
+    const isGroup = jid.endsWith('@g.us');
+    const inferredPrivate = sourceWasPrivate ?? !isGroup;
+    const scopeLabel = inferredPrivate ? '[RESPUESTA PRIVADO]' : '[RESPUESTA GRUPO]';
+    const color = inferredPrivate ? ANSI.yellow : ANSI.green;
+    const replyTo = senderId ? ` ${ANSI.dim}a=${senderId}${ANSI.reset}` : '';
+
+    console.log(`${color}📤 ${scopeLabel}${ANSI.reset}${replyTo} ${ANSI.dim}destino=${jid}${ANSI.reset} -> "${msg}"`);
+  }
+
+  private compactText(text: string): string {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= 180) return normalized;
+    return `${normalized.slice(0, 177)}...`;
+  }
+
+  private pickOne(options: string[]): string {
+    return options[Math.floor(Math.random() * options.length)];
+  }
+
+  private extractMentionedJids(message: any): string[] {
+    const m = message?.message;
+    const contextInfo =
+      m?.extendedTextMessage?.contextInfo ||
+      m?.imageMessage?.contextInfo ||
+      m?.videoMessage?.contextInfo ||
+      m?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo ||
+      m?.viewOnceMessage?.message?.extendedTextMessage?.contextInfo ||
+      m?.viewOnceMessageV2?.message?.extendedTextMessage?.contextInfo;
+
+    const mentioned = contextInfo?.mentionedJid;
+    return Array.isArray(mentioned) ? mentioned.map((jid: any) => String(jid)) : [];
+  }
+
+  private normalizePhoneJid(jid: string): string {
+    if (!jid) return '';
+    const [left] = String(jid).split('@');
+    // Tomamos la parte antes de los dos puntos (si es multi-dispositivo)
+    // y limpiamos cualquier carácter que no sea alfanumérico (por si Baileys manda basura)
+    const base = left.split(':')[0].trim();
+    return base.replace(/[^a-zA-Z0-9]/g, '');
+  }
+
+  private isBotMentioned(mentionedJids: string[], incomingText?: string): boolean {
+    const botId = String(this.whatsappSocket?.user?.id || this.whatsappSocket?.user?.jid || '');
+    const botPhone = this.normalizePhoneJid(botId);
+    const botLid = botPhone ? this.getBotLidFromSession(botPhone) : null;
+
+    // 1) Mención fuerte: viene en contextInfo.mentionedJid
+    for (const jid of mentionedJids) {
+      const asString = String(jid || '');
+      if (!asString) continue;
+
+      if (asString.endsWith('@lid')) {
+        const lid = this.normalizePhoneJid(asString);
+        if (lid && botLid && lid === botLid) {
+          return true;
+        }
+        continue;
+      }
+
+      const normalizedJid = this.normalizePhoneJid(asString);
+      if (normalizedJid && botPhone && normalizedJid === botPhone) {
+        return true;
+      }
+    }
+
+    // 2) Respaldo: mención textual por alias (ej: @cabezon, @Cabezón Bot)
+    if (!incomingText) return false;
+    const normalizedText = this.normalizeMentionText(incomingText);
+    const aliases = this.getBotMentionAliases();
+    return aliases.some((alias) => {
+      if (!alias) return false;
+      const pattern = new RegExp(`(^|\\s)@${this.escapeRegExp(alias)}\\b`, 'i');
+      return pattern.test(normalizedText);
+    });
+  }
+
+  private getBotLidFromSession(botPhone: string): string | null {
+    const now = Date.now();
+    // Cache 60s para evitar lecturas de disco por mensaje.
+    if (this.cachedBotLidAtMs && now - this.cachedBotLidAtMs < 60_000) {
+      return this.cachedBotLid;
+    }
+
+    this.cachedBotLidAtMs = now;
+    this.cachedBotLid = null;
+
+    try {
+      const mappingPath = path.resolve(process.cwd(), 'session', `lid-mapping-${botPhone}.json`);
+      if (!fs.existsSync(mappingPath)) {
+        return null;
+      }
+      const raw = fs.readFileSync(mappingPath, 'utf-8');
+      const lid = String(JSON.parse(raw) || '').trim();
+      this.cachedBotLid = lid ? this.normalizePhoneJid(lid) : null;
+      return this.cachedBotLid;
+    } catch {
+      return null;
+    }
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private getBotMentionAliases(): string[] {
+    const user = this.whatsappSocket?.user || {};
+    const candidates = [
+      String(user?.name || ''),
+      String(user?.pushName || ''),
+      String(user?.notify || ''),
+      'cabezon',
+      'cabezón',
+    ];
+
+    return candidates
+      .map((candidate) => this.normalizeMentionText(candidate).replace(/^@+/, ''))
+      .filter((candidate) => !!candidate);
+  }
+
+  private normalizeMentionText(text: string): string {
+    return String(text)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  }
+
+  private stripBotMentions(text: string): string {
+    let cleaned = String(text);
+    for (const alias of this.getBotMentionAliases()) {
+      if (!alias) continue;
+      const pattern = new RegExp(`^(?:@${alias})\\b\\s*`, 'i');
+      cleaned = cleaned.replace(pattern, '');
+    }
+    return cleaned;
+  }
+
+  private persistGroupIdInEnvIfMissing(chatId: string, senderIsAdmin: boolean): void {
+    if (this.autoPersistedGroupId) return;
+    if (this.allowedGroupIds.includes(chatId)) return; // ya registrado
+    if (!senderIsAdmin) return;
+
+    const envPath = './.env';
+    try {
+      let envText = '';
+      if (fs.existsSync(envPath)) {
+        envText = fs.readFileSync(envPath, 'utf-8');
+      }
+
+      // Determinar qué variable agregar: WHATSAPP_GROUP_ID o WHATSAPP_GROUP_ID_2
+      const hasG1 = /^\s*WHATSAPP_GROUP_ID\s*=.+$/m.test(envText);
+      const hasG2 = /^\s*WHATSAPP_GROUP_ID_2\s*=.+$/m.test(envText);
+
+      let lineAdded = false;
+      if (!hasG1) {
+        const line = `WHATSAPP_GROUP_ID=${chatId}`;
+        envText = `${envText.trimEnd()}\n${line}\n`;
+        process.env.WHATSAPP_GROUP_ID = chatId;
+        lineAdded = true;
+      } else if (!hasG2) {
+        const line = `WHATSAPP_GROUP_ID_2=${chatId}`;
+        envText = `${envText.trimEnd()}\n${line}\n`;
+        process.env.WHATSAPP_GROUP_ID_2 = chatId;
+        lineAdded = true;
+      }
+
+      if (!lineAdded) return; // ya hay 2 grupos configurados
+
+      fs.writeFileSync(envPath, envText, 'utf-8');
+      this.allowedGroupIds.push(chatId);
+      this.autoPersistedGroupId = true;
+      console.log(`✅ Grupo detectado y guardado automáticamente: ${chatId}`);
+    } catch (error) {
+      const msg = (error as any)?.message || 'error desconocido';
+      console.warn(`⚠️ No se pudo persistir el grupo en .env: ${msg}`);
+    }
+  }
+
+  private isAllowedGroup(chatId: string, senderIsAdmin: boolean): boolean {
+    if (!chatId.endsWith('@g.us')) return true;
+    // Si no hay lista configurada, permitir todo.
+    if (!this.allowedGroupIds.length) return true;
+    // Si el grupo está en la lista, siempre permitido.
+    if (this.allowedGroupIds.includes(chatId)) return true;
+    // Un admin puede interactuar desde un grupo aún no registrado.
+    return senderIsAdmin;
+  }
+
+  private async handleUnauthorizedGroup(chatId: string): Promise<void> {
+    if (this.unauthorizedGroupNoticeSent.has(chatId)) return;
+    this.unauthorizedGroupNoticeSent.add(chatId);
+
+    try {
+      await this.sendTextMessage(
+        chatId,
+        'Solo un admin puede agregarme a grupos nuevos. Me retiro de este grupo por seguridad 🙂'
+      );
+      if (this.whatsappSocket?.groupLeave) {
+        await this.whatsappSocket.groupLeave(chatId);
+      }
+    } catch (error) {
+      const msg = (error as any)?.message || 'error desconocido';
+      console.warn(`⚠️ No se pudo salir del grupo no autorizado ${chatId}: ${msg}`);
+    }
+  }
+
+  private async handleGroupParticipantsUpdate(update: any): Promise<void> {
+    try {
+      const action = String(update?.action || '').toLowerCase();
+      const groupId = String(update?.id || '');
+      if (!groupId || action !== 'add') return;
+
+      const botId = String(this.whatsappSocket?.user?.id || '');
+      const botPhone = this.normalizePhoneJid(botId);
+      if (!botPhone) return;
+
+      const participants: string[] = Array.isArray(update?.participants)
+        ? update.participants.map((p: any) => String(p))
+        : [];
+      const botWasAdded = participants.some((jid) => this.normalizePhoneJid(jid) === botPhone);
+      if (!botWasAdded) return;
+
+      // Si el grupo ya está en la lista autorizada, no hacer nada.
+      if (this.allowedGroupIds.includes(groupId)) {
+        return;
+      }
+
+      const actor = String(update?.author || update?.participant || '');
+      const actorIsAdmin = actor ? await this.adminRepository.isRegistered(actor) : false;
+
+      if (!actorIsAdmin) {
+        await this.handleUnauthorizedGroup(groupId);
+      } else {
+        // Admin agregó el bot: registrar el grupo automáticamente.
+        this.persistGroupIdInEnvIfMissing(groupId, true);
+        console.log(`✅ Bot agregado al nuevo grupo por admin: ${groupId}`);
+      }
+    } catch (error) {
+      const msg = (error as any)?.message || 'error desconocido';
+      console.warn(`⚠️ Error validando actualización de participantes: ${msg}`);
+    }
+  }
+
+  private suppressNextSessionDump = false;
+  private streamNoiseFilterInstalled = false;
+
+  private installConsoleNoiseFilter(): void {
+    if (!this.streamNoiseFilterInstalled) {
+      this.installStreamNoiseFilter();
+      this.streamNoiseFilterInstalled = true;
+    }
+
+    const originalLog = console.log.bind(console);
+    console.log = (...args: any[]) => {
+      const first = args[0];
+
+      // Suprimir líneas tipo "Removing old closed session:" y similares
+      if (typeof first === 'string' && CabezonWhatsAppGateway.noisySessionLogPatterns.some((p) => p.test(first))) {
+        this.suppressNextSessionDump = true;
+        return;
+      }
+
+      if (args.some((arg) => arg && typeof arg === 'object' && ('_chains' in arg || 'registrationId' in arg || 'currentRatchet' in arg || 'indexInfo' in arg))) {
+        return;
+      }
+
+      // Suprimir el objeto SessionEntry que Baileys vuelca justo después
+      if (this.suppressNextSessionDump) {
+        this.suppressNextSessionDump = false;
+        if (first && typeof first === 'object' && ('_chains' in first || 'registrationId' in first || 'currentRatchet' in first || 'indexInfo' in first)) {
+          return;
+        }
+      }
+
+      originalLog(...args);
+    };
+  }
+
+  private installStreamNoiseFilter(): void {
+    const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+    const originalStderrWrite = process.stderr.write.bind(process.stderr);
+
+    const shouldSuppress = (chunk: unknown): boolean => {
+      const text = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+      return /Closing session:\s*SessionEntry|SessionEntry\s*\{/.test(text);
+    };
+
+    process.stdout.write = ((chunk: any, encoding?: any, callback?: any) => {
+      if (shouldSuppress(chunk)) return true;
+      return originalStdoutWrite(chunk, encoding, callback);
+    }) as any;
+
+    process.stderr.write = ((chunk: any, encoding?: any, callback?: any) => {
+      if (shouldSuppress(chunk)) return true;
+      return originalStderrWrite(chunk, encoding, callback);
+    }) as any;
+  }
+}
