@@ -64,8 +64,8 @@ export class RagQueryService {
 
       return filtered;
     } catch (error) {
-      // Fallo silencioso: el bot sigue funcionando con File API
-      console.error(`[RAG] Error en búsqueda (fallback a File API):`, (error as any)?.message || error);
+      // Fallo silencioso: el bot sigue funcionando con el contexto interno disponible
+      console.error(`[RAG] Error en búsqueda (se continúa sin contexto RAG):`, (error as any)?.message || error);
       return [];
     }
   }

@@ -86,7 +86,6 @@ export class AIQueryService {
 
     // 2. Contexto RAG — búsqueda semántica en los PDFs indexados
     let ragContext: string | null = null;
-    let contextStrategy: 'rag' | 'file_api' = 'file_api';
     let isWeakRag = false;
 
     if (this.ragQueryService) {
@@ -94,15 +93,14 @@ export class AIQueryService {
       ragContext = this.ragQueryService.formatContext(ragResults);
 
       if (ragContext) {
-        contextStrategy = 'rag';
         isWeakRag = ragResults.some((r) => r.weak);
       }
     }
 
-    if (contextStrategy === 'rag') {
+    if (ragContext) {
       console.log(`[IA] Estrategia de contexto: RAG local (chunks inyectados) ${isWeakRag ? '[DÉBIL]' : ''}`);
     } else {
-      console.log('[IA] Estrategia de contexto: Ninguna (o File API de Gemini fallback)');
+      console.log('[IA] Estrategia de contexto: contexto interno sin RAG relevante');
     }
 
     // 3. Construir el prompt enriquecido
@@ -113,7 +111,7 @@ export class AIQueryService {
 
     let warningContext = '';
     if (isWeakRag) {
-      warningContext = '[Sistema] Los resultados de búsqueda documental (RAG) tienen baja relevancia. Úsalos solo si aportan algo útil; en caso contrario, confiá en tu propio criterio o indica que no encontraste información precisa en los reglamentos.';
+      warningContext = '[Sistema] Los resultados de búsqueda documental (RAG) tienen baja relevancia. Úsalos solo si aportan algo útil; en caso contrario, indicá que no encontraste información precisa en la documentación.';
     }
 
     const mergedPrompt = [

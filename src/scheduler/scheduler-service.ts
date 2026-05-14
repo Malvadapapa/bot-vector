@@ -1,8 +1,4 @@
 import cron from 'node-cron';
-import { exec } from 'node:child_process';
-import util from 'node:util';
-
-const execPromise = util.promisify(exec);
 
 import { ClassNotificationService } from '../application/notifications/class-notification.service.js';
 import { ExamNotificationService } from '../application/notifications/exam-notification.service.js';
@@ -11,6 +7,7 @@ import { RateLimitService } from '../application/ai/rate-limit.service.js';
 import { ConfirmationRepository, ManagedExamRepository, OutboxDedupRepository, ReminderRepository, SchedulerRunRepository, UserProfileRepository } from '../infrastructure/persistence/db/repositories.js';
 import { InstitutionalEmailMonitor } from '../infrastructure/integrations/imap/institutional-email-monitor.js';
 import { CabezonWhatsAppGateway } from '../interfaces/whatsapp/cabezon-whatsapp-gateway.js';
+import { RagPipelineService } from '../rag/rag-pipeline.service.js';
 
 export class SchedulerService {
   private examNotificationService: ExamNotificationService;
@@ -27,6 +24,7 @@ export class SchedulerService {
     private userProfileRepository: UserProfileRepository,
     private outboxDedupRepository: OutboxDedupRepository,
     private managedExamRepository: ManagedExamRepository,
+    private ragPipelineService: RagPipelineService,
     private emailMonitor?: InstitutionalEmailMonitor,
   ) {
     this.examNotificationService = new ExamNotificationService(
@@ -166,16 +164,8 @@ export class SchedulerService {
 
     cron.schedule('0 3 */2 * *', async () => {
       await this.safeRun('rag_sync', async () => {
-        console.log('[Scheduler] Ejecutando sincronización RAG...');
-        try {
-          // Usamos child_process para ejecutar el CLI sin cargar todos los vectores en memoria del bot
-          const { stdout, stderr } = await execPromise('npm run rag:check');
-          if (stdout) console.log(stdout);
-          if (stderr) console.error(stderr);
-        } catch (error) {
-          console.error('[Scheduler] Error en sincronización RAG:', error);
-          throw error;
-        }
+        console.log('[Scheduler] Ejecutando sincronización RAG por cambios en la base de conocimiento...');
+        await this.ragPipelineService.runSync(false);
       });
     });
 

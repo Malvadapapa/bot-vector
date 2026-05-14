@@ -6,63 +6,6 @@ function compact(text: string, limit = 180): string {
   return `${normalized.slice(0, limit - 3)}...`;
 }
 
-/**
- * Información institucional estática — siempre disponible para la IA
- * Esto asegura que tenga acceso consistente a datos generales del ISPC
- */
-const INSTITUTIONAL_STATIC_INFO = `
-╔════════════════════════════════════════════════════════════════╗
-║           INFORMACIÓN INSTITUCIONAL DEL ISPC                  ║
-╚════════════════════════════════════════════════════════════════╝
-
-🏫 INSTITUCIÓN
-Nombre: Instituto Superior Politécnico Córdoba (ISPC)
-Ubicación: Córdoba, Argentina
-Carrera: Tecnicatura Superior en Desarrollo de Software (3 años)
-Modalidad: Aula Invertida con encuentros sincronicos
-
-────────────────────────────────────────────────────────────────
-
-👥 CONTACTOS PRINCIPALES
-
-👩‍💼 Coordinación
-Coordinadora General: Tatiana Manzanelli
-Email: coordinacion.software@ispc.edu.ar
-Para: Consultas académicas, cambios de horario, trámites administrativos
-
-👩‍🏫 Tutoría
-Tutora Virtual: Natalia Morán
-Email: tutorias@ispc.edu.ar
-Para: Apoyo académico, dudas sobre materias, orientación
-
-📧 Contacto General
-Sitio web: www.ispc.edu.ar
-
-
-────────────────────────────────────────────────────────────────
-
-⚠️ INFORMACIÓN IMPORTANTE
-
-• Las clases son sincronicas para consulta 1 vez por semana pormateria y el resto se dicta en formato aula invertida 
-• La asistencia no es obligatoria para regularizar una materia pero si para promocionar(mínimo 80%)
-• Para problemas técnicos o consultas: soporte@ispc.edu.ar
-
-────────────────────────────────────────────────────────────────
-
-📞 CÓMO CONTACTAR SEGÚN TU NECESIDAD
-
-¿Problema académico o duda de materia?
-→ Coordinadora Tatiana Manzanelli: coordinacion.software@ispc.edu.ar
-
-¿Necesitas apoyo tutorial?
-→ Tutora Natalia Morán: tutorias@ispc.edu.ar
-
-¿Problema técnico o administrativo?
-→ Email general: consultas@ispc.edu.ar
-
-════════════════════════════════════════════════════════════════
-`;
-
 export class KnowledgeContextService {
   constructor(
     private userProfileRepository: UserProfileRepository,
@@ -83,10 +26,9 @@ export class KnowledgeContextService {
       this.teacherRepository.listWithIds(50),
     ]);
 
-    // 1. INFORMACIÓN INSTITUCIONAL ESTÁTICA (siempre primero)
-    const parts: string[] = [INSTITUTIONAL_STATIC_INFO];
+    const parts: string[] = [];
 
-    // 2. INFORMACIÓN DEL USUARIO
+    // 1. INFORMACIÓN DEL USUARIO
     parts.push('\n─ PERFIL DEL USUARIO ─');
     if (profile) {
       const commissionInfo = profile.user_commission_id ? `, comisión ${profile.user_commission_id}` : ', sin comisión asignada';
@@ -95,6 +37,7 @@ export class KnowledgeContextService {
       parts.push('Perfil: No registrado');
     }
 
+    // 2. PRÓXIMOS EXÁMENES
     if (exams.length) {
       parts.push('\n─ PRÓXIMOS EXÁMENES ─');
       exams.slice(0, 5).forEach((exam) => {
@@ -104,6 +47,7 @@ export class KnowledgeContextService {
       parts.push('\n─ PRÓXIMOS EXÁMENES ─\nNo hay exámenes próximos cargados en el sistema.');
     }
 
+    // 3. AVISOS INSTITUCIONALES
     if (notices.length) {
       parts.push('\n─ AVISOS INSTITUCIONALES RECIENTES ─');
       notices.slice(0, 5).forEach((notice) => {
@@ -113,6 +57,7 @@ export class KnowledgeContextService {
       parts.push('\n─ AVISOS INSTITUCIONALES RECIENTES ─\nNo hay avisos vigentes en este momento.');
     }
 
+    // 4. MATERIAS ACTIVAS
     if (classes.length) {
       parts.push('\n─ MATERIAS ACTIVAS (HORARIOS DE CURSADA) ─');
       classes.slice(0, 8).forEach((entry) => {
@@ -122,6 +67,7 @@ export class KnowledgeContextService {
       parts.push('\n─ MATERIAS ACTIVAS ─\nNo hay materias ni horarios cargados.');
     }
 
+    // 5. DIRECTORIO DE PROFESORES
     if (teachers.length) {
       parts.push('\n─ DIRECTORIO DE PROFESORES Y CONTACTOS ─');
       teachers.slice(0, 10).forEach((t) => {
@@ -132,6 +78,7 @@ export class KnowledgeContextService {
       parts.push('\n─ DIRECTORIO DE PROFESORES ─\nNo hay profesores cargados en el sistema.');
     }
 
+    // 6. RECORDATORIOS RELEVANTES
     if (personalReminders.length) {
       parts.push('\n─ RECORDATORIOS RELEVANTES ─');
       personalReminders.slice(0, 5).forEach((reminder) => {

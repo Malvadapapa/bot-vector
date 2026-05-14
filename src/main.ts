@@ -300,7 +300,7 @@ async function bootstrap() {
   ragPipeline.runSync(false).then(() => {
     console.log(`[RAG] Sincronización inicial completada. Vectores disponibles: ${ragQueryService.getVectorCount() || 'pendiente de carga'}`);
   }).catch((err) => {
-    console.error(`[RAG] Error en sincronización inicial (el bot sigue funcionando con File API):`, err?.message);
+    console.error(`[RAG] Error en sincronización inicial (se mantiene el flujo IA con contexto interno):`, err?.message);
   });
 
   const aiQueryService = new AIQueryService(fallbackAiService, rateLimitService, knowledgeContextService, userModerationRepository, ragQueryService);
@@ -377,6 +377,7 @@ async function bootstrap() {
     userProfileRepository,
     outboxDedupRepository,
     managedExamRepository,
+    ragPipeline,
     emailMonitor,
   );
 
