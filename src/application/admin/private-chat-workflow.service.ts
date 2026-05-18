@@ -67,19 +67,24 @@ export class PrivateChatWorkflowService {
     'await_user_commission_selection',
   ]);
   private static readonly ADMIN_MODE_HINTS = [
-    'Estoy en modo admin, chango. Mandame menu y te muestro todo.',
-    'Seguimos en modo admin. Si querés opciones, tirá menu.',
+    'Estoy en modo admin, chango. Mandame menu y te muestro las funciones.',
+    'Seguimos en modo admin. Si querés ver las opciones escribi menu.',
     'Modo admin activo, máquina. Escribí menu para ver el panel.',
   ];
   private static readonly PRIVATE_ONLY_AFTER_REGISTER = [
-    'Ya quedaste registrado. Este bot del ISPC responde solo en el grupo, así que te leo allá con gusto.',
-    'Todo listo con tu registro ✅. Por privado ya no respondo consultas: te espero en el grupo del ISPC.',
-    'Registro completado, querido. El bot del ISPC responde en el grupo, te espero por ahí.',
+    'Ya quedaste registrado. Este bot responde solo en el grupo, así que te leo allá con gusto.',
+    'Todo listo con tu registro ✅. Por privado ya no puedo responder consultas: te espero en el grupo del ISPC.',
+    'Registro completado, querido. El bot esta programado para responder solo en el grupo, te espero por ahí.',
+  ];
+  private static readonly PROFILE_WELCOME_INTROS = [
+    '¡Bienvenido chango! Vamos a completar tu registro por privado 🙂',
+    '¡Hola! Antes de seguir, necesito completar tu registro por privado 🙂',
+    '¡Ey! Te doy la bienvenida chango. Necesito que completemos tus datos por privado para seguir 🙂',
   ];
   private static readonly PROFILE_UPDATE_INTROS = [
-    'Debido a una actualización del bot del ISPC necesito que me completes unos datos por privado. Muchas gracias 🙂',
-    '¡Ey! Por una actualización del bot del ISPC necesito que me completes algunos datos por privado. Gracias 🙂',
-    'Che, se actualizó el bot del ISPC y necesito que completes tus datos por privado. Gracias 🙂',
+    'Debido a una actualización del bot necesito que me mandes unos datos por privado. Muchas gracias 🙂',
+    '¡Ey! Por una actualización del bot necesito que me completes algunos datos por privado. Gracias 🙂',
+    'Che, se actualizó el bot y necesito que completes tus datos por privado. Gracias 🙂',
   ];
 
   private pendingProfiles = new Map<string, PendingProfile>();
@@ -485,7 +490,10 @@ export class PrivateChatWorkflowService {
       });
       const nextState = this.getNextAdminProfileState(profile);
       this.pendingAdminState.set(userId, nextState);
-      return `Registrado con éxito como admin ✅.\n\nAntes de continuar al menú necesito completar tus datos de perfil por privado.\n${this.getAdminProfilePrompt(nextState)}`;
+      const intro = profile
+        ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
+        : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
+      return `Registrado con éxito como admin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
     }
 
     this.pendingAdminState.delete(userId);
@@ -510,7 +518,10 @@ export class PrivateChatWorkflowService {
         });
         const nextState = this.getNextAdminProfileState(profile);
         this.pendingAdminState.set(userId, nextState);
-        return `Hola, admin ✅.\n\nAntes de continuar al menú necesito completar tus datos de perfil por privado.\n${this.getAdminProfilePrompt(nextState)}`;
+        const intro = profile
+          ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
+          : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
+        return `Hola, admin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
       }
 
       return `Hola, admin ✅\n${await this.adminMenuText(userId)}`;
@@ -1086,9 +1097,11 @@ export class PrivateChatWorkflowService {
     };
     this.pendingProfiles.set(userId, pending);
 
-    const intro = this.profileUpdateNoticeShown.has(userId)
-      ? ''
-      : `${this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)}\n`;
+    const intro = profile
+      ? (this.profileUpdateNoticeShown.has(userId)
+        ? ''
+        : `${this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)}\n`)
+      : `${this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS)}\n`;
     this.profileUpdateNoticeShown.add(userId);
 
     if (!pending.name) {
