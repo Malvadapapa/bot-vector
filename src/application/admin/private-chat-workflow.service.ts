@@ -122,6 +122,14 @@ export class PrivateChatWorkflowService {
     private adminPassword: string,
   ) {}
 
+  private isProfilePopulated(profile?: { name?: string; birthday_day_month?: string; email?: string; user_commission_id?: number } | null): boolean {
+    if (!profile) return false;
+    const hasName = !!String(profile.name || '').trim();
+    const hasBirthday = !!String(profile.birthday_day_month || '').trim();
+    const hasEmail = !!String(profile.email || '').trim();
+    return hasName && hasBirthday && hasEmail;
+  }
+
   public async handlePrivateMessage(userId: string, text: string): Promise<string> {
     const cleaned = text.trim();
     if (!cleaned) return 'Te leo, pero necesito que me mandes un mensaje con contenido 🙂';
@@ -490,7 +498,7 @@ export class PrivateChatWorkflowService {
       });
       const nextState = this.getNextAdminProfileState(profile);
       this.pendingAdminState.set(userId, nextState);
-      const intro = profile
+      const intro = this.isProfilePopulated(profile)
         ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
         : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
       return `Registrado con éxito como admin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
@@ -518,7 +526,7 @@ export class PrivateChatWorkflowService {
         });
         const nextState = this.getNextAdminProfileState(profile);
         this.pendingAdminState.set(userId, nextState);
-        const intro = profile
+        const intro = this.isProfilePopulated(profile)
           ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
           : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
         return `Hola, admin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
@@ -1097,7 +1105,7 @@ export class PrivateChatWorkflowService {
     };
     this.pendingProfiles.set(userId, pending);
 
-    const intro = profile
+    const intro = this.isProfilePopulated(profile)
       ? (this.profileUpdateNoticeShown.has(userId)
         ? ''
         : `${this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)}\n`)

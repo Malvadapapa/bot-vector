@@ -528,18 +528,21 @@ export class AcademicCalendarService {
     const profile = await this.userProfileRepository.get(userId);
     const displayName = profile?.name?.trim();
     const greeting = displayName ? `Hola, ${displayName} 👋` : 'Hola 👋';
-
     return [
+      '¡Hola! Soy Cabezón, el asistente virtual del grupo 🤖.',
       greeting,
-      'Este es tu menú rápido:',
-      '!hoy o !clases - Materias de hoy',
-      '!enlace - Enlace de la clase en curso',
-      '!semana - Agenda de esta semana',
-      '!semana-que-viene - Agenda de la próxima semana',
-      '!examenes - Próximos exámenes',
-      '!avisos - Avisos institucionales',
-      '!noticias - Últimas noticias',
-      '!help - Ayuda de comandos',
+      '',
+      '¿En qué te puedo ayudar hoy?',
+      '',
+      '1 - Fechas útiles del calendario académico',
+      '2 - Comunicarse con ISPC / contactos',
+      '3 - Noticias y novedades',
+      '4 - Avisos institucionales',
+      '5 - Próximos exámenes',
+      '6 - Enlace de la clase en curso',
+      '7 - Ayuda y comandos disponibles',
+      '',
+      'También podés usar comandos rápidos: !hoy, !semana, !enlace, !noticias, !help',
     ].join('\n');
   }
 

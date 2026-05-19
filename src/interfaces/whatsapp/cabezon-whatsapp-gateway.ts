@@ -79,6 +79,14 @@ export class CabezonWhatsAppGateway {
     this.installConsoleNoiseFilter();
   }
 
+  private isProfilePopulated(profile?: any | null): boolean {
+    if (!profile) return false;
+    const name = String(profile.name || '').trim();
+    const birthday = String(profile.birthday_day_month || '').trim();
+    const email = String(profile.email || '').trim();
+    return !!name && !!birthday && !!email;
+  }
+
   private scheduleReconnect(delayMs: number) {
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
@@ -274,8 +282,8 @@ export class CabezonWhatsAppGateway {
             .trim() || incomingText;
 
           const senderProfile = await this.userProfileRepository.get(senderJid);
-          const isRegisteredUser = !!senderProfile && !!senderProfile.name?.trim() && !!senderProfile.birthday_day_month?.trim() && !!senderProfile.email?.trim();
-          const isNewUser = !senderProfile || !senderProfile.name?.trim();
+          const isRegisteredUser = this.isProfilePopulated(senderProfile);
+          const isNewUser = !this.isProfilePopulated(senderProfile);
 
           const cleanForApproval = this.stripBotMentions(normalizedGroupText.trim())
             .replace(/^!/, '')
