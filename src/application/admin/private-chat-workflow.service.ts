@@ -10,6 +10,8 @@ import {
   ManagedTeacherRepository,
   UserModerationRepository,
   UserProfileRepository,
+  GroupContextRepository,
+  CommissionRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
 
 interface PendingProfile {
@@ -59,6 +61,12 @@ interface PendingNoticeEditData {
   field?: 'title' | 'body' | 'start_date' | 'end_date';
 }
 
+interface PendingGroupContextData {
+  groupId?: string;
+  year?: number;
+  commission_id?: number | null;
+}
+
 export class PrivateChatWorkflowService {
   private static readonly PROFILE_STATES = new Set([
     'await_user_profile_name',
@@ -94,6 +102,7 @@ export class PrivateChatWorkflowService {
   private pendingExamData = new Map<string, PendingExamData>();
   private pendingNoticeData = new Map<string, PendingNoticeData>();
   private pendingNoticeEditData = new Map<string, PendingNoticeEditData>();
+  private pendingGroupContextData = new Map<string, PendingGroupContextData>();
   private postRegistrationWarningShown = new Set<string>();
   private profileUpdateNoticeShown = new Set<string>();
   // Contador de reintentos por campo en el registro (evitar spam loops)
@@ -120,6 +129,8 @@ export class PrivateChatWorkflowService {
     private moderationRepository: UserModerationRepository,
     private dynamicMessageService: DynamicMessageService,
     private adminPassword: string,
+    private groupContextRepository?: GroupContextRepository,
+    private commissionRepository?: CommissionRepository,
   ) {}
 
   private isProfilePopulated(profile?: { name?: string; birthday_day_month?: string; email?: string; user_commission_id?: number } | null): boolean {
@@ -409,6 +420,14 @@ export class PrivateChatWorkflowService {
 
     if (currentState === 'await_ban_type') {
       return this.handleBanTypeStep(userId, cleaned);
+    }
+
+    if (currentState === 'await_group_context_year') {
+      return this.handleGroupContextYear(userId, cleaned);
+    }
+
+    if (currentState === 'await_group_context_commission') {
+      return await this.handleGroupContextCommission(userId, cleaned);
     }
 
     if (!(await this.adminRepository.isAuthenticated(userId))) {
@@ -1852,6 +1871,103 @@ export class PrivateChatWorkflowService {
 
     const typeLabel = lowered === '2' ? 'bloqueo total (IA + menú)' : 'solo IA';
     return `🚫 Usuario ${phone} baneado (${typeLabel}) por 365 días ✅\n\nPara desbanear, usá la opción 7 del menú admin.`;
+  }
+
+  // PHASE 4: Group Context Configuration Flow (executed from group via !config-grupo)
+  public async startGroupContextConfiguration(userId: string, groupId: string): Promise<string> {
+    if (!this.groupContextRepository || !this.commissionRepository) {
+      return '❌ Servicio de configuración de grupo no disponible.';
+    }
+
+    const pending: PendingGroupContextData = { groupId, year: undefined, commission_id: null };
+    this.pendingGroupContextData.set(userId, pending);
+    this.pendingAdminState.set(userId, 'await_group_context_year');
+
+    const currentYear = new Date().getFullYear();
+    return [
+      `📋 Configuración del grupo para comisiones`,
+      '',
+      `Grupo ID: ${groupId}`,
+      '',
+      `Primero, ¿en qué año académico están los estudiantes? (ej: ${currentYear}, ${currentYear + 1}, etc)`,
+    ].join('\n');
+  }
+
+  private handleGroupContextYear(userId: string, cleaned: string): string {
+    const yearStr = cleaned.trim();
+    if (!/^\d{4}$/.test(yearStr)) {
+      return 'Necesito un año válido (4 dígitos, ej: 2024).';
+    }
+
+    const year = Number(yearStr);
+    if (year < 2000 || year > 2100) {
+      return 'Año fuera de rango. Usa un año entre 2000 y 2100.';
+    }
+
+    const pending = this.pendingGroupContextData.get(userId) || {};
+    pending.year = year;
+    this.pendingGroupContextData.set(userId, pending);
+    this.pendingAdminState.set(userId, 'await_group_context_commission');
+
+    return [
+      `✅ Año académico: ${year}`,
+      '',
+      `Ahora, ¿a qué comisión pertenece este grupo?`,
+      `Respondé el nombre/número (ej: A, B, 1, 2, Única) o "0" para no asignar comisión específica (aplica a todas).`,
+    ].join('\n');
+  }
+
+  private async handleGroupContextCommission(userId: string, cleaned: string): Promise<string> {
+    const pending = this.pendingGroupContextData.get(userId);
+    if (!pending?.groupId || !pending.year) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Faltan datos. Intenta de nuevo desde el grupo con !config-grupo.';
+    }
+
+    const commissionName = cleaned.trim().toLowerCase();
+
+    let commissionId: number | null = null;
+
+    if (commissionName !== '0' && commissionName !== 'todas' && commissionName !== 'ninguna') {
+      // Buscar o crear comisión
+      if (!this.commissionRepository) {
+        this.pendingGroupContextData.delete(userId);
+        this.pendingAdminState.delete(userId);
+        return '❌ Repositorio de comisiones no disponible.';
+      }
+
+      commissionId = await this.commissionRepository.createOrGet(commissionName.toUpperCase(), pending.year);
+    }
+
+    // Guardar contexto de grupo
+    if (!this.groupContextRepository) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Repositorio de contexto no disponible.';
+    }
+
+    const label = commissionId ? `${pending.year} - Comisión ${commissionName.toUpperCase()}` : `${pending.year} - Global`;
+
+    await this.groupContextRepository.upsert(
+      pending.groupId,
+      pending.year,
+      commissionId,
+      label,
+      userId
+    );
+
+    this.pendingGroupContextData.delete(userId);
+    this.pendingAdminState.delete(userId);
+
+    return [
+      '✅ Contexto del grupo actualizado exitosamente',
+      '',
+      `📅 Año: ${pending.year}`,
+      `📌 Comisión: ${commissionId ? commissionName.toUpperCase() : 'Global (aplica a todas)'}`,
+      '',
+      'El bot ahora filtrará clases y horarios según esta configuración.',
+    ].join('\n');
   }
 
   private pickOne(options: string[]): string {

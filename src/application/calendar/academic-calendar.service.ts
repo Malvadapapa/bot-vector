@@ -168,6 +168,18 @@ export class AcademicCalendarService {
       return this.dynamicMessageService.getNews(5, false);
     }
 
+    // PHASE 4: Group configuration command
+    if (resolvedCommand === '!config-grupo' || resolvedCommand === '!configurar-grupo') {
+      if (!isAdmin) {
+        return '🔒 Solo administradores pueden ejecutar este comando.';
+      }
+      if (!groupId) {
+        return '⚠️ Este comando solo funciona desde el grupo.';
+      }
+      // El mensaje de retorno será devuelto por handleGroupConfigStart en gateway
+      return `config-grupo:${groupId}`;
+    }
+
     // Comandos de menú para exámenes
     if (resolvedCommand === '!agregarexamen') {
       if (this.examMenuService) {
@@ -375,7 +387,7 @@ export class AcademicCalendarService {
   }
 
   private async formatManagedExams(userId?: string, groupId?: string): Promise<string> {
-    const userCommissionId = userId ? await this.getUserCommissionId(userId) : null;
+    const userCommissionId = userId ? await this.getUserCommissionId(userId, groupId) : null;
     const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(10), userCommissionId);
     if (!exams.length) return '📝 Próximos exámenes:\n- No hay exámenes cargados por ahora.';
 
@@ -728,9 +740,9 @@ export class AcademicCalendarService {
     return hh * 60 + mm;
   }
 
-  private async getClassesForWeekday(dayName: string, userId?: string): Promise<Array<{ hora: string; materia: string; meetLink: string }>> {
+  private async getClassesForWeekday(dayName: string, userId?: string, groupId?: string): Promise<Array<{ hora: string; materia: string; meetLink: string }>> {
     // Nuevo comportamiento (Phase 3): cuando exista ClassCommissionSchedule usarlo
-    const userCommissionId = userId ? await this.getUserCommissionId(userId) : null;
+    const userCommissionId = userId ? await this.getUserCommissionId(userId, groupId) : null;
 
     // Si tenemos schedules en la BD y la repo correspondiente, preferirlos
     if (this.classCommissionScheduleRepository) {
@@ -782,7 +794,20 @@ export class AcademicCalendarService {
       .map((c) => ({ hora: c.schedule_time, materia: c.subject, meetLink: c.meet_link }));
   }
 
-  private async getUserCommissionId(userId: string): Promise<number | null> {
+  private async getUserCommissionId(userId: string, groupId?: string): Promise<number | null> {
+    // PHASE 3: Try to get commission from group context first (multi-tenant aware)
+    if (groupId && this.groupContextRepository) {
+      try {
+        const groupContext = await this.groupContextRepository.getByGroupId(groupId);
+        if (groupContext?.commission_id) {
+          return groupContext.commission_id;
+        }
+      } catch (err) {
+        // Fall back to user profile
+      }
+    }
+
+    // Fall back to user profile commission
     const profile = await this.userProfileRepository.get(userId);
     if (typeof profile?.user_commission_id !== 'number') {
       return null;

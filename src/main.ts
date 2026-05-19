@@ -21,8 +21,12 @@ import {
   AdminRepository,
   AdminVerificationCodeRepository,
   ClassNotificationRepository,
+  ClassCommissionScheduleRepository,
+  CommissionRepository,
   ConfirmationRepository,
   DailyGreetingRepository,
+  GroupContextRepository,
+  GroupRepository,
   InstitutionalNoticeRepository,
   ManagedClassRepository,
   ManagedExamRepository,
@@ -343,6 +347,8 @@ async function bootstrap() {
     userModerationRepository,
     dynamicMessageService,
     settings.adminPassword,
+    groupContextRepository,
+    commissionRepository,
   );
   const cabezonWhatsAppGateway = new CabezonWhatsAppGateway(
     messageRouter,

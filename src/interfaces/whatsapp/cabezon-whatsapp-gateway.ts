@@ -375,6 +375,14 @@ export class CabezonWhatsAppGateway {
           );
           if (groupReply == null) return;
 
+          // PHASE 4: Handle group configuration command
+          if (typeof groupReply === 'string' && groupReply.startsWith('config-grupo:')) {
+            const groupId = groupReply.substring('config-grupo:'.length);
+            const configReply = await this.privateChatWorkflow.startGroupContextConfiguration(senderJid, groupId);
+            await this.sendTextMessage(senderJid, configReply, undefined, true);
+            return;
+          }
+
           const safeReply = String(groupReply).trim() || 'No pude generar una respuesta en este momento.';
 
           // 🔍 Detección dinámica de intención de respuesta IA
