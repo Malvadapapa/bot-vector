@@ -382,16 +382,22 @@ async function bootstrap() {
       institutionalNoticeRepository,
       reminderRepository,
       async (text: string) => {
-        for (const gid of settings.whatsappGroupIds) {
+        // PHASE 5: Send to active groups from database
+        const activeGroupIds = await groupRepository.getAllActiveIds();
+        for (const gid of activeGroupIds) {
           await cabezonWhatsAppGateway.sendTextMessage(gid, text);
         }
       },
-      settings.whatsappGroupIds[0] || undefined,
+      async () => {
+        // PHASE 5: Get first active group dynamically
+        const activeGroupIds = await groupRepository.getAllActiveIds();
+        return activeGroupIds[0] || undefined;
+      },
     )
     : undefined;
 
   const scheduler = new SchedulerService(
-    settings.whatsappGroupIds,
+    groupRepository,
     cabezonWhatsAppGateway,
     rateLimitService,
     reminderRepository,
@@ -407,7 +413,7 @@ async function bootstrap() {
   );
 
   await cabezonWhatsAppGateway.startConnection();
-  scheduler.startJobs();
+  await scheduler.startJobs();
 
   process.on('SIGINT', () => {
     console.log('\n=== Cerrando Cabezón ===');

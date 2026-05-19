@@ -4,7 +4,7 @@ import { ClassNotificationService } from '../application/notifications/class-not
 import { ExamNotificationService } from '../application/notifications/exam-notification.service.js';
 import { DynamicMessageService } from '../application/messages/dynamic-message.service.js';
 import { RateLimitService } from '../application/ai/rate-limit.service.js';
-import { ConfirmationRepository, ManagedExamRepository, OutboxDedupRepository, ReminderRepository, SchedulerRunRepository, UserProfileRepository } from '../infrastructure/persistence/db/repositories.js';
+import { ConfirmationRepository, GroupRepository, ManagedExamRepository, OutboxDedupRepository, ReminderRepository, SchedulerRunRepository, UserProfileRepository } from '../infrastructure/persistence/db/repositories.js';
 import { InstitutionalEmailMonitor } from '../infrastructure/integrations/imap/institutional-email-monitor.js';
 import { CabezonWhatsAppGateway } from '../interfaces/whatsapp/cabezon-whatsapp-gateway.js';
 import { RagPipelineService } from '../rag/rag-pipeline.service.js';
@@ -13,7 +13,7 @@ export class SchedulerService {
   private examNotificationService: ExamNotificationService;
 
   constructor(
-    private whatsappGroupIds: string[],
+    private groupRepository: GroupRepository,
     private whatsappGateway: CabezonWhatsAppGateway,
     private rateLimitService: RateLimitService,
     private reminderRepository: ReminderRepository,
@@ -27,18 +27,31 @@ export class SchedulerService {
     private ragPipelineService: RagPipelineService,
     private emailMonitor?: InstitutionalEmailMonitor,
   ) {
+    // ExamNotificationService will be initialized with active groups in startJobs()
     this.examNotificationService = new ExamNotificationService(
       managedExamRepository,
       whatsappGateway,
-      whatsappGroupIds,
+      [], // Will be populated dynamically
     );
   }
 
-  public startJobs(): void {
-    console.log('[Scheduler] Iniciando tareas automáticas...');
-    if (!this.whatsappGroupIds.length) {
-      console.log('[Scheduler] Avisos a grupos desactivados: no hay grupos configurados.');
+  public async startJobs(): Promise<void> {
+    console.log('[Scheduler] Iniciando tareas automáticas (PHASE 5: multi-tenant aware)...');
+    
+    // PHASE 5: Get active groups from database instead of static settings
+    const activeGroupIds = await this.groupRepository.getAllActiveIds();
+    if (!activeGroupIds.length) {
+      console.log('[Scheduler] Avisos a grupos desactivados: no hay grupos activos en BD.');
+    } else {
+      console.log(`[Scheduler] ${activeGroupIds.length} grupos activos cargados desde BD`);
     }
+
+    // Update ExamNotificationService with current groups
+    this.examNotificationService = new ExamNotificationService(
+      this.managedExamRepository,
+      this.whatsappGateway,
+      activeGroupIds,
+    );
 
     cron.schedule('0 0 * * *', async () => {
       await this.safeRun('rate_limit_reset', async () => {
@@ -48,6 +61,7 @@ export class SchedulerService {
 
     cron.schedule('*/30 * * * *', async () => {
       await this.safeRun('send_reminders', async () => {
+        const currentActiveGroupIds = await this.groupRepository.getAllActiveIds();
         const due = await this.reminderRepository.listDueForNotification(new Date());
         for (const reminder of due) {
           if (!reminder.id) continue;
@@ -61,8 +75,8 @@ export class SchedulerService {
           const shouldSend = await this.outboxDedupRepository.markIfNew(dedupKey);
           if (!shouldSend) continue;
 
-          // Enviar a todos los grupos configurados
-          for (const groupId of this.whatsappGroupIds) {
+          // PHASE 5: Send to active groups from database
+          for (const groupId of currentActiveGroupIds) {
             if (reminder.group_id && reminder.group_id !== groupId) continue;
             await this.whatsappGateway.sendTextMessage(groupId, text);
           }
@@ -88,7 +102,8 @@ export class SchedulerService {
 
     cron.schedule('*/5 * * * *', async () => {
       await this.safeRun('class_notifications', async () => {
-        if (!this.whatsappGroupIds.length) return;
+        const currentActiveGroupIds = await this.groupRepository.getAllActiveIds();
+        if (!currentActiveGroupIds.length) return;
 
         const classesToNotify = await this.classNotificationService.getClassesToNotifyNow();
         for (const managedClass of classesToNotify) {
@@ -98,8 +113,8 @@ export class SchedulerService {
           if (!shouldSend) continue;
 
           const message = this.classNotificationService.buildNotificationMessage(managedClass);
-          // Enviar a todos los grupos
-          for (const groupId of this.whatsappGroupIds) {
+          // PHASE 5: Send to active groups from database
+          for (const groupId of currentActiveGroupIds) {
             await this.whatsappGateway.sendTextMessage(groupId, message);
           }
           await this.classNotificationService.recordNotificationSent(managedClass.id!);
@@ -109,7 +124,8 @@ export class SchedulerService {
 
     cron.schedule('*/5 * * * *', async () => {
       await this.safeRun('exam_notifications', async () => {
-        if (!this.whatsappGroupIds.length) return;
+        const currentActiveGroupIds = await this.groupRepository.getAllActiveIds();
+        if (!currentActiveGroupIds.length) return;
 
         const examsToNotify = await this.examNotificationService.getExamsReadyForNotification(new Date());
         for (const item of examsToNotify) {
@@ -118,7 +134,8 @@ export class SchedulerService {
           if (!shouldSend) continue;
 
           const message = this.examNotificationService.formatNotificationMessage(item.exam, item.frequency);
-          for (const groupId of this.whatsappGroupIds) {
+          // PHASE 5: Send to active groups from database
+          for (const groupId of currentActiveGroupIds) {
             await this.whatsappGateway.sendTextMessage(groupId, message);
           }
         }
@@ -127,7 +144,8 @@ export class SchedulerService {
 
     cron.schedule('0 9 * * *', async () => {
       await this.safeRun('send_birthday_greetings', async () => {
-        if (!this.whatsappGroupIds.length) return;
+        const currentActiveGroupIds = await this.groupRepository.getAllActiveIds();
+        if (!currentActiveGroupIds.length) return;
 
         const now = new Date();
         const dayMonth = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -140,8 +158,8 @@ export class SchedulerService {
 
           const mention = `@${user.user_id.replace('@s.whatsapp.net', '')}`;
           const message = `🎉🎂🥳 ¡MUY FELIZ CUMPLEAÑOS ${user.name}! 🥳🎂🎉\n\nQue tengas un día espectacular ${mention}. ¡Un abrazo gigante de parte de todos! 🎈🎁🎊`;
-          // Enviar a todos los grupos
-          for (const groupId of this.whatsappGroupIds) {
+          // PHASE 5: Send to active groups from database
+          for (const groupId of currentActiveGroupIds) {
             await this.whatsappGateway.sendTextMessage(groupId, message);
           }
         }
@@ -174,9 +192,11 @@ export class SchedulerService {
         const deleted = await this.managedExamRepository.deleteExpired(new Date());
         if (deleted > 0) {
           console.log(`[Scheduler] Exámenes expirados eliminados: ${deleted}`);
-          if (this.whatsappGroupIds.length > 0) {
+          const currentActiveGroupIds = await this.groupRepository.getAllActiveIds();
+          if (currentActiveGroupIds.length > 0) {
             const message = `✅ Se limpió la agenda: ${deleted} examen(es) vencido(s) eliminado(s).`;
-            for (const groupId of this.whatsappGroupIds) {
+            // PHASE 5: Send to active groups from database
+            for (const groupId of currentActiveGroupIds) {
               await this.whatsappGateway.sendTextMessage(groupId, message);
             }
           }

@@ -9,12 +9,15 @@ export class InstitutionalEmailMonitor {
     private noticeRepository: InstitutionalNoticeRepository,
     private reminderRepository: ReminderRepository,
     private publishCallback: (text: string) => Promise<void> | void,
-    private targetGroupId?: string,
+    private getTargetGroupId?: () => Promise<string | undefined>,
   ) {}
 
   public async pollOnce(): Promise<number> {
     const emails = await this.emailService.fetchUnreadInstitutionEmails();
     let processed = 0;
+
+    // PHASE 5: Get target group ID dynamically if callback provided
+    const targetGroupId = this.getTargetGroupId ? await this.getTargetGroupId() : undefined;
 
     for (const email of emails) {
       const notice = this.parseNoticeFromEmail(email);
@@ -42,7 +45,7 @@ export class InstitutionalEmailMonitor {
           description: `Quedan pocos dias para inscribirse a ${notice.title}.`,
           event_date: targetDate,
           source: 'email',
-          group_id: this.targetGroupId ?? null,
+          group_id: targetGroupId ?? null,
         });
       }
     }
