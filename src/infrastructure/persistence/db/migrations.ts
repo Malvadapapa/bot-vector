@@ -241,6 +241,83 @@ const MIGRATIONS: Migration[] = [
       `UPDATE user_profiles SET user_commission_id = 1 WHERE user_commission_id IS NULL`,
     ],
   },
+ 
+  {
+    version: 14,
+    description: 'Multi-tenant groups: whatsapp_groups table',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS whatsapp_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL UNIQUE,
+        display_name TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        added_by TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_whatsapp_groups_group_id ON whatsapp_groups(group_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_whatsapp_groups_is_active ON whatsapp_groups(is_active)`,
+    ],
+  },
+  {
+    version: 15,
+    description: 'Academic commissions (comisiones) for filtering',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS commissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        year INTEGER,
+        shift TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(name, year, shift)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_commissions_year ON commissions(year)`,
+      `CREATE INDEX IF NOT EXISTS idx_commissions_name ON commissions(name)`,
+    ],
+  },
+  {
+    version: 16,
+    description: 'Multi-tenant group contexts (año y comisión)',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS group_context (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL UNIQUE,
+        year INTEGER NOT NULL,
+        commission_id INTEGER,
+        label TEXT,
+        configured_by TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(group_id) REFERENCES whatsapp_groups(group_id) ON DELETE CASCADE,
+        FOREIGN KEY(commission_id) REFERENCES commissions(id) ON DELETE SET NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_group_context_group_id ON group_context(group_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_group_context_year ON group_context(year)`,
+      `CREATE INDEX IF NOT EXISTS idx_group_context_commission_id ON group_context(commission_id)`,
+    ],
+  },
+  {
+    version: 17,
+    description: 'Class commission schedule: horarios por comisión para cada clase',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS class_commission_schedule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        managed_class_id INTEGER NOT NULL,
+        commission_id INTEGER NOT NULL,
+        schedule_day TEXT NOT NULL,
+        schedule_time TEXT NOT NULL,
+        meet_link TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(managed_class_id) REFERENCES managed_classes(id) ON DELETE CASCADE,
+        FOREIGN KEY(commission_id) REFERENCES commissions(id) ON DELETE CASCADE
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_class_commission_schedule_managed_class_id ON class_commission_schedule(managed_class_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_class_commission_schedule_commission_id ON class_commission_schedule(commission_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_class_commission_schedule_day ON class_commission_schedule(schedule_day)`,
+    ],
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {

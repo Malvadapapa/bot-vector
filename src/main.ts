@@ -46,6 +46,7 @@ import { CabezonWhatsAppGateway } from './interfaces/whatsapp/cabezon-whatsapp-g
 import { SchedulerService } from './scheduler/scheduler-service.js';
 import { RagQueryService } from './rag/rag-query.service.js';
 import { RagPipelineService } from './rag/rag-pipeline.service.js';
+import { MigrationHelper } from './infrastructure/persistence/db/migration-helper.js';
 
 // Esto es para que esté disponible en main.ts si no lo estaba
 const DEFAULT_BOT_INSTRUCTIONS = [
@@ -231,6 +232,21 @@ async function bootstrap() {
   const dailyGreetingRepository = new DailyGreetingRepository(sqliteDb);
   const outboxDedupRepository = new OutboxDedupRepository(sqliteDb);
   const userModerationRepository = new UserModerationRepository(sqliteDb);
+  const groupRepository = new GroupRepository(sqliteDb);
+  const classCommissionScheduleRepository = new ClassCommissionScheduleRepository(sqliteDb);
+
+  // PHASE 2: Commission and Group Context repositories
+  const commissionRepository = new CommissionRepository(sqliteDb);
+  const groupContextRepository = new GroupContextRepository(sqliteDb);
+
+  // PHASE 1: Migrate groups from .env to database (idempotent)
+  const envGroupIds = settings.whatsappGroupIds;
+  await MigrationHelper.migrateEnvGroupsToDb(sqliteDb, envGroupIds);
+  const allowedGroupIds = await groupRepository.getAllActiveIds();
+  console.log(`[PHASE-1] ${allowedGroupIds.length} active groups loaded from database`);
+  if (allowedGroupIds.length === 0 && envGroupIds.length > 0) {
+    console.warn('[PHASE-1] WARNING: No groups found in DB despite .env having values. Check migration.');
+  }
 
   const seedCodes = settings.adminSeedCodes
     .split(',')
@@ -260,6 +276,9 @@ async function bootstrap() {
     managedClassRepository,
     managedTeacherRepository,
     userProfileRepository,
+    classCommissionScheduleRepository,
+    commissionRepository,
+    groupContextRepository,
     examMenuService,
     editExamMenuService,
     removeNotificationMenuService,

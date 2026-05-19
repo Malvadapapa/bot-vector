@@ -14,6 +14,10 @@ import {
   ReminderCreateInput,
   UserModerationState,
   UserProfile,
+  ClassCommissionSchedule,
+  WhatsAppGroup,
+  Commission,
+  GroupContext,
 } from '../../../domain/models.js';
 
 function run(db: sqlite3.Database, sql: string, params: unknown[] = []): Promise<{ lastID: number; changes: number }> {
@@ -1041,6 +1045,343 @@ function rowToManagedClass(row: any): ManagedClass {
         params
       );
     }
+  }
+
+  // PHASE 1: Multi-tenant Groups Repository
+  export class GroupRepository {
+    constructor(private db: sqlite3.Database) {}
+
+    /**
+     * Register a new WhatsApp group or update if already exists
+     */
+    async register(groupId: string, displayName?: string, addedBy?: string): Promise<number> {
+      const result = await run(
+        this.db,
+        `INSERT INTO whatsapp_groups(group_id, display_name, is_active, added_by, updated_at)
+         VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(group_id) DO UPDATE SET is_active=1, updated_at=CURRENT_TIMESTAMP`,
+        [groupId, displayName ?? null, addedBy ?? null]
+      );
+      // Para conflictos, traer el id existente
+      const existing = await get<any>(this.db, 'SELECT id FROM whatsapp_groups WHERE group_id = ?', [groupId]);
+      return existing ? Number(existing.id) : result.lastID;
+    }
+
+    /**
+     * Get a group by its ID
+     */
+    async findById(id: number): Promise<WhatsAppGroup | null> {
+      const row = await get<any>(this.db, 'SELECT * FROM whatsapp_groups WHERE id = ?', [id]);
+      return row ? rowToWhatsAppGroup(row) : null;
+    }
+
+    /**
+     * Find a group by its WhatsApp JID
+     */
+    async findByGroupId(groupId: string): Promise<WhatsAppGroup | null> {
+      const row = await get<any>(this.db, 'SELECT * FROM whatsapp_groups WHERE group_id = ?', [groupId]);
+      return row ? rowToWhatsAppGroup(row) : null;
+    }
+
+    /**
+     * Get all registered groups (active and inactive)
+     */
+    async findAll(): Promise<WhatsAppGroup[]> {
+      const rows = await all<any>(this.db, 'SELECT * FROM whatsapp_groups ORDER BY created_at DESC');
+      return rows.map(rowToWhatsAppGroup);
+    }
+
+    /**
+     * Get all active group IDs for gateway allowlist
+     */
+    async getAllActiveIds(): Promise<string[]> {
+      const rows = await all<any>(this.db, 'SELECT group_id FROM whatsapp_groups WHERE is_active = 1 ORDER BY created_at ASC');
+      return rows.map((r) => String(r.group_id));
+    }
+
+    /**
+     * Activate or deactivate a group
+     */
+    async setActive(groupId: string, isActive: boolean): Promise<void> {
+      await run(this.db, 'UPDATE whatsapp_groups SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ?', [
+        isActive ? 1 : 0,
+        groupId,
+      ]);
+    }
+
+    /**
+     * Delete a group (hard delete - use setActive(false) to soft delete instead)
+     */
+    async delete(groupId: string): Promise<boolean> {
+      const result = await run(this.db, 'DELETE FROM whatsapp_groups WHERE group_id = ?', [groupId]);
+      return result.changes > 0;
+    }
+
+    /**
+     * Check if a group is registered and active
+     */
+    async isActive(groupId: string): Promise<boolean> {
+      const row = await get<any>(this.db, 'SELECT is_active FROM whatsapp_groups WHERE group_id = ?', [groupId]);
+      return !!row && Number(row.is_active) === 1;
+    }
+
+    /**
+     * Get count of active groups
+     */
+    async getActiveCount(): Promise<number> {
+      const row = await get<any>(this.db, 'SELECT COUNT(*) as count FROM whatsapp_groups WHERE is_active = 1');
+      return Number(row?.count ?? 0);
+    }
+  }
+
+  // PHASE 2: Commissions Repository
+  export class CommissionRepository {
+    constructor(private db: sqlite3.Database) {}
+
+    /**
+     * Create or get a commission
+     */
+    async createOrGet(name: string, year?: number, shift?: string): Promise<number> {
+      // Try to find existing
+      let row = await get<any>(
+        this.db,
+        'SELECT id FROM commissions WHERE name = ? AND year IS ? AND shift IS ?',
+        [name, year ?? null, shift ?? null]
+      );
+      if (row) return Number(row.id);
+
+      // Create new
+      const result = await run(
+        this.db,
+        'INSERT INTO commissions(name, year, shift) VALUES (?, ?, ?)',
+        [name, year ?? null, shift ?? null]
+      );
+      return result.lastID;
+    }
+
+    /**
+     * Get commission by ID
+     */
+    async getById(id: number): Promise<Commission | null> {
+      const row = await get<any>(this.db, 'SELECT * FROM commissions WHERE id = ?', [id]);
+      return row ? rowToCommission(row) : null;
+    }
+
+    /**
+     * List all commissions for a given year
+     */
+    async listByYear(year: number): Promise<Commission[]> {
+      const rows = await all<any>(
+        this.db,
+        'SELECT * FROM commissions WHERE year = ? ORDER BY shift, name',
+        [year]
+      );
+      return rows.map(rowToCommission);
+    }
+
+    /**
+     * List all commissions
+     */
+    async findAll(): Promise<Commission[]> {
+      const rows = await all<any>(this.db, 'SELECT * FROM commissions ORDER BY year DESC, shift, name');
+      return rows.map(rowToCommission);
+    }
+
+    /**
+     * Delete a commission
+     */
+    async delete(id: number): Promise<boolean> {
+      const result = await run(this.db, 'DELETE FROM commissions WHERE id = ?', [id]);
+      return result.changes > 0;
+    }
+
+    /**
+     * Get distinct years
+     */
+    async getDistinctYears(): Promise<number[]> {
+      const rows = await all<any>(this.db, 'SELECT DISTINCT year FROM commissions WHERE year IS NOT NULL ORDER BY year DESC');
+      return rows.map((r) => Number(r.year));
+    }
+  }
+
+  // PHASE 2: Group Context Repository
+  export class GroupContextRepository {
+    constructor(private db: sqlite3.Database) {}
+
+    /**
+     * Create or update group context
+     */
+    async upsert(
+      groupId: string,
+      year: number,
+      commissionId?: number | null,
+      label?: string,
+      configuredBy?: string
+    ): Promise<number> {
+      const existing = await get<any>(this.db, 'SELECT id FROM group_context WHERE group_id = ?', [groupId]);
+
+      if (existing) {
+        // Update
+        await run(
+          this.db,
+          `UPDATE group_context SET year = ?, commission_id = ?, label = ?, configured_by = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE group_id = ?`,
+          [year, commissionId ?? null, label ?? null, configuredBy ?? null, groupId]
+        );
+        return Number(existing.id);
+      } else {
+        // Create
+        const result = await run(
+          this.db,
+          `INSERT INTO group_context(group_id, year, commission_id, label, configured_by)
+           VALUES (?, ?, ?, ?, ?)`,
+          [groupId, year, commissionId ?? null, label ?? null, configuredBy ?? null]
+        );
+        return result.lastID;
+      }
+    }
+
+    /**
+     * Get context by group ID
+     */
+    async getByGroupId(groupId: string): Promise<GroupContext | null> {
+      const row = await get<any>(this.db, 'SELECT * FROM group_context WHERE group_id = ?', [groupId]);
+      return row ? rowToGroupContext(row) : null;
+    }
+
+    /**
+     * Get all contexts
+     */
+    async findAll(): Promise<GroupContext[]> {
+      const rows = await all<any>(this.db, 'SELECT * FROM group_context ORDER BY created_at DESC');
+      return rows.map(rowToGroupContext);
+    }
+
+    /**
+     * Get contexts by commission
+     */
+    async getByCommissionId(commissionId: number): Promise<GroupContext[]> {
+      const rows = await all<any>(this.db, 'SELECT * FROM group_context WHERE commission_id = ?', [commissionId]);
+      return rows.map(rowToGroupContext);
+    }
+
+    /**
+     * Get contexts by year
+     */
+    async getByYear(year: number): Promise<GroupContext[]> {
+      const rows = await all<any>(this.db, 'SELECT * FROM group_context WHERE year = ?', [year]);
+      return rows.map(rowToGroupContext);
+    }
+
+    /**
+     * Delete context
+     */
+    async delete(groupId: string): Promise<boolean> {
+      const result = await run(this.db, 'DELETE FROM group_context WHERE group_id = ?', [groupId]);
+      return result.changes > 0;
+    }
+  }
+
+  // PHASE 3: ClassCommissionSchedule Repository
+  export class ClassCommissionScheduleRepository {
+    constructor(private db: sqlite3.Database) {}
+
+    async create(entry: {
+      managed_class_id: number;
+      commission_id: number;
+      schedule_day: string;
+      schedule_time: string;
+      meet_link?: string | null;
+    }): Promise<number> {
+      const result = await run(
+        this.db,
+        `INSERT INTO class_commission_schedule(managed_class_id, commission_id, schedule_day, schedule_time, meet_link)
+         VALUES (?, ?, ?, ?, ?)`,
+        [entry.managed_class_id, entry.commission_id, entry.schedule_day, entry.schedule_time, entry.meet_link ?? null]
+      );
+      return result.lastID;
+    }
+
+    async listByCommissionAndDay(commissionId: number, day: string): Promise<ClassCommissionSchedule[]> {
+      const rows = await all<any>(
+        this.db,
+        `SELECT * FROM class_commission_schedule WHERE commission_id = ? AND lower(schedule_day) = lower(?) ORDER BY schedule_time`,
+        [commissionId, day]
+      );
+      return rows.map(rowToClassCommissionSchedule);
+    }
+
+    async listByDay(day: string): Promise<ClassCommissionSchedule[]> {
+      const rows = await all<any>(
+        this.db,
+        `SELECT * FROM class_commission_schedule WHERE lower(schedule_day) = lower(?) ORDER BY schedule_time`,
+        [day]
+      );
+      return rows.map(rowToClassCommissionSchedule);
+    }
+
+    async listByManagedClass(managedClassId: number): Promise<ClassCommissionSchedule[]> {
+      const rows = await all<any>(
+        this.db,
+        `SELECT * FROM class_commission_schedule WHERE managed_class_id = ? ORDER BY schedule_day, schedule_time`,
+        [managedClassId]
+      );
+      return rows.map(rowToClassCommissionSchedule);
+    }
+
+    async delete(id: number): Promise<boolean> {
+      const result = await run(this.db, 'DELETE FROM class_commission_schedule WHERE id = ?', [id]);
+      return result.changes > 0;
+    }
+  }
+
+  function rowToClassCommissionSchedule(row: any): ClassCommissionSchedule {
+    return {
+      id: Number(row.id),
+      managed_class_id: Number(row.managed_class_id),
+      commission_id: Number(row.commission_id),
+      schedule_day: String(row.schedule_day),
+      schedule_time: String(row.schedule_time),
+      meet_link: row.meet_link ? String(row.meet_link) : undefined,
+      created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
+      updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
+    };
+  }
+
+  function rowToCommission(row: any): Commission {
+    return {
+      id: Number(row.id),
+      name: String(row.name),
+      year: row.year ? Number(row.year) : undefined,
+      shift: row.shift ? String(row.shift) : undefined,
+      created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
+      updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
+    };
+  }
+
+  function rowToGroupContext(row: any): GroupContext {
+    return {
+      id: Number(row.id),
+      group_id: String(row.group_id),
+      year: Number(row.year),
+      commission_id: row.commission_id ? Number(row.commission_id) : null,
+      label: row.label ? String(row.label) : undefined,
+      configured_by: row.configured_by ? String(row.configured_by) : undefined,
+      created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
+      updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
+    };
+  }
+
+  function rowToWhatsAppGroup(row: any): WhatsAppGroup {
+    return {
+      id: Number(row.id),
+      group_id: String(row.group_id),
+      display_name: row.display_name ? String(row.display_name) : undefined,
+      is_active: Number(row.is_active) === 1,
+      added_by: row.added_by ? String(row.added_by) : undefined,
+      created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
+      updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
+    };
   }
 
   function rowToTeacher(row: any): ManagedTeacher {

@@ -371,6 +371,7 @@ export class CabezonWhatsAppGateway {
             invokedByMention || isCommand,
             isAdmin,
             invokedByMention,
+            chatId,
           );
           if (groupReply == null) return;
 

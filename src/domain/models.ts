@@ -203,3 +203,47 @@ export interface InfractionRecord {
   warnings: number;
 }
 
+// PHASE 1: Multi-tenant Groups - unlimited groups in database
+export interface WhatsAppGroup {
+  id?: number;
+  group_id: string;      // JID de WhatsApp (e.g., "1234567890-1234567890@g.us")
+  display_name?: string; // Nombre personalizado para referencia interna
+  is_active: boolean;
+  added_by?: string;     // Usuario que registró el grupo
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+// PHASE 2: Academic Commissions - replaces orphaned Comision interface
+export interface Commission {
+  id?: number;
+  name: string;          // "A", "B", "1", "2", "Única", etc.
+  year?: number;         // Año académico (2024, 2025, etc.)
+  shift?: string;        // Turno (Mañana, Tarde, Noche, etc.)
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+// PHASE 2: Group academic context - maps group to year + commission
+export interface GroupContext {
+  id?: number;
+  group_id: string;              // FK to whatsapp_groups.group_id
+  year: number;                  // Academic year for the group
+  commission_id?: number | null; // FK to commissions.id (optional)
+  label?: string;                // Display label (e.g., "1° Año A")
+  configured_by?: string;        // Who configured this context
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+// PHASE 3: Schedule entries that map a managed class to a commission and a weekday/time
+export interface ClassCommissionSchedule {
+  id?: number;
+  managed_class_id: number;
+  commission_id: number;
+  schedule_day: string;   // e.g., 'lunes'
+  schedule_time: string;  // e.g., '14:30'
+  meet_link?: string;
+  created_at?: Date;
+  updated_at?: Date;
+}

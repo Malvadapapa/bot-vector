@@ -16,6 +16,9 @@ import {
   ManagedTeacherRepository,
   ReminderRepository,
   UserProfileRepository,
+  ClassCommissionScheduleRepository,
+  CommissionRepository,
+  GroupContextRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
 import { LoggingService } from '../../infrastructure/logging/logging.service.js';
 
@@ -57,6 +60,9 @@ export class AcademicCalendarService {
     private managedClassRepository: ManagedClassRepository,
     private managedTeacherRepository: ManagedTeacherRepository,
     private userProfileRepository: UserProfileRepository,
+    private classCommissionScheduleRepository?: ClassCommissionScheduleRepository,
+    private commissionRepository?: CommissionRepository,
+    private groupContextRepository?: GroupContextRepository,
     private examMenuService?: ExamMenuService,
     private editExamMenuService?: EditExamMenuService,
     private removeNotificationMenuService?: RemoveNotificationMenuService,
@@ -97,7 +103,7 @@ export class AcademicCalendarService {
     this.menuPersistenceService?.setNotificationSender(sender);
   }
 
-  public async handleCommand(userId: string, commandText: string, now?: Date, isAdmin = false): Promise<string | null> {
+  public async handleCommand(userId: string, commandText: string, now?: Date, isAdmin = false, groupId?: string): Promise<string | null> {
     const normalized = commandText.trim().toLowerCase();
     const currentNow = now ?? new Date();
 
@@ -120,11 +126,11 @@ export class AcademicCalendarService {
     }
 
     if (resolvedCommand === '!hoy' || resolvedCommand === '!clases') {
-      return this.formatDay(currentNow);
+      return this.formatDay(currentNow, groupId);
     }
 
     if (resolvedCommand === '!examenes') {
-      return this.formatManagedExams(userId);
+      return this.formatManagedExams(userId, groupId);
     }
 
     if (resolvedCommand === '!help') {
@@ -151,7 +157,7 @@ export class AcademicCalendarService {
     }
 
     if (resolvedCommand === '!enlace') {
-      return this.formatCurrentClassLink(userId, currentNow);
+      return this.formatCurrentClassLink(userId, currentNow, groupId);
     }
 
     if (resolvedCommand === '!avisos') {
@@ -208,7 +214,7 @@ export class AcademicCalendarService {
     return null;
   }
 
-  public async handleMenuInput(userId: string, rawText: string): Promise<string | null> {
+  public async handleMenuInput(userId: string, rawText: string, groupId?: string): Promise<string | null> {
     const normalized = rawText.trim().toLowerCase();
     const isMenuCommand = normalized === '!menu' || normalized === '!m';
 
@@ -308,7 +314,7 @@ export class AcademicCalendarService {
     return this.renderNode(menuTree, nextNode, userId);
   }
 
-  private async formatDay(currentDt: Date): Promise<string> {
+  private async formatDay(currentDt: Date, groupId?: string): Promise<string> {
     const dayName = DAY_NAMES[currentDt.getDay()] || 'dia';
     const dateStr = `${currentDt.getDate()} de ${MONTH_NAMES[currentDt.getMonth()]}`;
     const classes = await this.getClassesForWeekday(dayName);
@@ -334,9 +340,9 @@ export class AcademicCalendarService {
     return chunks.join('|||SPLIT|||');
   }
 
-  private async formatCurrentClassLink(userId: string, currentDt: Date): Promise<string> {
+  private async formatCurrentClassLink(userId: string, currentDt: Date, groupId?: string): Promise<string> {
     const dayName = DAY_NAMES[currentDt.getDay()] || 'dia';
-    const classes = await this.getClassesForWeekday(dayName, userId);
+    const classes = await this.getClassesForWeekday(dayName, userId, groupId);
     const nowMinutes = currentDt.getHours() * 60 + currentDt.getMinutes();
     const AHEAD_MINUTES = 10; // Mostrar enlace hasta 10 min antes del inicio
 
@@ -368,7 +374,7 @@ export class AcademicCalendarService {
     ].join('\n');
   }
 
-  private async formatManagedExams(userId?: string): Promise<string> {
+  private async formatManagedExams(userId?: string, groupId?: string): Promise<string> {
     const userCommissionId = userId ? await this.getUserCommissionId(userId) : null;
     const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(10), userCommissionId);
     if (!exams.length) return '📝 Próximos exámenes:\n- No hay exámenes cargados por ahora.';
@@ -723,8 +729,52 @@ export class AcademicCalendarService {
   }
 
   private async getClassesForWeekday(dayName: string, userId?: string): Promise<Array<{ hora: string; materia: string; meetLink: string }>> {
-    const all = await this.managedClassRepository.listAll();
+    // Nuevo comportamiento (Phase 3): cuando exista ClassCommissionSchedule usarlo
     const userCommissionId = userId ? await this.getUserCommissionId(userId) : null;
+
+    // Si tenemos schedules en la BD y la repo correspondiente, preferirlos
+    if (this.classCommissionScheduleRepository) {
+      // 1) Si usuario tiene comision, listar schedules para esa comision
+      if (userCommissionId !== null) {
+        const schedules = await this.classCommissionScheduleRepository.listByCommissionAndDay(userCommissionId, dayName);
+        if (schedules.length) {
+          const mapped = await Promise.all(schedules.map(async (s) => {
+            const mc = await this.managedClassRepository.getById(s.managed_class_id);
+            return {
+              hora: s.schedule_time,
+              materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
+              meetLink: s.meet_link || (mc ? mc.meet_link : ''),
+            };
+          }));
+          return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+        }
+      }
+
+      // 2) Si no tiene comision y se conoce el contexto del grupo, usar las commissions del año del grupo
+      if (userCommissionId === null) {
+        if (this.groupContextRepository && this.commissionRepository) {
+          // Nota: si groupId no fue pasado no podemos inferir contexto
+          // En ese caso caemos al fallback de managed_classes
+        }
+      }
+
+      // No encontramos schedules específicos o no hay contexto: intentar listar schedules globales por dia
+      const globalSchedules = await this.classCommissionScheduleRepository.listByDay(dayName);
+      if (globalSchedules.length) {
+        const mapped = await Promise.all(globalSchedules.map(async (s) => {
+          const mc = await this.managedClassRepository.getById(s.managed_class_id);
+          return {
+            hora: s.schedule_time,
+            materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
+            meetLink: s.meet_link || (mc ? mc.meet_link : ''),
+          };
+        }));
+        return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+      }
+    }
+
+    // Fallback: comportamiento legacy con managed_classes + filter por comision si aplica
+    const all = await this.managedClassRepository.listAll();
     const filtered = this.filterClassesByCommission(all, userCommissionId);
     return filtered
       .filter((c) => this.normalizeDayName(c.schedule_day) === this.normalizeDayName(dayName))

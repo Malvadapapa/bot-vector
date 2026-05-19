@@ -54,6 +54,7 @@ export class MessageRouter {
     allowAI = true,
     isAdmin = false,
     forceAI = false,
+    groupId?: string,
   ): Promise<string | null> {
     const routedText = this.normalizeInvocation(text);
     if (!routedText) {
@@ -72,7 +73,7 @@ export class MessageRouter {
       return this.handleHello(userId, now);
     }
 
-    const menuResponse = await this.calendarService.handleMenuInput(userId, routedText);
+    const menuResponse = await this.calendarService.handleMenuInput(userId, routedText, groupId);
     if (menuResponse !== null) {
       return menuResponse;
     }
@@ -80,7 +81,7 @@ export class MessageRouter {
     const parsed = this.messageIntentParserService.parseMessage(routedText, now);
 
     if (parsed.intent === 'command') {
-      return this.calendarService.handleCommand(userId, parsed.normalized_text, now, isAdmin);
+      return this.calendarService.handleCommand(userId, parsed.normalized_text, now, isAdmin, groupId);
     }
 
     const stateAction = await this.conversationService.processMessage(userId, parsed.normalized_text, parsed, now);
