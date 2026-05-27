@@ -52,9 +52,11 @@ export class MessageRouter {
     text: string,
     now?: Date,
     allowAI = true,
-    isAdmin = false,
+    isGlobalAdmin = false,
+    isGroupAdmin = false,
     forceAI = false,
     groupId?: string,
+    isSuperAdmin = false,
   ): Promise<string | null> {
     const routedText = this.normalizeInvocation(text);
     if (!routedText) {
@@ -63,6 +65,7 @@ export class MessageRouter {
 
     const normalized = routedText.trim().toLowerCase();
     const isCommand = normalized.startsWith('!');
+    const isAdmin = isGlobalAdmin || isSuperAdmin;
 
     // Si el mensaje llega por arroba, forzamos IA (excepto comandos explícitos).
     if (forceAI && !isCommand) {
@@ -81,7 +84,7 @@ export class MessageRouter {
     const parsed = this.messageIntentParserService.parseMessage(routedText, now);
 
     if (parsed.intent === 'command') {
-      return this.calendarService.handleCommand(userId, parsed.normalized_text, now, isAdmin, groupId);
+      return this.calendarService.handleCommand(userId, parsed.normalized_text, now, isAdmin, groupId, isGroupAdmin, isSuperAdmin);
     }
 
     const stateAction = await this.conversationService.processMessage(userId, parsed.normalized_text, parsed, now);

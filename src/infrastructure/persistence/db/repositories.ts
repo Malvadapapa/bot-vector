@@ -559,6 +559,13 @@ export class AdminRepository {
     ]);
   }
 
+  async setSuperAdmin(userId: string, value: boolean): Promise<void> {
+    await run(this.db, 'UPDATE admin_users SET is_super_admin = ?, updated_at=CURRENT_TIMESTAMP WHERE user_id = ?', [
+      value ? 1 : 0,
+      userId,
+    ]);
+  }
+
   async isAuthenticated(userId: string): Promise<boolean> {
     const row = await get<any>(this.db, 'SELECT is_authenticated FROM admin_users WHERE user_id = ?', [userId]);
     if (row) return Number(row.is_authenticated) === 1;
@@ -570,6 +577,12 @@ export class AdminRepository {
     return !!match && Number(match.is_authenticated) === 1;
   }
 
+  async isGlobalAdmin(userId: string): Promise<boolean> {
+    const isAuth = await this.isAuthenticated(userId);
+    const isSuper = await this.isSuperAdmin(userId);
+    return isAuth && !isSuper;
+  }
+
   async get(userId: string): Promise<AdminUser | null> {
     const row = await get<any>(this.db, 'SELECT * FROM admin_users WHERE user_id = ?', [userId]);
     if (!row) return null;
@@ -578,6 +591,16 @@ export class AdminRepository {
       is_authenticated: Number(row.is_authenticated) === 1,
       is_super_admin: Number(row.is_super_admin ?? 0) === 1,
     };
+  }
+
+  async isSuperAdmin(userId: string): Promise<boolean> {
+    const row = await get<any>(this.db, 'SELECT is_super_admin FROM admin_users WHERE user_id = ?', [userId]);
+    if (row) return Number(row.is_super_admin) === 1;
+    const phone = userId.split('@')[0]?.split(':')[0] || '';
+    if (!phone) return false;
+    const allRows = await all<any>(this.db, 'SELECT user_id, is_super_admin FROM admin_users');
+    const match = allRows.find((r) => String(r.user_id).split('@')[0]?.split(':')[0] === phone);
+    return !!match && Number(match.is_super_admin) === 1;
   }
 
   async listAllAdminIds(): Promise<string[]> {
@@ -614,11 +637,13 @@ export class AdminRepository {
   }
 
   /**
-   * Returns 'global' if the user is a global authenticated admin,
+   * Returns 'super' if the user is a super admin,
+   * 'global' if the user is a global authenticated admin,
    * 'group' if the user is a group admin for the provided groupId,
    * or null otherwise.
    */
-  async getAdminLevel(userId: string, groupId?: string): Promise<'global' | 'group' | null> {
+  async getAdminLevel(userId: string, groupId?: string): Promise<'super' | 'global' | 'group' | null> {
+    if (await this.isSuperAdmin(userId)) return 'super';
     if (await this.isAuthenticated(userId)) return 'global';
     if (groupId && (await this.isGroupAdmin(userId, groupId))) return 'group';
     return null;

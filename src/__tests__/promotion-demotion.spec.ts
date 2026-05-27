@@ -5,6 +5,7 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
   let svc: any;
   let userProfileRepo: any;
   let adminRepo: any;
+  let adminCodeRepo: any;
   let groupRepo: any;
 
   beforeEach(() => {
@@ -20,9 +21,14 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
       isRegistered: vi.fn(async () => true),
       register: vi.fn(async () => null),
       setAuthenticated: vi.fn(async () => null),
+      setSuperAdmin: vi.fn(async () => null),
       assignGroupAdmin: vi.fn(async () => null),
       removeGroupAdmin: vi.fn(async () => null),
       listGroupAdmins: vi.fn(async (gid: string) => [{ user_id: 'u1' }]),
+    };
+
+    adminCodeRepo = {
+      consumeIfValid: vi.fn(async () => true),
     };
 
     groupRepo = {
@@ -35,7 +41,7 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     svc = new PrivateChatWorkflowService(
       userProfileRepo,
       adminRepo,
-      {} as any, // adminCodeRepository
+      adminCodeRepo, // adminCodeRepository
       {} as any, // noticesRepository
       {} as any, // examsRepository
       {} as any, // managedClassRepository
@@ -86,5 +92,19 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     const res = await svc.handlePrivateMessage(adminId, '1');
     expect(res).toContain('removido como Admin de Grupo');
     expect(adminRepo.removeGroupAdmin).toHaveBeenCalledWith('u1', 'group1');
+  });
+
+  it('registers a private code as superadmin and returns the superadmin menu', async () => {
+    const adminId = 'admin2';
+    adminRepo.isRegistered = vi.fn(async () => false);
+
+    const prompt = await svc.handlePrivateMessage(adminId, 'mequetrefe');
+    expect(prompt).toContain('Mandame el código de 6 dígitos');
+
+    const response = await svc.handlePrivateMessage(adminId, '123456');
+    expect(adminCodeRepo.consumeIfValid).toHaveBeenCalledWith('123456', adminId);
+    expect(adminRepo.register).toHaveBeenCalledWith(adminId);
+    expect(adminRepo.setSuperAdmin).toHaveBeenCalledWith(adminId, true);
+    expect(response).toContain('Menú Super-Admin');
   });
 });

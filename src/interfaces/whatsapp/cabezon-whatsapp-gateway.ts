@@ -242,7 +242,14 @@ export class CabezonWhatsAppGateway {
           const senderJid = rawSenderJid.split(' ')[0];
 
           const incomingText = this.extractMessageText(incomingMessage).trim();
-          const isAdmin = await this.adminRepository.isRegistered(senderJid);
+          const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+            ? await (this.adminRepository as any).isSuperAdmin(senderJid)
+            : !!(await this.adminRepository.get(senderJid))?.is_super_admin;
+          const isGlobalAdmin = typeof (this.adminRepository as any).isGlobalAdmin === 'function'
+            ? await (this.adminRepository as any).isGlobalAdmin(senderJid)
+            : (await this.adminRepository.isAuthenticated(senderJid)) && !isSuperAdmin;
+          const isAdmin = isGlobalAdmin || isSuperAdmin;
+          const isGroupAdmin = isGroup ? await this.adminRepository.isGroupAdmin(senderJid, chatId) : false;
           const isActiveGroup = !isGroup ? true : await this.groupRepository.isActive(chatId);
 
           // Auto-registro en primera activación: si el grupo no existe, registrarlo y notificar super-admins
@@ -393,7 +400,7 @@ export class CabezonWhatsAppGateway {
           const invokedByMention = messageMentionsBot;
 
           if (!isAdmin && !isCommand && !(hasPendingMenu && isNumericReply)) {
-            const moderation = await this.moderationService.evaluate(senderJid, normalizedGroupText, isAdmin, new Date());
+            const moderation = await this.moderationService.evaluate(senderJid, normalizedGroupText, isAdmin || isSuperAdmin, new Date());
             if (moderation.warningMessage) {
               await this.sendTextMessage(chatId, moderation.warningMessage, senderJid, false);
               return;
@@ -411,9 +418,11 @@ export class CabezonWhatsAppGateway {
             normalizedGroupText,
             new Date(),
             invokedByMention || isCommand,
-            isAdmin,
+            isGlobalAdmin,
+            isGroupAdmin,
             invokedByMention,
             chatId,
+            isSuperAdmin,
           );
           if (groupReply == null) return;
 

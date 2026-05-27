@@ -103,7 +103,7 @@ export class AcademicCalendarService {
     this.menuPersistenceService?.setNotificationSender(sender);
   }
 
-  public async handleCommand(userId: string, commandText: string, now?: Date, isAdmin = false, groupId?: string): Promise<string | null> {
+  public async handleCommand(userId: string, commandText: string, now?: Date, isAdmin = false, groupId?: string, isGroupAdmin = false, isSuperAdmin = false): Promise<string | null> {
     const normalized = commandText.trim().toLowerCase();
     const currentNow = now ?? new Date();
 
@@ -170,7 +170,7 @@ export class AcademicCalendarService {
 
     // PHASE 4: Group configuration command
     if (resolvedCommand === '!config-grupo' || resolvedCommand === '!configurar-grupo') {
-      if (!isAdmin) {
+      if (!isGroupAdmin && !isSuperAdmin) {
         return '🔒 Solo administradores pueden ejecutar este comando.';
       }
       if (!groupId) {

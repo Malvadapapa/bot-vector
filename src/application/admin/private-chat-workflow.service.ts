@@ -283,31 +283,7 @@ export class PrivateChatWorkflowService {
   public async handleGroupAdminLink(userId: string, text: string): Promise<string | null> {
     const cleaned = text.trim();
     if (cleaned.toLowerCase().startsWith('!soyadmin ')) {
-      const code = cleaned.substring(10).trim();
-      if (!/^\d{6}$/.test(code)) {
-        return 'Formato de código inválido. Debe ser de 6 dígitos.';
-      }
-      
-      const valid = await this.adminCodeRepository.consumeIfValid(code, userId);
-      if (!valid) {
-        return 'Código inválido o ya fue utilizado.';
-      }
-
-      await this.adminRepository.register(userId);
-      await this.adminRepository.setAuthenticated(userId, true);
-      
-      // Asegurar que tenga un perfil básico para no pedirle registro en el grupo
-      const profile = await this.userProfileRepository.get(userId);
-      if (!profile || !profile.name || !profile.birthday_day_month || !profile.email) {
-        await this.userProfileRepository.upsert(
-          userId, 
-          profile?.name || 'Admin', 
-          profile?.birthday_day_month || '01/01', 
-          profile?.email || 'admin@ispc.edu.ar'
-        );
-      }
-
-      return '✅ Alias de grupo vinculado exitosamente como Administrador. Ya no tenés límites diarios.';
+      return 'Este flujo se movió al privado. Escribí mequetrefe por privado para registrar superadmins.';
     }
     return null;
   }
@@ -593,11 +569,73 @@ export class PrivateChatWorkflowService {
       }
 
       if (lowered === '0' || lowered === 'menu') {
-        this.pendingAdminState.delete(userId);
-        return this.adminMenuText(userId);
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
       }
 
       return this.superAdminMenuText(userId);
+    }
+
+    if (currentState === 'super_admin_scoped_admin_main') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay grupo seleccionado. Volvé a iniciar con admin-grupos.';
+      }
+
+      if (lowered === '0' || lowered === 'menu') {
+        data.inScopedAdminMenu = false;
+        this.pendingSuperAdminData.set(userId, data);
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        return [
+          `Administrando grupo: ${gid}`,
+          '',
+          '1 - Editar entry_year',
+          '2 - Activar/Desactivar grupo',
+          '3 - Ver membresías',
+          '4 - Forzar re-onboarding (lanzará config por privado)',
+          '5 - Promover usuario a Admin de Grupo',
+          '6 - Quitar Admin de Grupo',
+          '7 - Ir al menú de Admin de este Grupo',
+          '0 - Volver al menú Super-Admin',
+        ].join('\n');
+      }
+
+      if (lowered === '1') {
+        this.pendingAdminState.set(userId, 'submenu_class_notices');
+        return this.classNoticesSubmenuText();
+      }
+      if (lowered === '2') {
+        this.pendingAdminState.set(userId, 'submenu_exams');
+        return this.examsSubmenuText();
+      }
+      if (lowered === '3') {
+        this.pendingAdminState.set(userId, 'submenu_institutional_notices');
+        return this.institutionalNoticesSubmenuText();
+      }
+      if (lowered === '4') {
+        this.pendingAdminState.set(userId, 'submenu_news');
+        return this.newsSubmenuText();
+      }
+      if (lowered === '5') {
+        this.pendingAdminState.set(userId, 'submenu_teachers');
+        return this.teachersSubmenuText();
+      }
+      if (lowered === '6') {
+        return this.handleAdminCodes();
+      }
+      if (lowered === '7') {
+        this.pendingAdminState.set(userId, 'submenu_moderation');
+        return this.moderationSubmenuText();
+      }
+      if (lowered === '8') {
+        this.pendingBanData.set(userId, {});
+        this.pendingAdminState.set(userId, 'await_ban_phone');
+        return '🚫 Banear usuario\n\nPasáme el número de teléfono (solo números, ej: 5493512345678):';
+      }
+
+      return 'Opción inválida. Escribí 0 para volver o seleccioná una opción del 1 al 8.';
     }
 
     if (currentState === 'super_admin_await_select_group') {
@@ -618,6 +656,7 @@ export class PrivateChatWorkflowService {
         '4 - Forzar re-onboarding (lanzará config por privado)',
         '5 - Promover usuario a Admin de Grupo',
         '6 - Quitar Admin de Grupo',
+        '7 - Ir al menú de Admin de este Grupo',
         '0 - Volver al menú Super-Admin',
       ].join('\n');
     }
@@ -665,11 +704,6 @@ export class PrivateChatWorkflowService {
         return this.renderPromoteUsersPage(userId);
       }
 
-      if (lowered === '4') {
-        this.pendingAdminState.set(userId, 'super_admin_main');
-        return this.superAdminMenuText(userId);
-      }
-
       if (lowered === '6') {
         // Demote a group admin
         if (!this.adminRepository) return 'Repositorio de admins no disponible.';
@@ -679,6 +713,18 @@ export class PrivateChatWorkflowService {
         this.pendingAdminState.set(userId, 'super_admin_demote_select');
         const list = admins.map((a, i) => `${i + 1} - ${a.user_id}`);
         return ['Elegí el número del Admin de Grupo a quitar:', ...list].join('\n');
+      }
+
+      if (lowered === '7') {
+        data.inScopedAdminMenu = true;
+        this.pendingSuperAdminData.set(userId, data);
+        this.pendingAdminState.set(userId, 'super_admin_scoped_admin_main');
+        return this.adminMenuText(userId);
+      }
+
+      if (lowered === '0') {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
       }
 
       return 'Opción inválida. Elegí una opción del menú.';
@@ -1144,16 +1190,33 @@ export class PrivateChatWorkflowService {
       return null;
     }
 
+    const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+      ? await (this.adminRepository as any).isSuperAdmin(userId)
+      : !!(await this.adminRepository.get(userId))?.is_super_admin;
+
     if (lowered === '!admin-grupos' || lowered === 'admin-grupos') {
-      const admin = await this.adminRepository.get(userId);
-      if (!admin || !admin.is_super_admin) {
+      if (!isSuperAdmin) {
         return '❌ No estás autorizado para el menú de administración de grupos.';
+      }
+      const data = this.pendingSuperAdminData.get(userId);
+      if (data) {
+        data.inScopedAdminMenu = false;
+        this.pendingSuperAdminData.set(userId, data);
       }
       this.pendingAdminState.set(userId, 'super_admin_main');
       return this.superAdminMenuText(userId);
     }
 
     if (lowered === 'menu' || lowered === '0') {
+      const scopedData = this.pendingSuperAdminData.get(userId);
+      if (scopedData?.inScopedAdminMenu && isSuperAdmin) {
+        this.pendingAdminState.set(userId, 'super_admin_scoped_admin_main');
+        return this.adminMenuText(userId);
+      }
+      if (isSuperAdmin) {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
+      }
       this.pendingAdminState.delete(userId);
       return this.adminMenuText(userId);
     }
@@ -1252,6 +1315,9 @@ export class PrivateChatWorkflowService {
     if (!valid) return 'Ese codigo no es valido.';
 
     await this.adminRepository.register(userId);
+    if (typeof (this.adminRepository as any).setSuperAdmin === 'function') {
+      await (this.adminRepository as any).setSuperAdmin(userId, true);
+    }
     
     const profile = await this.userProfileRepository.get(userId);
     if (this.getMissingProfileFields(profile).length > 0) {
@@ -1265,11 +1331,11 @@ export class PrivateChatWorkflowService {
       const intro = this.isProfilePopulated(profile)
         ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
         : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
-      return `Registrado con éxito como admin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
+        return `Registrado con éxito como superadmin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
     }
 
-    this.pendingAdminState.delete(userId);
-    return `Registrado con exito ✅\n${await this.adminMenuText(userId)}`;
+    this.pendingAdminState.set(userId, 'super_admin_main');
+    return `Registrado con exito ✅\n${await this.superAdminMenuText(userId)}`;
   }
 
   private async handleAdminAuth(userId: string, candidate: string): Promise<string> {
@@ -1294,6 +1360,15 @@ export class PrivateChatWorkflowService {
           ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
           : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
         return `Hola, admin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
+      }
+
+      const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+        ? await (this.adminRepository as any).isSuperAdmin(userId)
+        : !!(await this.adminRepository.get(userId))?.is_super_admin;
+
+      if (isSuperAdmin) {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return `Hola, superadmin ✅\n${await this.superAdminMenuText(userId)}`;
       }
 
       return `Hola, admin ✅\n${await this.adminMenuText(userId)}`;
@@ -1932,6 +2007,27 @@ export class PrivateChatWorkflowService {
   private async adminMenuText(userId: string): Promise<string> {
     const profile = await this.userProfileRepository.get(userId);
     const displayName = profile?.name?.trim() || 'admin';
+    const scopedData = this.pendingSuperAdminData.get(userId);
+
+    if (scopedData?.inScopedAdminMenu && scopedData.groupId) {
+      this.pendingAdminState.set(userId, 'super_admin_scoped_admin_main');
+      return [
+        `Panel admin del Grupo (${scopedData.groupId}):`,
+        '',
+        '1 - Configurar avisos de clase',
+        '2 - Gestionar avisos de exámenes',
+        '3 - Gestionar avisos institucionales',
+        '4 - Forzar actualización de las noticias',
+        '5 - Cargar emails de profesores',
+        '6 - Ver/generar código secreto para nuevos admins',
+        '7 - Moderación de usuarios (desbaneo)',
+        '8 - Banear usuario',
+        '',
+        '0 - Volver al menú de gestión de grupo',
+        '',
+        'En cada submenú encontrarás opciones para forzar pruebas de notificación.',
+      ].join('\n');
+    }
 
     return [
       `Panel admin (${displayName}):`,
