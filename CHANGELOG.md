@@ -2,6 +2,75 @@
 
 Todas las modificaciones notables de este proyecto serán documentadas en este archivo.
 
+## [Unreleased] - 2026-05-27
+
+### Agregado
+- Migración y tabla `cohort_configs` para configurar cohortes por `entry_year`.
+- `CohortConfigRepository` con operaciones para listar, obtener y upsert por cohorte.
+- Menú Super-Admin: gestión de cohortes (listar, crear/editar, seleccionar).
+- Gestión de emails por cohorte (listar, agregar, quitar) con UI en privado.
+- Flujo de promover/ despromover Admin de Grupo (promoción paginada, selección por número).
+- Paginación de selección para listas largas (usuarios) en flujos privados.
+- Gestión por cohorte de avisos y exámenes: CRUD básico para avisos y exámenes etiquetados por cohorte.
+
+### Modificado
+- `PrivateChatWorkflowService`: nuevos estados y handlers para cohortes, emails, avisos y examenes.
+- Tests: migración a Vitest y nuevos tests para promotion/demotion y cohort-emails.
+
+### Tests
+- Se añadieron pruebas unitarias en `src/__tests__/promotion-demotion.spec.ts` y `src/__tests__/cohort-emails.spec.ts`.
+- La suite `npm run test:vitest` pasa localmente tras estos cambios.
+
+### Notas
+- Los avisos creados por cohorte se prefijan con `[Cohorte <year>]` mientras no exista columna específica en la tabla para scoping.
+- Futuras mejoras: añadir columna/cohort_id en tablas de avisos/exámenes y migración para soporte nativo a nivel DB.
+
+
+## [2.0.0-alpha.1] - 2026-05-19
+
+### Agregado
+- Tabla `whatsapp_groups` en SQLite para persistir grupos autorizados sin límite de cantidad
+- Tabla `commissions` como entidad master de comisiones académicas (reemplaza la interfaz `Comision` huérfana que no tenía tabla)
+- Tabla `group_context` para mapear cada grupo de WhatsApp a su contexto académico: año, comisión y turno
+- Tabla `class_commission_schedule` para registrar horarios específicos por comisión por materia
+- Tabla `group_admins` para admins con permisos acotados a un grupo
+- `GroupRepository` con operaciones: findAll, findById, register, setActive, getAllActiveIds
+- `CommissionRepository` y `GroupContextRepository`
+- Método `getAdminLevel(userId, groupId?)` en `AdminRepository` que retorna `'global' | 'group' | null`
+- Campo `metadata.groupScope` en los chunks del RAG con valores `'global'` o el `group_id` correspondiente
+- Estructura de carpetas del RAG: `data/ai-context/global/` para contenido compartido y `data/ai-context/[group_id]/` para contenido específico de cada grupo
+- Filtrado por `groupScope` en `RagQueryService.search(query, groupId?)`
+- Campo `target_scope` en `institutional_notices` para segmentar avisos por año, grupo específico o todos
+- Flujo de onboarding para usuarios nuevos en grupos: el bot pregunta en privado si es alumno del año o está de visita
+- Comando `!config-grupo` para que el admin global asigne el contexto académico a un grupo recién agregado
+- Comando `!rag-upload global` y `!rag-upload [groupId]` para subir PDFs al RAG directamente desde WhatsApp
+- Script de migración automática idempotente en el arranque: transfiere los IDs de grupos desde `.env` a la BD SQLite
+- Interfaces nuevas en `models.ts`: `WhatsAppGroup`, `Commission`, `GroupContext`, `GroupAdmin`
+
+### Modificado
+- `AIQueryService.answer()` incorpora `groupId?: string` como quinto parámetro opcional; todos los callers fueron actualizados
+- `RagQueryService.search()` incorpora `groupId?: string` como segundo parámetro para filtrar chunks por scope
+- `KnowledgeContextService.buildContext()` recibe `groupId?` para filtrar avisos y agenda según el contexto del grupo
+- `persistGroupIdInEnvIfMissing()` reemplazado por `GroupRepository.register()`; se eliminó el límite hardcodeado de 2 grupos
+- `allowedGroupIds` ahora se carga desde la BD al arrancar en lugar de leerse desde `.env`
+- El scheduler de notificaciones filtra los grupos destinatarios según el `target_scope` de cada aviso antes de enviar
+- `DynamicMessageService.getValidNotices()` recibe `groupId?` y filtra por `target_scope`
+- `AcademicCalendarService` filtra horarios por `commission_id` del usuario cuando está disponible; si no tiene comisión asignada, muestra la agenda general del año del grupo
+- La interfaz `Comision` fue reemplazada por `Commission` con tabla real en la BD
+
+### Deprecado
+- Variables de entorno `WHATSAPP_GROUP_ID`, `WHATSAPP_GROUP_ID_2` y `WHATSAPP_GROUP_IDS` para definir grupos autorizados. El bot las migra automáticamente a la BD en el primer arranque. Pueden eliminarse del `.env` tras el primer inicio exitoso.
+
+### Breaking Changes
+- **Firma de `AIQueryService.answer()`**: se agrega `groupId` como quinto argumento. Código externo que invoque este método debe actualizarse (el parámetro es opcional, puede pasarse `undefined`).
+- **Fuente de verdad de grupos**: el sistema ya no lee `.env` como fuente principal de grupos autorizados. Los deployments existentes deben arrancar una vez para ejecutar la migración automática.
+- **Re-indexación del RAG requerida**: los chunks existentes no tienen `metadata.groupScope`. Mover el contenido de `data/ai-context/` a `data/ai-context/global/` y ejecutar el pipeline de sincronización tras el deploy.
+
+### Limitaciones conocidas
+- Los admins de grupo aún no tienen interfaz para ver qué PDFs están indexados en el RAG de su grupo.
+- El filtrado por comisión en la agenda depende de que el admin haya cargado horarios en `class_commission_schedule`; mientras no existan esos registros, se muestra el horario general de la materia.
+- Un usuario invitado (role='guest') tiene acceso de solo lectura a la agenda general del grupo; no puede registrar recordatorios ni consultar su perfil.
+
 ## [1.0.0-alpha.1] - 2026-05-14
 
 ### Added

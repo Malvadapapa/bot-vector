@@ -11,6 +11,9 @@ import {
   UserModerationRepository,
   UserProfileRepository,
   GroupContextRepository,
+  GroupRepository,
+  GroupMembershipRepository,
+  CohortConfigRepository,
   CommissionRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
 
@@ -103,6 +106,7 @@ export class PrivateChatWorkflowService {
   private pendingNoticeData = new Map<string, PendingNoticeData>();
   private pendingNoticeEditData = new Map<string, PendingNoticeEditData>();
   private pendingGroupContextData = new Map<string, PendingGroupContextData>();
+  private pendingSuperAdminData = new Map<string, { groupId?: string }>();
   private postRegistrationWarningShown = new Set<string>();
   private profileUpdateNoticeShown = new Set<string>();
   // Contador de reintentos por campo en el registro (evitar spam loops)
@@ -131,6 +135,9 @@ export class PrivateChatWorkflowService {
     private adminPassword: string,
     private groupContextRepository?: GroupContextRepository,
     private commissionRepository?: CommissionRepository,
+    private cohortConfigRepository?: CohortConfigRepository,
+    private groupRepository?: GroupRepository,
+    private groupMembershipRepository?: GroupMembershipRepository,
   ) {}
 
   private isProfilePopulated(profile?: { name?: string; birthday_day_month?: string; email?: string; user_commission_id?: number } | null): boolean {
@@ -422,16 +429,601 @@ export class PrivateChatWorkflowService {
       return this.handleBanTypeStep(userId, cleaned);
     }
 
-    if (currentState === 'await_group_context_year') {
-      return this.handleGroupContextYear(userId, cleaned);
+    if (currentState === 'await_group_context_entry_year') {
+      return await this.handleGroupContextYear(userId, cleaned);
     }
 
     if (currentState === 'await_group_context_commission') {
       return await this.handleGroupContextCommission(userId, cleaned);
     }
 
+    // Super Admin menu handlers
+    if (currentState === 'super_admin_main') {
+      if (lowered === '1') {
+        const groups = this.groupRepository ? await this.groupRepository.findAll() : [];
+        if (!groups || groups.length === 0) return 'No hay grupos registrados.';
+        return groups.map((g) => `- ${g.group_id} | ${g.display_name || ''} | año=${g.entry_year ?? 'N/D'} | active=${g.is_active ? 'sí' : 'no'}`).join('\n');
+      }
+
+      if (lowered === '2') {
+        this.pendingAdminState.set(userId, 'super_admin_await_select_group');
+        return 'Ingresá el group_id (JID) del grupo que querés administrar:';
+      }
+
+      if (lowered === '3') {
+        this.pendingAdminState.set(userId, 'super_admin_await_reonboard_group');
+        return 'Ingresá el group_id (JID) del grupo que querés forzar re-onboarding:';
+      }
+
+      if (lowered === '4') {
+        this.pendingAdminState.set(userId, 'super_admin_await_memberships_group');
+        return 'Ingresá el group_id (JID) para ver sus membresías:';
+      }
+
+      if (lowered === '5') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_main');
+        return this.superAdminCohortMenuText(userId);
+      }
+
+      if (lowered === '0' || lowered === 'menu') {
+        this.pendingAdminState.delete(userId);
+        return this.adminMenuText(userId);
+      }
+
+      return this.superAdminMenuText(userId);
+    }
+
+    if (currentState === 'super_admin_await_select_group') {
+      const gid = cleaned.trim();
+      const group = this.groupRepository ? await this.groupRepository.findByGroupId(gid) : null;
+      if (!group) {
+        this.pendingAdminState.delete(userId);
+        return 'No encontré ese grupo. Volvé al menú principal con admin-grupos.';
+      }
+      this.pendingSuperAdminData.set(userId, { groupId: gid });
+      this.pendingAdminState.set(userId, 'super_admin_manage_group');
+      return [
+        `Administrando grupo: ${gid}`,
+        '',
+        '1 - Editar entry_year',
+        '2 - Activar/Desactivar grupo',
+        '3 - Ver membresías',
+        '4 - Forzar re-onboarding (lanzará config por privado)',
+        '5 - Promover usuario a Admin de Grupo',
+        '6 - Quitar Admin de Grupo',
+        '0 - Volver al menú Super-Admin',
+      ].join('\n');
+    }
+
+    if (currentState === 'super_admin_manage_group') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay grupo seleccionado. Volvé a iniciar con admin-grupos.';
+      }
+
+      if (lowered === '1') {
+        this.pendingAdminState.set(userId, 'super_admin_edit_entry_year');
+        return 'Ingresá el año (4 dígitos) o escribí "general" para marcar como general:';
+      }
+
+      if (lowered === '2') {
+        if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+        const grp = await this.groupRepository.findByGroupId(gid);
+        const newState = !(grp?.is_active ?? false);
+        await this.groupRepository.setActive(gid, newState);
+        return `Grupo ${gid} ahora está ${newState ? 'activo' : 'inactivo'}.`;
+      }
+
+      if (lowered === '3') {
+        if (!this.groupMembershipRepository) return 'Repositorio de membresías no disponible.';
+        const list = await this.groupMembershipRepository.listByGroup(gid);
+        if (!list || list.length === 0) return 'No hay miembros registrados en este grupo.';
+        return list.map((m) => `- ${m.user_id} | ${m.role} | active=${m.is_active ? 'sí' : 'no'}`).join('\n');
+      }
+
+      if (lowered === '4') {
+        const cfg = await this.startGroupContextConfiguration(userId, gid);
+        return `Se inició re-onboarding por privado:\n\n${cfg}`;
+      }
+
+      if (lowered === '5') {
+        // Promote user to group admin flow with pagination
+        const users = await this.userProfileRepository.listAll();
+        if (!users || users.length === 0) return 'No hay usuarios registrados para promover.';
+        const sorted = users.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        this.pendingSuperAdminData.set(userId, { groupId: gid, users: JSON.stringify(sorted), page: 0 } as any);
+        this.pendingAdminState.set(userId, 'super_admin_promote_select');
+        return this.renderPromoteUsersPage(userId);
+      }
+
+      if (lowered === '4') {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
+      }
+
+      if (lowered === '6') {
+        // Demote a group admin
+        if (!this.adminRepository) return 'Repositorio de admins no disponible.';
+        const admins = await this.adminRepository.listGroupAdmins(gid);
+        if (!admins || admins.length === 0) return 'No hay admins de grupo para quitar.';
+        this.pendingSuperAdminData.set(userId, { groupId: gid, admins: JSON.stringify(admins) } as any);
+        this.pendingAdminState.set(userId, 'super_admin_demote_select');
+        const list = admins.map((a, i) => `${i + 1} - ${a.user_id}`);
+        return ['Elegí el número del Admin de Grupo a quitar:', ...list].join('\n');
+      }
+
+      return 'Opción inválida. Elegí una opción del menú.';
+    }
+
+    if (currentState === 'super_admin_edit_entry_year') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) return 'No hay grupo seleccionado.';
+      const val = cleaned.trim().toLowerCase();
+      if (val === 'general') {
+        if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+        await this.groupRepository.updateEntryYear(gid, null);
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        return `Entry_year del grupo ${gid} actualizado a "general".`;
+      }
+      if (!/^\d{4}$/.test(val)) return 'Año inválido. Escribí 4 dígitos o "general".';
+      const year = Number(val);
+      if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+      await this.groupRepository.updateEntryYear(gid, year);
+      this.pendingAdminState.set(userId, 'super_admin_manage_group');
+      return `Entry_year del grupo ${gid} actualizado a ${year}.`;
+    }
+
+    if (currentState === 'super_admin_await_memberships_group') {
+      const gid = cleaned.trim();
+      if (!this.groupMembershipRepository) return 'Repositorio de membresías no disponible.';
+      const list = await this.groupMembershipRepository.listByGroup(gid);
+      if (!list || list.length === 0) return 'No hay miembros registrados en este grupo.';
+      this.pendingAdminState.set(userId, 'super_admin_main');
+      return list.map((m) => `- ${m.user_id} | ${m.role} | active=${m.is_active ? 'sí' : 'no'}`).join('\n');
+    }
+
+    // Cohort management menu
+    if (currentState === 'super_admin_cohort_main') {
+      if (lowered === '1') {
+        if (!this.cohortConfigRepository) return 'Repositorio de cohortes no disponible.';
+        const list = await this.cohortConfigRepository.listAll();
+        if (!list || list.length === 0) return 'No hay cohortes configuradas.';
+        return list.map((c) => `- ${c.entry_year} | configs=${c.configs_json}`).join('\n');
+      }
+
+      if (lowered === '2') {
+        this.pendingAdminState.set(userId, 'super_admin_await_cohort_year');
+        return 'Ingresá el año de la cohorte (ej: 2024) para crear/editar configuración:';
+      }
+
+      if (lowered === '3') {
+        this.pendingAdminState.set(userId, 'super_admin_await_cohort_select');
+        return 'Ingresá el año de la cohorte (ej: 2024) que querés gestionar:';
+      }
+
+      if (lowered === '0' || lowered === 'menu') {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
+      }
+
+      return this.superAdminCohortMenuText(userId);
+    }
+
+    if (currentState === 'super_admin_await_cohort_year') {
+      const val = cleaned.trim();
+      if (!/^\d{4}$/.test(val)) {
+        this.pendingAdminState.delete(userId);
+        return 'Año inválido. Volvé al menú de cohortes.';
+      }
+      const year = Number(val);
+      // ensure repo
+      if (!this.cohortConfigRepository) return 'Repositorio de cohortes no disponible.';
+      // ensure exists or create default
+      const existing = await this.cohortConfigRepository.getByYear(year);
+      if (!existing) {
+        await this.cohortConfigRepository.upsertByYear(year, JSON.stringify({ emails: [], settings: {} }));
+      }
+      this.pendingSuperAdminData.set(userId, { groupId: String(year) });
+      this.pendingAdminState.set(userId, 'super_admin_manage_cohort');
+      return `Cohorte ${year} seleccionada.\n1 - Gestionar emails\n2 - Gestionar avisos (pendiente)\n3 - Gestionar examenes (pendiente)\n0 - Volver`;
+    }
+
+    if (currentState === 'super_admin_await_cohort_select') {
+      const val = cleaned.trim();
+      if (!/^\d{4}$/.test(val)) {
+        this.pendingAdminState.delete(userId);
+        return 'Año inválido. Volvé al menú de cohortes.';
+      }
+      const year = Number(val);
+      if (!this.cohortConfigRepository) return 'Repositorio de cohortes no disponible.';
+      const existing = await this.cohortConfigRepository.getByYear(year);
+      if (!existing) {
+        return `No existe configuración para ${year}. Podés crearla con la opción 2 del menú.`;
+      }
+      this.pendingSuperAdminData.set(userId, { groupId: String(year) });
+      this.pendingAdminState.set(userId, 'super_admin_manage_cohort');
+      return `Cohorte ${year} seleccionada.\n1 - Gestionar emails\n2 - Gestionar avisos (pendiente)\n3 - Gestionar examenes (pendiente)\n0 - Volver`;
+    }
+
+    if (currentState === 'super_admin_manage_cohort') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const yearStr = data?.groupId;
+      if (!yearStr) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay cohorte seleccionada.';
+      }
+      const year = Number(yearStr);
+      if (lowered === '1') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_emails');
+        return 'Cohorte emails:\n1 - Listar\n2 - Agregar\n3 - Quitar\n0 - Volver';
+      }
+      if (lowered === '2') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_notices');
+        return 'Cohorte avisos:\n1 - Listar\n2 - Agregar\n3 - Quitar\n0 - Volver';
+      }
+      if (lowered === '3') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_exams');
+        return 'Cohorte examenes:\n1 - Listar\n2 - Agregar\n3 - Quitar\n0 - Volver';
+      }
+      if (lowered === '0') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_main');
+        return this.superAdminCohortMenuText(userId);
+      }
+      return 'Opción inválida.';
+    }
+
+    if (currentState === 'super_admin_cohort_emails') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const year = Number(data?.groupId);
+      if (!this.cohortConfigRepository) return 'Repositorio de cohortes no disponible.';
+      if (lowered === '1') {
+        const cfg = await this.cohortConfigRepository.getByYear(year);
+        if (!cfg) return 'No hay configuración para esa cohorte.';
+        const parsed = JSON.parse(cfg.configs_json || '{}');
+        const emails = parsed.emails || [];
+        if (emails.length === 0) return 'No hay emails configurados para esta cohorte.';
+        return emails.map((e: any, i: number) => `${i + 1} - ${e.label} | ${e.email}`).join('\n');
+      }
+      if (lowered === '2') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_emails_add');
+        return 'Ingresá nuevo email en formato: etiqueta|email (ej: contacto|soporte@ispc.edu.ar)';
+      }
+      if (lowered === '3') {
+        const cfg = await this.cohortConfigRepository.getByYear(Number(data?.groupId));
+        if (!cfg) return 'No hay configuración para esa cohorte.';
+        const parsed = JSON.parse(cfg.configs_json || '{}');
+        const emails = parsed.emails || [];
+        if (emails.length === 0) return 'No hay emails para quitar.';
+        const list = emails.map((e: any, i: number) => `${i + 1} - ${e.label} | ${e.email}`);
+        this.pendingProfiles.set(userId, { name: JSON.stringify(emails) });
+        this.pendingAdminState.set(userId, 'super_admin_cohort_emails_remove');
+        return ['Elegí número a quitar:', ...list].join('\n');
+      }
+      if (lowered === '0') {
+        this.pendingAdminState.set(userId, 'super_admin_manage_cohort');
+        return `Volviendo...`;
+      }
+      return 'Opción inválida.';
+    }
+
+    if (currentState === 'super_admin_cohort_emails_add') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const year = Number(data?.groupId);
+      const parts = cleaned.split('|').map((s) => s.trim());
+      if (parts.length !== 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parts[1])) return 'Formato inválido. Usa etiqueta|email.';
+      const label = parts[0];
+      const email = parts[1];
+      if (!this.cohortConfigRepository) return 'Repositorio de cohortes no disponible.';
+      const cfg = await this.cohortConfigRepository.getByYear(year);
+      const parsed = cfg ? JSON.parse(cfg.configs_json || '{}') : { emails: [], settings: {} };
+      parsed.emails = parsed.emails || [];
+      parsed.emails.push({ label, email });
+      await this.cohortConfigRepository.upsertByYear(year, JSON.stringify(parsed));
+      this.pendingAdminState.set(userId, 'super_admin_cohort_emails');
+      return `Email ${email} agregado a la cohorte ${year}.`;
+    }
+
+    if (currentState === 'super_admin_cohort_emails_remove') {
+      const idx = Number(cleaned.trim());
+      const emailsStr = this.pendingProfiles.get(userId)?.name;
+      if (!emailsStr) return 'Session expirada. Volvé a iniciar.';
+      const emails = JSON.parse(emailsStr);
+      if (!Number.isFinite(idx) || idx < 1 || idx > emails.length) return 'Número inválido.';
+      const removed = emails.splice(idx - 1, 1);
+      const data = this.pendingSuperAdminData.get(userId);
+      const year = Number(data?.groupId);
+      if (!this.cohortConfigRepository) return 'Repositorio de cohortes no disponible.';
+      const cfg = await this.cohortConfigRepository.getByYear(year);
+      const parsed = cfg ? JSON.parse(cfg.configs_json || '{}') : { emails: [], settings: {} };
+      parsed.emails = emails;
+      await this.cohortConfigRepository.upsertByYear(year, JSON.stringify(parsed));
+      this.pendingAdminState.set(userId, 'super_admin_cohort_emails');
+      return `Email ${removed[0].email} removido.`;
+    }
+
+    // Cohort notices management
+    if (currentState === 'super_admin_cohort_notices') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const year = Number(data?.groupId);
+      if (!this.noticesRepository) return 'Repositorio de avisos no disponible.';
+      if (lowered === '1') {
+        const list = await this.noticesRepository.listWithIds(200);
+        const filtered = list.filter((r) => (r.notice.title || '').startsWith(`[Cohorte ${year}] `));
+        if (filtered.length === 0) return 'No hay avisos para esta cohorte.';
+        return filtered.map((f) => `${f.id} - ${f.notice.title.replace(`[Cohorte ${year}] `, '')}`).join('\n');
+      }
+      if (lowered === '2') {
+        this.pendingNoticeData.delete(userId);
+        this.pendingAdminState.set(userId, 'super_admin_cohort_notices_add_title');
+        return 'Nuevo aviso (cohorte). Enviá el título:';
+      }
+      if (lowered === '3') {
+        const list = await this.noticesRepository.listWithIds(200);
+        const filtered = list.filter((r) => (r.notice.title || '').startsWith(`[Cohorte ${year}] `));
+        if (filtered.length === 0) return 'No hay avisos para quitar en esta cohorte.';
+        this.pendingProfiles.set(userId, { name: JSON.stringify(filtered.map((f) => ({ id: f.id, title: f.notice.title }))) });
+        this.pendingAdminState.set(userId, 'super_admin_cohort_notices_remove');
+        return ['Elegí ID a quitar:', ...filtered.map((f) => `${f.id} - ${f.notice.title.replace(`[Cohorte ${year}] `, '')}`)].join('\n');
+      }
+      if (lowered === '0') {
+        this.pendingAdminState.set(userId, 'super_admin_manage_cohort');
+        return `Volviendo...`;
+      }
+      return 'Opción inválida.';
+    }
+
+    if (currentState === 'super_admin_cohort_notices_add_title') {
+      const title = cleaned.trim();
+      if (!title) return 'El título no puede estar vacío.';
+      const pending = this.pendingNoticeData.get(userId) || {};
+      pending.title = title;
+      this.pendingNoticeData.set(userId, pending);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_notices_add_body');
+      return 'Ahora enviá el cuerpo del aviso:';
+    }
+
+    if (currentState === 'super_admin_cohort_notices_add_body') {
+      const body = cleaned.trim();
+      if (!body) return 'El cuerpo no puede estar vacío.';
+      const pending = this.pendingNoticeData.get(userId) || {};
+      pending.body = body;
+      this.pendingNoticeData.set(userId, pending);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_notices_add_start');
+      return 'Fecha de inicio (DD/MM) o "0" para sin fecha:';
+    }
+
+    if (currentState === 'super_admin_cohort_notices_add_start') {
+      const pending = this.pendingNoticeData.get(userId) || {};
+      if (cleaned.trim() === '0') {
+        pending.start_date = undefined;
+      } else {
+        const d = this.parseDayMonth(cleaned);
+        if (!d) return 'Fecha inválida. Usa DD/MM o 0.';
+        pending.start_date = d;
+      }
+      this.pendingNoticeData.set(userId, pending);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_notices_add_end');
+      return 'Fecha de fin (DD/MM) o "0" para sin fin:';
+    }
+
+    if (currentState === 'super_admin_cohort_notices_add_end') {
+      const pending = this.pendingNoticeData.get(userId);
+      if (!pending || !pending.title || !pending.body) {
+        this.pendingNoticeData.delete(userId);
+        this.pendingAdminState.delete(userId);
+        return 'Faltan datos. Volvé a intentarlo.';
+      }
+      if (cleaned.trim() === '0') {
+        pending.end_date = undefined;
+      } else {
+        const d = this.parseDayMonth(cleaned);
+        if (!d) return 'Fecha inválida. Usa DD/MM o 0.';
+        pending.end_date = d;
+      }
+      const data = this.pendingSuperAdminData.get(userId);
+      const year = Number(data?.groupId);
+      const titlePref = `[Cohorte ${year}] ${pending.title}`;
+      const uniqueHash = crypto.createHash('sha256').update(`${titlePref}|${pending.body}|${pending.start_date?.toISOString()||''}|${pending.end_date?.toISOString()||''}`).digest('hex');
+      await this.noticesRepository.createIfNew({
+        title: titlePref,
+        body: pending.body,
+        start_date: pending.start_date,
+        end_date: pending.end_date,
+        event_time: undefined,
+        source_email: undefined,
+        unique_hash: uniqueHash,
+      } as any);
+      this.pendingNoticeData.delete(userId);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_notices');
+      return `Aviso agregado para la cohorte ${year}.`;
+    }
+
+    if (currentState === 'super_admin_cohort_notices_remove') {
+      const idStr = cleaned.trim();
+      if (!/^[0-9]+$/.test(idStr)) return 'ID inválido.';
+      const id = Number(idStr);
+      const removed = await this.noticesRepository.deleteById(id);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_notices');
+      return removed ? `Aviso ${id} eliminado.` : 'No encontré ese aviso.';
+    }
+
+    // Cohort exams management
+    if (currentState === 'super_admin_cohort_exams') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const year = Number(data?.groupId);
+      if (!this.examsRepository) return 'Repositorio de examenes no disponible.';
+      if (lowered === '1') {
+        const list = await this.examsRepository.listWithIds(200);
+        const filtered = list.filter((r) => (r.exam.observations || '').includes(`Cohorte ${year}`));
+        if (filtered.length === 0) return 'No hay examenes para esta cohorte.';
+        return filtered.map((f) => `${f.id} - ${f.exam.subject} (${f.exam.exam_date.toISOString().slice(0,10)})`).join('\n');
+      }
+      if (lowered === '2') {
+        this.pendingExamData.delete(userId);
+        this.pendingAdminState.set(userId, 'super_admin_cohort_exams_add_subject');
+        return 'Nuevo examen (cohorte). Enviá la materia:';
+      }
+      if (lowered === '3') {
+        const list = await this.examsRepository.listWithIds(200);
+        const filtered = list.filter((r) => (r.exam.observations || '').includes(`Cohorte ${year}`));
+        if (filtered.length === 0) return 'No hay examenes para quitar en esta cohorte.';
+        this.pendingProfiles.set(userId, { name: JSON.stringify(filtered.map((f) => ({ id: f.id, subject: f.exam.subject }))) });
+        this.pendingAdminState.set(userId, 'super_admin_cohort_exams_remove');
+        return ['Elegí ID a quitar:', ...filtered.map((f) => `${f.id} - ${f.exam.subject} (${f.exam.exam_date.toISOString().slice(0,10)})`)].join('\n');
+      }
+      if (lowered === '0') {
+        this.pendingAdminState.set(userId, 'super_admin_manage_cohort');
+        return `Volviendo...`;
+      }
+      return 'Opción inválida.';
+    }
+
+    if (currentState === 'super_admin_cohort_exams_add_subject') {
+      const subj = cleaned.trim();
+      if (!subj) return 'La materia no puede quedar vacía.';
+      const pending = this.pendingExamData.get(userId) || {};
+      pending.subject = subj;
+      this.pendingExamData.set(userId, pending);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_exams_add_date');
+      return 'Fecha (DD/MM):';
+    }
+
+    if (currentState === 'super_admin_cohort_exams_add_date') {
+      const d = this.parseDayMonth(cleaned);
+      if (!d) return 'Fecha inválida. Usa DD/MM.';
+      const pending = this.pendingExamData.get(userId) || {};
+      pending.exam_date = d;
+      this.pendingExamData.set(userId, pending);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_exams_add_time');
+      return 'Hora (HH:MM):';
+    }
+
+    if (currentState === 'super_admin_cohort_exams_add_time') {
+      if (!/^[0-2]?\d:\d{2}$/.test(cleaned.trim())) return 'Hora inválida. Usa HH:MM.';
+      const pending = this.pendingExamData.get(userId) || {};
+      pending.exam_time = cleaned.trim();
+      this.pendingExamData.set(userId, pending);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_exams_add_type');
+      return 'Tipo (parcial/final):';
+    }
+
+    if (currentState === 'super_admin_cohort_exams_add_type') {
+      const type = cleaned.trim() || 'parcial';
+      const pending = this.pendingExamData.get(userId) || {};
+      pending.exam_type = type;
+      this.pendingExamData.set(userId, pending);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_exams_add_obs');
+      return 'Observaciones (opcional):';
+    }
+
+    if (currentState === 'super_admin_cohort_exams_add_obs') {
+      const obs = cleaned.trim();
+      const pending = this.pendingExamData.get(userId);
+      if (!pending || !pending.subject || !pending.exam_date || !pending.exam_time) {
+        this.pendingExamData.delete(userId);
+        this.pendingAdminState.delete(userId);
+        return 'Faltan datos. Volvé a intentarlo.';
+      }
+      const data = this.pendingSuperAdminData.get(userId);
+      const year = Number(data?.groupId);
+      const exam: ManagedExam = {
+        subject: pending.subject,
+        exam_date: pending.exam_date,
+        exam_time: pending.exam_time,
+        exam_type: pending.exam_type || 'parcial',
+        observations: `${obs || ''} | Cohorte ${year}`,
+        created_by: userId,
+        tipoDisponibilidad: 'hora-especifica',
+        horaInicio: pending.exam_time,
+        horaFin: undefined,
+        frecuenciaAvisos: '7d,3d,1d,20m',
+        exam_commission_id: undefined,
+      } as any;
+      await this.examsRepository.create(exam);
+      this.pendingExamData.delete(userId);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_exams');
+      return `Examen agregado para la cohorte ${year}.`;
+    }
+
+    if (currentState === 'super_admin_cohort_exams_remove') {
+      const idStr = cleaned.trim();
+      if (!/^[0-9]+$/.test(idStr)) return 'ID inválido.';
+      const id = Number(idStr);
+      const removed = await this.examsRepository.deleteById(id);
+      this.pendingAdminState.set(userId, 'super_admin_cohort_exams');
+      return removed ? `Examen ${id} eliminado.` : 'No encontré ese examen.';
+    }
+
+    // Promotion selection handler
+    if (currentState === 'super_admin_promote_select') {
+      const cmd = cleaned.trim().toLowerCase();
+      const data = this.pendingSuperAdminData.get(userId) as any;
+      const gid = data?.groupId;
+      if (!gid) return 'No hay grupo seleccionado.';
+      const usersJson = data?.users;
+      if (!usersJson) return 'Lista de usuarios no disponible. Reintentá.';
+      const users = JSON.parse(usersJson) as any[];
+      const page = Number(data?.page || 0);
+      const pageSize = 10;
+
+      if (cmd === 'n' || cmd === 'siguiente') {
+        data.page = page + 1;
+        this.pendingSuperAdminData.set(userId, data);
+        return this.renderPromoteUsersPage(userId);
+      }
+      if (cmd === 'p' || cmd === 'anterior') {
+        data.page = Math.max(0, page - 1);
+        this.pendingSuperAdminData.set(userId, data);
+        return this.renderPromoteUsersPage(userId);
+      }
+
+      const sel = Number(cmd);
+      if (!Number.isFinite(sel)) return 'Comando inválido. Enviá número, "n" (siguiente) o "p" (anterior).';
+      const index = page * pageSize + (sel - 1);
+      if (index < 0 || index >= users.length) return 'Seleccion inválida.';
+      const target = users[index];
+      await this.adminRepository.assignGroupAdmin(target.user_id, gid);
+      this.pendingAdminState.set(userId, 'super_admin_manage_group');
+      return `Usuario ${target.name} (${target.user_id}) promovido a Admin de Grupo para ${gid}.`;
+    }
+
+    // Demotion selection handler
+    if (currentState === 'super_admin_demote_select') {
+      const sel = Number(cleaned.trim());
+      const data = this.pendingSuperAdminData.get(userId) as any;
+      const gid = data?.groupId;
+      if (!gid) return 'No hay grupo seleccionado.';
+      const adminsJson = data?.admins;
+      if (!adminsJson) return 'Lista de admins no disponible.';
+      const admins = JSON.parse(adminsJson) as any[];
+      if (!Number.isFinite(sel) || sel < 1 || sel > admins.length) return 'Seleccion inválida.';
+      const target = admins[sel - 1];
+      await this.adminRepository.removeGroupAdmin(target.user_id, gid);
+      this.pendingAdminState.set(userId, 'super_admin_manage_group');
+      return `Usuario ${target.user_id} removido como Admin de Grupo para ${gid}.`;
+    }
+
+    if (currentState === 'super_admin_await_reonboard_group') {
+      const gid = cleaned.trim();
+      const cfg = await this.startGroupContextConfiguration(userId, gid);
+      this.pendingAdminState.set(userId, 'super_admin_main');
+      return `Re-onboarding iniciado por privado:\n\n${cfg}`;
+    }
+
     if (!(await this.adminRepository.isAuthenticated(userId))) {
       return null;
+    }
+
+    if (lowered === '!admin-grupos' || lowered === 'admin-grupos') {
+      const admin = await this.adminRepository.get(userId);
+      if (!admin || !admin.is_super_admin) {
+        return '❌ No estás autorizado para el menú de administración de grupos.';
+      }
+      this.pendingAdminState.set(userId, 'super_admin_main');
+      return this.superAdminMenuText(userId);
     }
 
     if (lowered === 'menu' || lowered === '0') {
@@ -480,6 +1072,32 @@ export class PrivateChatWorkflowService {
     }
 
     return this.pickOne(PrivateChatWorkflowService.ADMIN_MODE_HINTS);
+  }
+
+  private async superAdminMenuText(userId: string): Promise<string> {
+    return [
+      'Menú Super-Admin:',
+      '',
+      '1 - Listar grupos registrados',
+      '2 - Seleccionar grupo para administrar',
+      '3 - Forzar re-onboarding de un grupo',
+      '4 - Ver membresías de un grupo',
+      '5 - Gestionar cohortes (por entry_year)',
+      '',
+      '0/menu - Volver al menú admin normal',
+    ].join('\n');
+  }
+
+  private async superAdminCohortMenuText(userId: string): Promise<string> {
+    return [
+      'Menú Cohortes:',
+      '',
+      '1 - Listar cohortes configuradas',
+      '2 - Crear/Editar cohorte',
+      '3 - Seleccionar cohorte para gestionar',
+      '',
+      '0/menu - Volver al menú Super-Admin',
+    ].join('\n');
   }
 
   private async handleAdminCodes(): Promise<string> {
@@ -1881,7 +2499,7 @@ export class PrivateChatWorkflowService {
 
     const pending: PendingGroupContextData = { groupId, year: undefined, commission_id: null };
     this.pendingGroupContextData.set(userId, pending);
-    this.pendingAdminState.set(userId, 'await_group_context_year');
+    this.pendingAdminState.set(userId, 'await_group_context_entry_year');
 
     const currentYear = new Date().getFullYear();
     return [
@@ -1889,14 +2507,34 @@ export class PrivateChatWorkflowService {
       '',
       `Grupo ID: ${groupId}`,
       '',
-      `Primero, ¿en qué año académico están los estudiantes? (ej: ${currentYear}, ${currentYear + 1}, etc)`,
+      `Primero, ingresá el año de la camada (ej: ${currentYear}).\nSi es un grupo general sin camada, escribí: general`,
     ].join('\n');
   }
+  private async handleGroupContextYear(userId: string, cleaned: string): Promise<string> {
+    const val = cleaned.trim().toLowerCase();
 
-  private handleGroupContextYear(userId: string, cleaned: string): string {
+    // Caso: grupo general
+    if (val === 'general') {
+      const pending = this.pendingGroupContextData.get(userId);
+      const gid = pending?.groupId;
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+
+      if (!gid) return '❌ No se reconoció el grupo. Reintentá desde el grupo con !config-grupo.';
+
+      try {
+        if (this.groupRepository) await this.groupRepository.updateEntryYear(gid, null);
+      } catch (e) {
+        return '❌ Error al registrar el grupo como general. Intentá de nuevo más tarde.';
+      }
+
+      return '✅ Grupo registrado exitosamente como Grupo General, sin camada.';
+    }
+
+    // Caso: año numérico
     const yearStr = cleaned.trim();
     if (!/^\d{4}$/.test(yearStr)) {
-      return 'Necesito un año válido (4 dígitos, ej: 2024).';
+      return 'Necesito un año válido (4 dígitos, ej: 2024) o escribí "general".';
     }
 
     const year = Number(yearStr);
@@ -1924,38 +2562,86 @@ export class PrivateChatWorkflowService {
       this.pendingAdminState.delete(userId);
       return '❌ Faltan datos. Intenta de nuevo desde el grupo con !config-grupo.';
     }
+    const raw = cleaned.trim();
 
-    const commissionName = cleaned.trim().toLowerCase();
-
-    let commissionId: number | null = null;
-
-    if (commissionName !== '0' && commissionName !== 'todas' && commissionName !== 'ninguna') {
-      // Buscar o crear comisión
-      if (!this.commissionRepository) {
-        this.pendingGroupContextData.delete(userId);
-        this.pendingAdminState.delete(userId);
-        return '❌ Repositorio de comisiones no disponible.';
-      }
-
-      commissionId = await this.commissionRepository.createOrGet(commissionName.toUpperCase(), pending.year);
-    }
-
-    // Guardar contexto de grupo
     if (!this.groupContextRepository) {
       this.pendingGroupContextData.delete(userId);
       this.pendingAdminState.delete(userId);
       return '❌ Repositorio de contexto no disponible.';
     }
 
-    const label = commissionId ? `${pending.year} - Comisión ${commissionName.toUpperCase()}` : `${pending.year} - Global`;
+    if (!this.commissionRepository) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Repositorio de comisiones no disponible.';
+    }
 
-    await this.groupContextRepository.upsert(
-      pending.groupId,
-      pending.year,
-      commissionId,
-      label,
-      userId
-    );
+    const norm = raw.toLowerCase();
+
+    // Handle global / clear mappings
+    if (['0', 'todas', 'ninguna', 'global'].includes(norm)) {
+      const label = `${pending.year} - Global`;
+      const groupContextId = await this.groupContextRepository.upsert(pending.groupId, pending.year, null, label, userId);
+      await this.groupContextRepository.removeCommissionsForGroupContext(groupContextId);
+
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+
+      return [
+        '✅ Contexto del grupo actualizado exitosamente',
+        '',
+        `📅 Año: ${pending.year}`,
+        `📌 Comisión: Global (aplica a todas)`,
+        '',
+        'El bot ahora filtrará clases y horarios según esta configuración.',
+      ].join('\n');
+    }
+
+    // Split comma-separated commission names
+    const tokens = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!tokens.length) {
+      // treat as global
+      const label = `${pending.year} - Global`;
+      const groupContextId = await this.groupContextRepository.upsert(pending.groupId, pending.year, null, label, userId);
+      await this.groupContextRepository.removeCommissionsForGroupContext(groupContextId);
+
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+
+      return [
+        '✅ Contexto del grupo actualizado exitosamente',
+        '',
+        `📅 Año: ${pending.year}`,
+        `📌 Comisión: Global (aplica a todas)`,
+        '',
+        'El bot ahora filtrará clases y horarios según esta configuración.',
+      ].join('\n');
+    }
+
+    const commissionIds: number[] = [];
+    const commissionNames: string[] = [];
+
+    for (const t of tokens) {
+      const name = t.toUpperCase();
+      try {
+        const id = await this.commissionRepository.createOrGet(name, pending.year);
+        if (id) {
+          commissionIds.push(id);
+          commissionNames.push(name);
+        }
+      } catch (e) {
+        // ignore individual failures but continue
+      }
+    }
+
+    let commissionIdForUpsert: number | null = null;
+    if (commissionIds.length === 1) commissionIdForUpsert = commissionIds[0];
+
+    const label = commissionNames.length === 1 ? `${pending.year} - Comisión ${commissionNames[0]}` : `${pending.year} - ${commissionNames.join(',')}`;
+
+    const groupContextId = await this.groupContextRepository.upsert(pending.groupId, pending.year, commissionIdForUpsert, label, userId);
+
+    await this.groupContextRepository.setCommissionsForGroupContext(groupContextId, commissionIds);
 
     this.pendingGroupContextData.delete(userId);
     this.pendingAdminState.delete(userId);
@@ -1964,7 +2650,7 @@ export class PrivateChatWorkflowService {
       '✅ Contexto del grupo actualizado exitosamente',
       '',
       `📅 Año: ${pending.year}`,
-      `📌 Comisión: ${commissionId ? commissionName.toUpperCase() : 'Global (aplica a todas)'}`,
+      `📌 Comisión: ${commissionNames.length ? commissionNames.join(', ') : 'Global (aplica a todas)'}`,
       '',
       'El bot ahora filtrará clases y horarios según esta configuración.',
     ].join('\n');
@@ -1972,6 +2658,30 @@ export class PrivateChatWorkflowService {
 
   private pickOne(options: string[]): string {
     return options[Math.floor(Math.random() * options.length)];
+  }
+
+  private renderPromoteUsersPage(userId: string): string {
+    const data = this.pendingSuperAdminData.get(userId) as any;
+    const usersJson = data?.users;
+    if (!usersJson) return 'Lista de usuarios no disponible.';
+    const users = JSON.parse(usersJson) as any[];
+    const page = Number(data?.page || 0);
+    const pageSize = 10;
+    const start = page * pageSize;
+    const slice = users.slice(start, start + pageSize);
+    if (!slice.length) return 'No hay usuarios en esta página.';
+    const list = slice.map((u, idx) => `${idx + 1} - ${u.name || '(sin nombre)'} | ${u.user_id}`);
+    const controls = [] as string[];
+    if (start + pageSize < users.length) controls.push('n - Siguiente');
+    if (page > 0) controls.push('p - Anterior');
+    return [
+      'Seleccioná el número del usuario a promover a Admin de Grupo:',
+      ...list,
+      '',
+      controls.join(' | '),
+      '',
+      'Enviá el número (ej: 1) o "n"/"p" para navegar.'
+    ].filter(Boolean).join('\n');
   }
 
   private parseDayMonth(value: string): Date | null {

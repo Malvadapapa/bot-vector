@@ -18,6 +18,7 @@ import {
   WhatsAppGroup,
   Commission,
   GroupContext,
+  CohortConfig,
 } from '../../../domain/models.js';
 
 function run(db: sqlite3.Database, sql: string, params: unknown[] = []): Promise<{ lastID: number; changes: number }> {
@@ -572,12 +573,55 @@ export class AdminRepository {
   async get(userId: string): Promise<AdminUser | null> {
     const row = await get<any>(this.db, 'SELECT * FROM admin_users WHERE user_id = ?', [userId]);
     if (!row) return null;
-    return { user_id: String(row.user_id), is_authenticated: Number(row.is_authenticated) === 1 };
+    return {
+      user_id: String(row.user_id),
+      is_authenticated: Number(row.is_authenticated) === 1,
+      is_super_admin: Number(row.is_super_admin ?? 0) === 1,
+    };
   }
 
   async listAllAdminIds(): Promise<string[]> {
     const rows = await all<any>(this.db, 'SELECT user_id FROM admin_users WHERE is_authenticated = 1');
     return rows.map((r) => String(r.user_id));
+  }
+
+  async listSuperAdminIds(): Promise<string[]> {
+    const rows = await all<any>(this.db, 'SELECT user_id FROM admin_users WHERE is_super_admin = 1');
+    return rows.map((r) => String(r.user_id));
+  }
+
+  async listGroupAdmins(groupId: string): Promise<Array<{ user_id: string }>> {
+    const rows = await all<any>(this.db, 'SELECT user_id FROM group_admins WHERE group_id = ? ORDER BY created_at ASC', [groupId]);
+    return rows.map((r) => ({ user_id: String(r.user_id) }));
+  }
+
+  async assignGroupAdmin(userId: string, groupId: string): Promise<void> {
+    await run(this.db, 'INSERT OR IGNORE INTO group_admins(user_id, group_id) VALUES (?, ?)', [userId, groupId]);
+  }
+
+  async removeGroupAdmin(userId: string, groupId: string): Promise<void> {
+    await run(this.db, 'DELETE FROM group_admins WHERE user_id = ? AND group_id = ?', [userId, groupId]);
+  }
+
+  async isGroupAdmin(userId: string, groupId: string): Promise<boolean> {
+    const row = await get<any>(this.db, 'SELECT 1 FROM group_admins WHERE user_id = ? AND group_id = ? LIMIT 1', [userId, groupId]);
+    if (row) return true;
+    // Fallback by phone number without jid suffix
+    const phone = userId.split('@')[0]?.split(':')[0] || '';
+    if (!phone) return false;
+    const rows = await all<any>(this.db, 'SELECT user_id FROM group_admins WHERE group_id = ?', [groupId]);
+    return rows.some((r) => String(r.user_id).split('@')[0]?.split(':')[0] === phone);
+  }
+
+  /**
+   * Returns 'global' if the user is a global authenticated admin,
+   * 'group' if the user is a group admin for the provided groupId,
+   * or null otherwise.
+   */
+  async getAdminLevel(userId: string, groupId?: string): Promise<'global' | 'group' | null> {
+    if (await this.isAuthenticated(userId)) return 'global';
+    if (groupId && (await this.isGroupAdmin(userId, groupId))) return 'group';
+    return null;
   }
 }
 
@@ -777,6 +821,95 @@ export class OutboxDedupRepository {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const result = await run(this.db, 'DELETE FROM outbox_dedup WHERE created_at < ?', [cutoff]);
     return result.changes;
+  }
+}
+
+// PHASE 3: Group Memberships
+export class GroupMembershipRepository {
+  constructor(private db: sqlite3.Database) {}
+
+  async addMembership(groupId: string, userId: string, role: string = 'member'): Promise<number> {
+    const result = await run(
+      this.db,
+      `INSERT INTO group_memberships(group_id, user_id, role, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(user_id, group_id) DO UPDATE SET role = excluded.role, is_active = 1, updated_at = CURRENT_TIMESTAMP`,
+      [groupId, userId, role]
+    );
+    return result.lastID;
+  }
+
+  async removeMembership(groupId: string, userId: string): Promise<boolean> {
+    const result = await run(this.db, 'DELETE FROM group_memberships WHERE group_id = ? AND user_id = ?', [groupId, userId]);
+    return result.changes > 0;
+  }
+
+  async listByGroup(groupId: string): Promise<Array<{ user_id: string; role: string; is_active: boolean }>> {
+    const rows = await all<any>(this.db, 'SELECT user_id, role, is_active FROM group_memberships WHERE group_id = ? ORDER BY created_at ASC', [groupId]);
+    return rows.map((r) => ({ user_id: String(r.user_id), role: String(r.role), is_active: Number(r.is_active) === 1 }));
+  }
+
+  async listByUser(userId: string): Promise<Array<{ group_id: string; role: string; is_active: boolean }>> {
+    const rows = await all<any>(this.db, 'SELECT group_id, role, is_active FROM group_memberships WHERE user_id = ? ORDER BY created_at ASC', [userId]);
+    return rows.map((r) => ({ group_id: String(r.group_id), role: String(r.role), is_active: Number(r.is_active) === 1 }));
+  }
+
+  async getMembership(groupId: string, userId: string): Promise<{ user_id: string; role: string; is_active: boolean } | null> {
+    const row = await get<any>(this.db, 'SELECT user_id, role, is_active FROM group_memberships WHERE group_id = ? AND user_id = ? LIMIT 1', [groupId, userId]);
+    if (!row) return null;
+    return { user_id: String(row.user_id), role: String(row.role), is_active: Number(row.is_active) === 1 };
+  }
+
+  async setRole(groupId: string, userId: string, role: string): Promise<void> {
+    await run(this.db, 'UPDATE group_memberships SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ? AND user_id = ?', [role, groupId, userId]);
+  }
+
+  async isMember(groupId: string, userId: string): Promise<boolean> {
+    const row = await get<any>(this.db, 'SELECT 1 FROM group_memberships WHERE group_id = ? AND user_id = ? AND is_active = 1 LIMIT 1', [groupId, userId]);
+    return !!row;
+  }
+}
+
+// Cohort-level configuration repository
+export class CohortConfigRepository {
+  constructor(private db: sqlite3.Database) {}
+
+  async getByYear(entryYear: number): Promise<CohortConfig | null> {
+    const row = await get<any>(this.db, 'SELECT * FROM cohort_configs WHERE entry_year = ? LIMIT 1', [entryYear]);
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      entry_year: Number(row.entry_year),
+      configs_json: String(row.configs_json),
+      created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
+      updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
+    } as CohortConfig;
+  }
+
+  async upsertByYear(entryYear: number, configsJson: string): Promise<void> {
+    await run(
+      this.db,
+      `INSERT INTO cohort_configs(entry_year, configs_json, created_at, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(entry_year) DO UPDATE SET configs_json=excluded.configs_json, updated_at=CURRENT_TIMESTAMP`,
+      [entryYear, configsJson]
+    );
+  }
+
+  async deleteByYear(entryYear: number): Promise<boolean> {
+    const result = await run(this.db, 'DELETE FROM cohort_configs WHERE entry_year = ?', [entryYear]);
+    return result.changes > 0;
+  }
+
+  async listAll(): Promise<CohortConfig[]> {
+    const rows = await all<any>(this.db, 'SELECT * FROM cohort_configs ORDER BY entry_year ASC');
+    return rows.map((r) => ({
+      id: Number(r.id),
+      entry_year: Number(r.entry_year),
+      configs_json: String(r.configs_json),
+      created_at: r.created_at ? new Date(String(r.created_at)) : undefined,
+      updated_at: r.updated_at ? new Date(String(r.updated_at)) : undefined,
+    } as CohortConfig));
   }
 }
 
@@ -1110,6 +1243,16 @@ function rowToManagedClass(row: any): ManagedClass {
     }
 
     /**
+     * Update the entry_year for a whatsapp group. Use null for general groups.
+     */
+    async updateEntryYear(groupId: string, entryYear: number | null): Promise<void> {
+      await run(this.db, 'UPDATE whatsapp_groups SET entry_year = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ?', [
+        entryYear === null ? null : entryYear,
+        groupId,
+      ]);
+    }
+
+    /**
      * Delete a group (hard delete - use setActive(false) to soft delete instead)
      */
     async delete(groupId: string): Promise<boolean> {
@@ -1274,6 +1417,54 @@ function rowToManagedClass(row: any): ManagedClass {
     }
 
     /**
+     * Set commissions for a group context (replaces existing mappings)
+     */
+    async setCommissionsForGroupContext(groupContextId: number, commissionIds: number[]): Promise<void> {
+      // remove old mappings
+      await run(this.db, 'DELETE FROM group_context_commissions WHERE group_context_id = ?', [groupContextId]);
+
+      if (!commissionIds || commissionIds.length === 0) return;
+
+      // insert new mappings
+      for (const cid of commissionIds) {
+        await run(
+          this.db,
+          'INSERT OR IGNORE INTO group_context_commissions(group_context_id, commission_id) VALUES (?, ?)',
+          [groupContextId, cid]
+        );
+      }
+    }
+
+    /**
+     * List commissions mapped to a group context
+     */
+    async listCommissionsForGroupContext(groupContextId: number): Promise<Commission[]> {
+      const rows = await all<any>(
+        this.db,
+        `SELECT c.* FROM commissions c
+         JOIN group_context_commissions gcc ON gcc.commission_id = c.id
+         WHERE gcc.group_context_id = ?
+         ORDER BY c.name`,
+        [groupContextId]
+      );
+      return rows.map(rowToCommission);
+    }
+
+    /**
+     * Remove commissions for a group context. If commissionIds omitted, remove all.
+     */
+    async removeCommissionsForGroupContext(groupContextId: number, commissionIds?: number[]): Promise<void> {
+      if (!commissionIds || commissionIds.length === 0) {
+        await run(this.db, 'DELETE FROM group_context_commissions WHERE group_context_id = ?', [groupContextId]);
+        return;
+      }
+
+      const placeholders = commissionIds.map(() => '?').join(',');
+      const params: unknown[] = [groupContextId, ...commissionIds];
+      await run(this.db, `DELETE FROM group_context_commissions WHERE group_context_id = ? AND commission_id IN (${placeholders})`, params);
+    }
+
+    /**
      * Delete context
      */
     async delete(groupId: string): Promise<boolean> {
@@ -1379,6 +1570,7 @@ function rowToManagedClass(row: any): ManagedClass {
       display_name: row.display_name ? String(row.display_name) : undefined,
       is_active: Number(row.is_active) === 1,
       added_by: row.added_by ? String(row.added_by) : undefined,
+      entry_year: row.entry_year !== undefined && row.entry_year !== null ? Number(row.entry_year) : null,
       created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
       updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
     };

@@ -63,6 +63,7 @@ export interface UserProfile {
 export interface AdminUser {
   user_id: string;
   is_authenticated: boolean;
+  is_super_admin?: boolean;
 }
 
 export interface UserModerationState {
@@ -210,6 +211,7 @@ export interface WhatsAppGroup {
   display_name?: string; // Nombre personalizado para referencia interna
   is_active: boolean;
   added_by?: string;     // Usuario que registró el grupo
+  entry_year?: number | null; // Año de ingreso de la camada (null = general)
   created_at?: Date;
   updated_at?: Date;
 }
@@ -232,6 +234,15 @@ export interface GroupContext {
   commission_id?: number | null; // FK to commissions.id (optional)
   label?: string;                // Display label (e.g., "1° Año A")
   configured_by?: string;        // Who configured this context
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+// Cohort-level configuration: stores arbitrary settings per entry_year (cohort)
+export interface CohortConfig {
+  id?: number;
+  entry_year: number;
+  configs_json: string; // JSON string with structure { emails: [{label, email}], settings: {...} }
   created_at?: Date;
   updated_at?: Date;
 }

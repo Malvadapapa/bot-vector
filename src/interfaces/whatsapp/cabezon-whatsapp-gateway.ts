@@ -13,10 +13,10 @@ import { MessageRouter } from '../../application/messages/message-router.service
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 import { RateLimitService } from '../../application/ai/rate-limit.service.js';
 import { UserModerationService } from '../../application/moderation/user-moderation.service.js';
-import { AdminRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { AdminRepository, GroupRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
 
-const require = createRequire(import.meta.url);
-const qrcodeTerminal = require('qrcode-terminal');
+const nodeRequire = createRequire(import.meta.url);
+const qrcodeTerminal = nodeRequire('qrcode-terminal');
 
 const ANSI = {
   reset: '\x1b[0m',
@@ -56,7 +56,6 @@ export class CabezonWhatsAppGateway {
   private connectionReplacedResetAttempted = false;
   private consecutiveConnectionReplaced = 0;
   private processedIds = new Set<string>();
-  private autoPersistedGroupId = false;
   private unauthorizedGroupNoticeSent = new Set<string>();
   private cachedBotLid: string | null = null;
   private cachedBotLidAtMs = 0;
@@ -74,7 +73,7 @@ export class CabezonWhatsAppGateway {
     private adminRepository: AdminRepository,
     private rateLimitService: RateLimitService,
     private moderationService: UserModerationService,
-    private allowedGroupIds: string[],
+    private groupRepository: GroupRepository,
   ) {
     this.installConsoleNoiseFilter();
   }
@@ -244,12 +243,55 @@ export class CabezonWhatsAppGateway {
 
           const incomingText = this.extractMessageText(incomingMessage).trim();
           const isAdmin = await this.adminRepository.isRegistered(senderJid);
-          if (isGroup && !this.isAllowedGroup(chatId, isAdmin)) {
-            await this.handleUnauthorizedGroup(chatId);
-            return;
-          }
-          if (isGroup) {
-            this.persistGroupIdInEnvIfMissing(chatId, isAdmin);
+          const isActiveGroup = !isGroup ? true : await this.groupRepository.isActive(chatId);
+
+          // Auto-registro en primera activación: si el grupo no existe, registrarlo y notificar super-admins
+          if (isGroup && !isActiveGroup) {
+            const existing = await this.groupRepository.findByGroupId(chatId);
+            if (!existing) {
+              try {
+                await this.groupRepository.register(chatId, `Grupo ${chatId}`, senderJid);
+              } catch (e) {
+                console.warn('[Gateway] No se pudo registrar el grupo automáticamente:', (e as any)?.message || e);
+              }
+
+              // Notificar super-admins para que completen la configuración por privado
+              let superAdmins: string[] = [];
+              try {
+                if (typeof (this.adminRepository as any).listSuperAdminIds === 'function') {
+                  superAdmins = await (this.adminRepository as any).listSuperAdminIds();
+                } else {
+                  superAdmins = await this.adminRepository.listAllAdminIds();
+                }
+              } catch (e) {
+                console.warn('[Gateway] Error obteniendo super-admins:', (e as any)?.message || e);
+              }
+
+              for (const sa of superAdmins) {
+                try {
+                  const cfgMsg = await this.privateChatWorkflow.startGroupContextConfiguration(sa, chatId);
+                  await this.sendTextMessage(sa, `Nuevo grupo detectado: ${chatId}\nSe creó un registro mínimo.\n\n${cfgMsg}`, undefined, true);
+                } catch (e) {
+                  console.warn('[Gateway] No se pudo notificar super-admin', sa, (e as any)?.message || e);
+                }
+              }
+
+              // Informar al grupo que fue registrado y que los super-admins fueron notificados
+              try {
+                await this.sendTextMessage(chatId, 'Gracias. Este grupo fue registrado y los super-admins fueron notificados para completar la configuración. Un admin puede ejecutar !config-grupo para iniciar la configuración ahora.', undefined, false);
+              } catch {}
+
+              return;
+            }
+
+            // Si existe pero está inactivo, permitir registro si quien envía es admin
+            if (!isAdmin) {
+              await this.handleUnauthorizedGroup(chatId);
+              return;
+            }
+
+            // Si es admin y el grupo está inactivo, re-registrar/activar
+            await this.groupRepository.register(chatId, `Grupo ${chatId}`, senderJid);
           }
           if (!incomingText) return;
           this.logIncoming(chatId, senderJid, incomingText, isGroup, isAdmin);
@@ -631,54 +673,10 @@ export class CabezonWhatsAppGateway {
     return cleaned;
   }
 
-  private persistGroupIdInEnvIfMissing(chatId: string, senderIsAdmin: boolean): void {
-    if (this.autoPersistedGroupId) return;
-    if (this.allowedGroupIds.includes(chatId)) return; // ya registrado
-    if (!senderIsAdmin) return;
-
-    const envPath = './.env';
-    try {
-      let envText = '';
-      if (fs.existsSync(envPath)) {
-        envText = fs.readFileSync(envPath, 'utf-8');
-      }
-
-      // Determinar qué variable agregar: WHATSAPP_GROUP_ID o WHATSAPP_GROUP_ID_2
-      const hasG1 = /^\s*WHATSAPP_GROUP_ID\s*=.+$/m.test(envText);
-      const hasG2 = /^\s*WHATSAPP_GROUP_ID_2\s*=.+$/m.test(envText);
-
-      let lineAdded = false;
-      if (!hasG1) {
-        const line = `WHATSAPP_GROUP_ID=${chatId}`;
-        envText = `${envText.trimEnd()}\n${line}\n`;
-        process.env.WHATSAPP_GROUP_ID = chatId;
-        lineAdded = true;
-      } else if (!hasG2) {
-        const line = `WHATSAPP_GROUP_ID_2=${chatId}`;
-        envText = `${envText.trimEnd()}\n${line}\n`;
-        process.env.WHATSAPP_GROUP_ID_2 = chatId;
-        lineAdded = true;
-      }
-
-      if (!lineAdded) return; // ya hay 2 grupos configurados
-
-      fs.writeFileSync(envPath, envText, 'utf-8');
-      this.allowedGroupIds.push(chatId);
-      this.autoPersistedGroupId = true;
-      console.log(`✅ Grupo detectado y guardado automáticamente: ${chatId}`);
-    } catch (error) {
-      const msg = (error as any)?.message || 'error desconocido';
-      console.warn(`⚠️ No se pudo persistir el grupo en .env: ${msg}`);
-    }
-  }
-
-  private isAllowedGroup(chatId: string, senderIsAdmin: boolean): boolean {
+  private async isAllowedGroup(chatId: string, senderIsAdmin: boolean): Promise<boolean> {
     if (!chatId.endsWith('@g.us')) return true;
-    // Si no hay lista configurada, permitir todo.
-    if (!this.allowedGroupIds.length) return true;
-    // Si el grupo está en la lista, siempre permitido.
-    if (this.allowedGroupIds.includes(chatId)) return true;
-    // Un admin puede interactuar desde un grupo aún no registrado.
+    const isActive = await this.groupRepository.isActive(chatId);
+    if (isActive) return true;
     return senderIsAdmin;
   }
 
@@ -716,8 +714,8 @@ export class CabezonWhatsAppGateway {
       const botWasAdded = participants.some((jid) => this.normalizePhoneJid(jid) === botPhone);
       if (!botWasAdded) return;
 
-      // Si el grupo ya está en la lista autorizada, no hacer nada.
-      if (this.allowedGroupIds.includes(groupId)) {
+      const isActive = await this.groupRepository.isActive(groupId);
+      if (isActive) {
         return;
       }
 
@@ -727,8 +725,8 @@ export class CabezonWhatsAppGateway {
       if (!actorIsAdmin) {
         await this.handleUnauthorizedGroup(groupId);
       } else {
-        // Admin agregó el bot: registrar el grupo automáticamente.
-        this.persistGroupIdInEnvIfMissing(groupId, true);
+        // Admin agregó el bot: registrar el grupo automáticamente en SQLite.
+        await this.groupRepository.register(groupId, `Grupo ${groupId}`, actor || 'admin');
         console.log(`✅ Bot agregado al nuevo grupo por admin: ${groupId}`);
       }
     } catch (error) {

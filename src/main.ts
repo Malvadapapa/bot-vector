@@ -27,6 +27,8 @@ import {
   DailyGreetingRepository,
   GroupContextRepository,
   GroupRepository,
+  CohortConfigRepository,
+  GroupMembershipRepository,
   InstitutionalNoticeRepository,
   ManagedClassRepository,
   ManagedExamRepository,
@@ -50,7 +52,6 @@ import { CabezonWhatsAppGateway } from './interfaces/whatsapp/cabezon-whatsapp-g
 import { SchedulerService } from './scheduler/scheduler-service.js';
 import { RagQueryService } from './rag/rag-query.service.js';
 import { RagPipelineService } from './rag/rag-pipeline.service.js';
-import { MigrationHelper } from './infrastructure/persistence/db/migration-helper.js';
 
 // Esto es para que esté disponible en main.ts si no lo estaba
 const DEFAULT_BOT_INSTRUCTIONS = [
@@ -237,20 +238,16 @@ async function bootstrap() {
   const outboxDedupRepository = new OutboxDedupRepository(sqliteDb);
   const userModerationRepository = new UserModerationRepository(sqliteDb);
   const groupRepository = new GroupRepository(sqliteDb);
+  const groupMembershipRepository = new GroupMembershipRepository(sqliteDb);
+  const cohortConfigRepository = new CohortConfigRepository(sqliteDb);
   const classCommissionScheduleRepository = new ClassCommissionScheduleRepository(sqliteDb);
 
   // PHASE 2: Commission and Group Context repositories
   const commissionRepository = new CommissionRepository(sqliteDb);
   const groupContextRepository = new GroupContextRepository(sqliteDb);
 
-  // PHASE 1: Migrate groups from .env to database (idempotent)
-  const envGroupIds = settings.whatsappGroupIds;
-  await MigrationHelper.migrateEnvGroupsToDb(sqliteDb, envGroupIds);
   const allowedGroupIds = await groupRepository.getAllActiveIds();
   console.log(`[PHASE-1] ${allowedGroupIds.length} active groups loaded from database`);
-  if (allowedGroupIds.length === 0 && envGroupIds.length > 0) {
-    console.warn('[PHASE-1] WARNING: No groups found in DB despite .env having values. Check migration.');
-  }
 
   const seedCodes = settings.adminSeedCodes
     .split(',')
@@ -349,6 +346,9 @@ async function bootstrap() {
     settings.adminPassword,
     groupContextRepository,
     commissionRepository,
+    cohortConfigRepository,
+    groupRepository,
+    groupMembershipRepository,
   );
   const cabezonWhatsAppGateway = new CabezonWhatsAppGateway(
     messageRouter,
@@ -357,7 +357,7 @@ async function bootstrap() {
     adminRepository,
     rateLimitService,
     moderationService,
-    settings.whatsappGroupIds,
+    groupRepository,
   );
 
   // Enlazar callbacks de moderación para notificaciones privadas
@@ -370,7 +370,8 @@ async function bootstrap() {
   });
 
   academicCalendarService.setNotificationSender(async (message: string) => {
-    for (const gid of settings.whatsappGroupIds) {
+    const activeGroupIds = await groupRepository.getAllActiveIds();
+    for (const gid of activeGroupIds) {
       await cabezonWhatsAppGateway.sendTextMessage(gid, message);
     }
   });

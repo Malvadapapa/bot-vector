@@ -318,6 +318,88 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_class_commission_schedule_day ON class_commission_schedule(schedule_day)`,
     ],
   },
+  {
+    version: 18,
+    description: 'Group admin assignments: group_admins table for per-group admins',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS group_admins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, group_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_group_admins_user_id ON group_admins(user_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_group_admins_group_id ON group_admins(group_id)`,
+    ],
+  },
+  {
+    version: 19,
+    description: 'Add entry_year to whatsapp_groups for cohort identification',
+    sql: [
+      `ALTER TABLE whatsapp_groups ADD COLUMN entry_year INTEGER`,
+    ],
+  },
+  {
+    version: 20,
+    description: 'Add is_super_admin flag to admin_users',
+    sql: [
+      `ALTER TABLE admin_users ADD COLUMN is_super_admin INTEGER NOT NULL DEFAULT 0`,
+    ],
+  },
+  {
+    version: 21,
+    description: 'Group memberships table for operational membership and roles',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS group_memberships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, group_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_group_memberships_group_id ON group_memberships(group_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_group_memberships_user_id ON group_memberships(user_id)`,
+    ],
+  },
+  {
+    version: 22,
+    description: 'Cohort (entry_year) level configuration storage',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS cohort_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_year INTEGER NOT NULL UNIQUE,
+        configs_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_cohort_configs_entry_year ON cohort_configs(entry_year)`,
+    ],
+  },
+  {
+    version: 23,
+    description: 'Move group_context commission into group_context_commissions table and backfill',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS group_context_commissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_context_id INTEGER NOT NULL,
+        commission_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(group_context_id, commission_id),
+        FOREIGN KEY(group_context_id) REFERENCES group_context(id) ON DELETE CASCADE,
+        FOREIGN KEY(commission_id) REFERENCES commissions(id) ON DELETE CASCADE
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_group_context_commissions_group_context_id ON group_context_commissions(group_context_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_group_context_commissions_commission_id ON group_context_commissions(commission_id)`,
+      `INSERT INTO group_context_commissions(group_context_id, commission_id, created_at)
+        SELECT id, commission_id, CURRENT_TIMESTAMP
+        FROM group_context
+        WHERE commission_id IS NOT NULL`
+    ],
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {

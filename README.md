@@ -6,7 +6,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5%2B-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![RAG](https://img.shields.io/badge/Architecture-RAG-orange)](https://en.wikipedia.org/wiki/Retrieval-augmented_generation)
 [![License](https://img.shields.io/badge/License-MIT-gray)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Alpha%201.0.0-yellow)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/Status-Alpha%202.0.0-alpha.1-yellow)](CHANGELOG.md)
 
 Bot Cabezón es un asistente académico automatizado diseñado para centralizar y simplificar el acceso a la información de cursada para los estudiantes de la Tecnicatura Superior en Desarrollo de Software del ISPC (Instituto Superior Politécnico Córdoba).
 
@@ -130,10 +130,9 @@ El sistema emplea una **arquitectura por capas** para separar responsabilidades,
    cd bot-cabezon
    npm install
    ```
-2. **Configurar entorno:**
+2. **Configurar entorno: **
    Copia `.env.example` a `.env` y completa las variables clave:
    ```env
-   WHATSAPP_GROUP_ID=1203630xxxxxxxx@g.us # O usa WHATSAPP_GROUP_IDS separado por comas
    ADMIN_PASSWORD=tu_password_fuerte
    ADMIN_SEED_CODES=123456,654321
    GEMINI_API_KEY=tu_gemini_api_key
@@ -145,6 +144,26 @@ El sistema emplea una **arquitectura por capas** para separar responsabilidades,
    npm start # Para desarrollo: npm run dev
    ```
 4. **Vincular WhatsApp:** Escanea el código QR que aparecerá en la terminal desde `Dispositivos vinculados` en tu app de WhatsApp. Escribe `!menu` en el grupo para verificar.
+
+## Configuración de grupos
+
+Los grupos se gestionan automáticamente en la base de datos SQLite. Ya no se configuran en el archivo `.env`.
+
+### Agregar un grupo nuevo
+
+1. Un admin global agrega el bot al grupo de WhatsApp
+2. El bot se registra automáticamente y envía un mensaje privado al admin con instrucciones de configuración
+3. El admin asigna el contexto académico con el comando:
+!config-grupo [groupId] año:[N] turno:[mañana|tarde|noche]
+
+Ejemplo:
+!config-grupo 120123456789-1234567890@g.us año:2 turno:tarde
+
+4. El bot confirma la configuración dentro del grupo
+
+### Migración desde versión anterior
+
+Si venías usando `WHATSAPP_GROUP_ID` o `WHATSAPP_GROUP_ID_2` en tu `.env`, el bot los migra automáticamente a la BD en el primer arranque. Podés eliminar esas variables del `.env` después del primer inicio exitoso.
 
 ---
 
@@ -170,6 +189,7 @@ Ejemplos:
 | Comando | Alias | Descripción |
 | --- | --- | --- |
 | `!menu` | `!m` | Abre el menú interactivo con opciones de navegación |
+| `!config-grupo [groupId] año:[N] turno:[turno]` | `!cg` | Asigna contexto académico a un grupo |
 | `!hoy` | `!clases` | Muestra las clases/materias del día (fecha, horario, profesor) |
 | `!enlace` | `!e` | Devuelve el enlace de Meet/Zoom de la clase en curso o próxima (ventana 10 min antes) |
 | `!examenes` | `!ex` | Lista los próximos exámenes (fecha, hora, tipo, comisión) |
@@ -183,6 +203,23 @@ Ejemplos:
 
 **Registro de usuario:** El bot te pedirá que completes tu perfil (nombre, cumpleaños, email, comisión) en privado.
 
+## Niveles de administrador
+
+### Admin global
+- Acceso completo a todas las funciones del bot
+- Puede agregar el bot a grupos nuevos
+- Puede asignar el contexto académico de cualquier grupo
+- Puede designar admins de grupo
+- Se registra con el código semilla definido en `ADMIN_SEED_CODES`
+
+### Admin de grupo
+- Acceso restringido a su grupo asignado
+- Puede cargar exámenes y materias de su comisión
+- Puede subir PDFs al RAG de su grupo
+- Puede gestionar avisos dirigidos a su grupo
+- No puede configurar el contexto del grupo ni agregar el bot a nuevos grupos
+- Es designado por un admin global
+
 **Comandos administrativos:** Requieren autenticación previa con `!soyadmin [codigo]`:
 - `!panel`: Panel de administración general
 - `!agregarexamen`: Crear nuevo examen en el calendario
@@ -191,6 +228,22 @@ Ejemplos:
 - `!log-moderacion`: Ver estadísticas de moderación y bloqueos
 - `!log-errores`: Ver log de errores del bot
 - `!stats`: Estadísticas generales de uso
+- `!rag-upload global`: Sube PDF al RAG global (enviar como adjunto con este caption)
+- `!rag-upload [groupId]`: Sube PDF al RAG de un grupo específico
+- `!config-grupo [groupId] año:[N] turno:[turno]`: Asigna contexto académico a un grupo
+
+## RAG por grupo
+
+Los documentos se organizan en dos niveles:
+
+- **Global** (`data/ai-context/global/`): accesible desde cualquier grupo. Para información institucional general como correlatividades o reglamentos.
+- **Por grupo** (`data/ai-context/[group_id]/`): accesible solo desde ese grupo. Para información específica de un año o comisión.
+
+Para subir documentos desde WhatsApp, enviá el PDF en chat privado con el bot usando como caption:
+!rag-upload global
+!rag-upload 120123456789-1234567890@g.us
+
+Los documentos que ya estaban en `data/ai-context/` antes de esta versión se tratan automáticamente como scope global.
 
 ---
 
