@@ -48,6 +48,7 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
       undefined,
       groupRepo,
       undefined,
+      undefined,
     );
   });
 

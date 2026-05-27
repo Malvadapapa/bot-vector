@@ -14,6 +14,7 @@ import {
   GroupRepository,
   GroupMembershipRepository,
   CohortConfigRepository,
+  ClassCommissionScheduleRepository,
   CommissionRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
 
@@ -30,6 +31,8 @@ interface PendingClassData {
   schedule_day?: string;
   schedule_time?: string;
   meet_link?: string;
+  // edit flow
+  editId?: number;
 }
 
 interface PendingTeacherData {
@@ -68,6 +71,12 @@ interface PendingGroupContextData {
   groupId?: string;
   year?: number;
   commission_id?: number | null;
+  commission_count?: number;
+  commission_ids?: number[];
+  commission_names?: string[];
+  subjects?: string[];
+  subjectIndex?: number;
+  commissionIndex?: number;
 }
 
 export class PrivateChatWorkflowService {
@@ -138,6 +147,7 @@ export class PrivateChatWorkflowService {
     private cohortConfigRepository?: CohortConfigRepository,
     private groupRepository?: GroupRepository,
     private groupMembershipRepository?: GroupMembershipRepository,
+    private classCommissionScheduleRepository?: ClassCommissionScheduleRepository,
   ) {}
 
   private isProfilePopulated(profile?: { name?: string; birthday_day_month?: string; email?: string; user_commission_id?: number } | null): boolean {
@@ -146,6 +156,95 @@ export class PrivateChatWorkflowService {
     const hasBirthday = !!String(profile.birthday_day_month || '').trim();
     const hasEmail = !!String(profile.email || '').trim();
     return hasName && hasBirthday && hasEmail;
+  }
+
+  private async handleClassEditSelection(userId: string, cleaned: string): Promise<string> {
+    const idxStr = cleaned.trim();
+    if (!/^\d+$/.test(idxStr)) return 'Pasame un número válido de la lista.';
+    const classes = await this.managedClassRepository.listAll();
+    const idx = Number(idxStr) - 1;
+    if (idx < 0 || idx >= classes.length) return `Número inválido. Elegí entre 1 y ${classes.length}.`;
+    const cls = classes[idx];
+    const pending = this.pendingClassData.get(userId) || {};
+    pending.editId = cls.id;
+    this.pendingClassData.set(userId, pending);
+    this.pendingAdminState.set(userId, 'await_class_edit_choice');
+    return ['¿Qué querés editar?', '1 - Nombre de la materia', "2 - Día y hora (ej: Lunes 08:30)", '3 - Enlace de Google Meet', '0 - Cancelar'].join('\n');
+  }
+
+  private async handleClassEditChoice(userId: string, cleaned: string): Promise<string> {
+    const choice = cleaned.trim();
+    const pending = this.pendingClassData.get(userId) || {};
+    const id = pending.editId;
+    if (!id) {
+      this.pendingAdminState.delete(userId);
+      this.pendingClassData.delete(userId);
+      return 'Faltan datos. Volvé a intentar.';
+    }
+
+    if (choice === '0' || choice.toLowerCase() === 'cancelar') {
+      this.pendingAdminState.delete(userId);
+      this.pendingClassData.delete(userId);
+      return 'Edición cancelada.';
+    }
+
+    if (choice === '1') {
+      this.pendingAdminState.set(userId, 'await_class_edit_new_subject');
+      return 'Escribí el nuevo nombre de la materia.';
+    }
+
+    if (choice === '2') {
+      this.pendingAdminState.set(userId, 'await_class_edit_new_time');
+      return "Pasame el nuevo día y hora en formato 'Lunes 08:30'.";
+    }
+
+    if (choice === '3') {
+      this.pendingAdminState.set(userId, 'await_class_edit_new_link');
+      return 'Pasame el nuevo enlace (debe comenzar con http).';
+    }
+
+    return 'Opción inválida. Elegí 1, 2, 3 o 0 para cancelar.';
+  }
+
+  private async handleClassEditNewSubject(userId: string, cleaned: string): Promise<string> {
+    const newSubject = cleaned.trim();
+    if (!newSubject) return 'El nombre no puede quedar vacío.';
+    const pending = this.pendingClassData.get(userId) || {};
+    const id = pending.editId;
+    if (!id) return 'Faltan datos. Volvé a intentar.';
+    await this.managedClassRepository.updateSubject(id, newSubject);
+    this.pendingAdminState.delete(userId);
+    this.pendingClassData.delete(userId);
+    return `Materia actualizada: ${newSubject} ✅`;
+  }
+
+  private async handleClassEditNewTime(userId: string, cleaned: string): Promise<string> {
+    const txt = cleaned.trim();
+    const m = txt.match(/^(\S+)\s+(\d{1,2}:\d{2})$/);
+    if (!m) return "Formato inválido. Usá 'Lunes 08:30'.";
+    const day = m[1];
+    const time = m[2];
+    const validDays = ['Lunes','Martes','Miercoles','Jueves','Viernes','lunes','martes','miercoles','jueves','viernes'];
+    if (!validDays.includes(day)) return 'Día inválido. Usá Lunes, Martes, Miercoles, Jueves o Viernes.';
+    const pending = this.pendingClassData.get(userId) || {};
+    const id = pending.editId;
+    if (!id) return 'Faltan datos. Volvé a intentar.';
+    await this.managedClassRepository.updateSchedule(id, day, time);
+    this.pendingAdminState.delete(userId);
+    this.pendingClassData.delete(userId);
+    return `Horario actualizado: ${day} ${time} ✅`;
+  }
+
+  private async handleClassEditNewLink(userId: string, cleaned: string): Promise<string> {
+    const link = cleaned.trim();
+    if (!link.startsWith('http')) return 'Enlace inválido. Debe comenzar con http.';
+    const pending = this.pendingClassData.get(userId) || {};
+    const id = pending.editId;
+    if (!id) return 'Faltan datos. Volvé a intentar.';
+    await this.managedClassRepository.updateMeetLink(id, link);
+    this.pendingAdminState.delete(userId);
+    this.pendingClassData.delete(userId);
+    return `Enlace actualizado ✅`;
   }
 
   public async handlePrivateMessage(userId: string, text: string): Promise<string> {
@@ -377,6 +476,26 @@ export class PrivateChatWorkflowService {
       return this.handleClassToggleNotifications(userId, cleaned);
     }
 
+    if (currentState === 'await_class_id_to_edit') {
+      return this.handleClassEditSelection(userId, cleaned);
+    }
+
+    if (currentState === 'await_class_edit_choice') {
+      return this.handleClassEditChoice(userId, cleaned);
+    }
+
+    if (currentState === 'await_class_edit_new_subject') {
+      return this.handleClassEditNewSubject(userId, cleaned);
+    }
+
+    if (currentState === 'await_class_edit_new_time') {
+      return this.handleClassEditNewTime(userId, cleaned);
+    }
+
+    if (currentState === 'await_class_edit_new_link') {
+      return this.handleClassEditNewLink(userId, cleaned);
+    }
+
     if (currentState === 'await_teacher_name') {
       return this.handleTeacherNameStep(userId, cleaned);
     }
@@ -433,8 +552,16 @@ export class PrivateChatWorkflowService {
       return await this.handleGroupContextYear(userId, cleaned);
     }
 
-    if (currentState === 'await_group_context_commission') {
-      return await this.handleGroupContextCommission(userId, cleaned);
+    if (currentState === 'await_group_context_commission_count') {
+      return await this.handleGroupContextCommissionCount(userId, cleaned);
+    }
+
+    if (currentState === 'await_group_context_subjects') {
+      return await this.handleGroupContextSubjects(userId, cleaned);
+    }
+
+    if (currentState === 'await_group_context_subject_schedule') {
+      return await this.handleGroupContextSubjectSchedule(userId, cleaned);
     }
 
     // Super Admin menu handlers
@@ -1831,6 +1958,7 @@ export class PrivateChatWorkflowService {
       '2 - Cargar materia',
       '3 - Eliminar materia',
       '4 - Habilitar/deshabilitar notificaciones',
+      '5 - Editar materia/horario/enlace',
       '5 - Forzar aviso de clase (prueba)',
       '0 - Volver',
     ].join('\n');
@@ -1920,6 +2048,14 @@ export class PrivateChatWorkflowService {
     }
 
     if (lowered === '5') {
+      // Edit class flow: list classes and ask which to edit
+      this.pendingAdminState.set(userId, 'await_class_id_to_edit');
+      const classes = await this.managedClassRepository.listAll();
+      if (!classes.length) return 'No hay materias cargadas.';
+      return ['Elegí la materia a editar:', ...classes.map((c, idx) => `${idx + 1} - ${c.subject} (${c.schedule_day} ${c.schedule_time}) | Enlace: ${c.meet_link || '(sin enlace)'}`)].join('\n');
+    }
+
+    if (lowered === '6') {
       return this.buildClassNotificationPreview();
     }
 
@@ -2545,13 +2681,13 @@ export class PrivateChatWorkflowService {
     const pending = this.pendingGroupContextData.get(userId) || {};
     pending.year = year;
     this.pendingGroupContextData.set(userId, pending);
-    this.pendingAdminState.set(userId, 'await_group_context_commission');
+    this.pendingAdminState.set(userId, 'await_group_context_commission_count');
 
     return [
       `✅ Año académico: ${year}`,
       '',
-      `Ahora, ¿a qué comisión pertenece este grupo?`,
-      `Respondé el nombre/número (ej: A, B, 1, 2, Única) o "0" para no asignar comisión específica (aplica a todas).`,
+      `¿Cuántas comisiones tiene esta camada? Respondé un número (ej: 1 o 2).`,
+      `Si preferís que el bot asigne números automáticos, simplemente respondé la cantidad.`,
     ].join('\n');
   }
 
@@ -2654,6 +2790,162 @@ export class PrivateChatWorkflowService {
       '',
       'El bot ahora filtrará clases y horarios según esta configuración.',
     ].join('\n');
+  }
+
+  private async handleGroupContextCommissionCount(userId: string, cleaned: string): Promise<string> {
+    const pending = this.pendingGroupContextData.get(userId);
+    if (!pending?.groupId || !pending.year) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Faltan datos. Intenta de nuevo desde el grupo con !config-grupo.';
+    }
+
+    const n = Number(cleaned.trim());
+    if (!Number.isInteger(n) || n < 1 || n > 20) {
+      return 'Necesito un número válido de comisiones (por ejemplo: 1 o 2). Máx 20.';
+    }
+
+    pending.commission_count = n;
+    this.pendingGroupContextData.set(userId, pending);
+
+    // create commissions numerically: 1..n
+    const commissionIds: number[] = [];
+    const commissionNames: string[] = [];
+    for (let i = 1; i <= n; i++) {
+      const name = String(i);
+      try {
+        const id = await this.commissionRepository?.createOrGet(name, pending.year as number);
+        if (id) {
+          commissionIds.push(id);
+          commissionNames.push(name);
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    pending.commission_ids = commissionIds;
+    pending.commission_names = commissionNames;
+    this.pendingGroupContextData.set(userId, pending);
+
+    // ensure group_context exists and map commissions
+    try {
+      const groupContextId = await this.groupContextRepository!.upsert(pending.groupId as string, pending.year as number, commissionIds.length === 1 ? commissionIds[0] : null, `${pending.year} - ${commissionNames.join(',')}`, userId);
+      await this.groupContextRepository!.setCommissionsForGroupContext(groupContextId, commissionIds);
+    } catch (e) {
+      // log and continue
+    }
+
+    this.pendingAdminState.set(userId, 'await_group_context_subjects');
+    return [
+      `✅ Registradas ${n} comisiones para la camada ${pending.year}.`,
+      '',
+      'Ahora, ingresá la lista de materias separadas por comas (ej: Matemáticas,Física,Química).',
+      "Si preferís hacerlo más tarde, escribí 'mas tarde'.",
+    ].join('\n');
+  }
+
+  private async handleGroupContextSubjects(userId: string, cleaned: string): Promise<string> {
+    const pending = this.pendingGroupContextData.get(userId);
+    if (!pending?.groupId || !pending.year) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Faltan datos. Intenta de nuevo desde el grupo con !config-grupo.';
+    }
+
+    const text = cleaned.trim();
+    if (!text || text.toLowerCase() === 'mas tarde' || text.toLowerCase() === 'más tarde') {
+      // finish
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '✅ Configuración de comisiones completada. Podés agregar materias y horarios más tarde con el comando correspondiente.';
+    }
+
+    const subjects = text.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!subjects.length) return 'No reconozco materias válidas. Enviá la lista separada por comas.';
+
+    pending.subjects = subjects;
+    pending.subjectIndex = 0;
+    pending.commissionIndex = 0;
+    this.pendingGroupContextData.set(userId, pending);
+
+    // Ask for first subject + first commission
+    const subj = subjects[0];
+    const commissionName = (pending.commission_names && pending.commission_names[0]) || '1';
+    this.pendingAdminState.set(userId, 'await_group_context_subject_schedule');
+    return [`Ingresá día y hora y opcional enlace para la materia "${subj}" y la comisión ${commissionName}.`, `Formato: Lunes 08:30|https://meet.link (o escribí 'skip' para dejar vacío)`].join('\n');
+  }
+
+  private async handleGroupContextSubjectSchedule(userId: string, cleaned: string): Promise<string> {
+    const pending = this.pendingGroupContextData.get(userId);
+    if (!pending?.groupId || !pending.year || !pending.subjects || !pending.commission_ids) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Faltan datos. Reintentá con !config-grupo.';
+    }
+
+    const subjIdx = pending.subjectIndex ?? 0;
+    const commIdx = pending.commissionIndex ?? 0;
+    const subject = pending.subjects[subjIdx];
+    const commissionId = pending.commission_ids[commIdx];
+
+    const txt = cleaned.trim();
+    if (txt.toLowerCase() !== 'skip') {
+      // expected format: Day HH:MM|link  or Day HH:MM
+      const parts = txt.split('|').map((s) => s.trim());
+      const dayAndTime = parts[0] || '';
+      const meetLink = parts[1] || null;
+      const m = dayAndTime.match(/^(\S+)\s+(\d{1,2}:\d{2})$/);
+      if (m) {
+        const day = m[1];
+        const time = m[2];
+        try {
+          // create or find managed class for the subject (create with commission_count)
+          const managedClassId = await this.managedClassRepository!.create({
+            subject,
+            schedule_day: day,
+            schedule_time: time,
+            meet_link: meetLink ?? '',
+            notifications_enabled: true,
+            commission_count: pending.commission_count ?? 1,
+          });
+
+          // create commission-specific schedule
+          await this.classCommissionScheduleRepository!.create({
+            managed_class_id: managedClassId,
+            commission_id: commissionId,
+            schedule_day: day,
+            schedule_time: time,
+            meet_link: meetLink ?? null,
+          });
+        } catch (e) {
+          // ignore and continue
+        }
+      }
+    }
+
+    // advance indices
+    if ((pending.commissionIndex ?? 0) + 1 < (pending.commission_ids?.length ?? 0)) {
+      pending.commissionIndex = (pending.commissionIndex ?? 0) + 1;
+      this.pendingGroupContextData.set(userId, pending);
+      const commissionName = pending.commission_names ? pending.commission_names[pending.commissionIndex] : String((pending.commissionIndex ?? 0) + 1);
+      return `Ingresá día y hora y opcional enlace para la materia "${subject}" y la comisión ${commissionName}. Formato: Lunes 08:30|https://... o 'skip'`;
+    }
+
+    // move to next subject
+    if ((pending.subjectIndex ?? 0) + 1 < (pending.subjects?.length ?? 0)) {
+      pending.subjectIndex = (pending.subjectIndex ?? 0) + 1;
+      pending.commissionIndex = 0;
+      this.pendingGroupContextData.set(userId, pending);
+      const nextSubj = pending.subjects[pending.subjectIndex];
+      const commissionName = pending.commission_names ? pending.commission_names[0] : '1';
+      return `Ahora ingresá día y hora para la materia "${nextSubj}" y la comisión ${commissionName}. Formato: Lunes 08:30|https://... o 'skip'`;
+    }
+
+    // finished all
+    this.pendingGroupContextData.delete(userId);
+    this.pendingAdminState.delete(userId);
+    return '✅ Materias y horarios registrados (o dejados en blanco). Podés editar enlaces/horarios más tarde si hace falta.';
   }
 
   private pickOne(options: string[]): string {

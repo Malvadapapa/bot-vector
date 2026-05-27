@@ -45,6 +45,7 @@ describe('PrivateChatWorkflowService - cohort emails', () => {
       cohortRepo,
       undefined,
       undefined,
+      undefined,
     );
   });
 

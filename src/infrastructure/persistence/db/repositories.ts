@@ -1064,6 +1064,22 @@ export class ManagedClassRepository {
     ]);
   }
 
+  async updateSchedule(id: number, newDay: string, newTime: string): Promise<void> {
+    await run(
+      this.db,
+      `UPDATE managed_classes SET schedule_day = ?, schedule_time = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [newDay, newTime, id]
+    );
+  }
+
+  async updateMeetLink(id: number, meetLink: string): Promise<void> {
+    await run(
+      this.db,
+      `UPDATE managed_classes SET meet_link = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [meetLink, id]
+    );
+  }
+
   async delete(id: number): Promise<boolean> {
     const result = await run(this.db, `DELETE FROM managed_classes WHERE id = ?`, [id]);
     return result.changes > 0;

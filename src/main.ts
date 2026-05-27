@@ -349,6 +349,7 @@ async function bootstrap() {
     cohortConfigRepository,
     groupRepository,
     groupMembershipRepository,
+    classCommissionScheduleRepository,
   );
   const cabezonWhatsAppGateway = new CabezonWhatsAppGateway(
     messageRouter,

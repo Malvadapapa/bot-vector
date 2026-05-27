@@ -66,6 +66,9 @@ Más que un bot de comandos, Cabezón actúa como un asistente académico automa
 
 ---
 
+**Nota de administración:** Ahora el panel admin permite *editar* una materia ya cargada (nombre, día/hora y enlace de Meet) desde el submenú de `Configurar avisos de clase` → `Editar materia/horario/enlace`.
+
+
 ## 🛠 Stack Tecnológico
 
 | Capa | Tecnología | Propósito |
