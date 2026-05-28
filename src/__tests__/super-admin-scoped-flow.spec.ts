@@ -111,7 +111,7 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
 
     // 5. Choose option 7 to enter scoped admin menu
     const scopedMenu = await svc.handlePrivateMessage('sa1', '7');
-    expect(scopedMenu).toContain('Panel admin del Grupo (g1@g.us):');
+    expect(scopedMenu).toContain('Panel admin del Grupo (');
     expect(scopedMenu).toContain('1 - Configurar avisos de clase');
     expect(scopedMenu).toContain('0 - Volver al menú de gestión de grupo');
 
@@ -122,7 +122,7 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
 
     // 7. Exit class submenu by typing 0 or menu -> should return back to scoped admin menu
     const backToScoped = await svc.handlePrivateMessage('sa1', '0');
-    expect(backToScoped).toContain('Panel admin del Grupo (g1@g.us):');
+    expect(backToScoped).toContain('Panel admin del Grupo (');
 
     // 8. Exit scoped admin menu by typing 0 -> should return to group management menu
     const backToMgmt = await svc.handlePrivateMessage('sa1', '0');

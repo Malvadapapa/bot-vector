@@ -109,6 +109,31 @@ describe('Multi-commission config and unified exam flows', () => {
     expect(martes.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('accepts schedule input with a space-separated link and persists the class', async () => {
+    const start = await svc.startGroupContextConfiguration('admin2@s.whatsapp.net', 'g2@g.us');
+    expect(start).toMatch(/Configuración del grupo/);
+
+    await svc.handlePrivateMessage('admin2@s.whatsapp.net', '2027');
+    await svc.handlePrivateMessage('admin2@s.whatsapp.net', '1');
+    await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Química Analítica');
+
+    const result = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Miércoles 10:15 https://meet.example.com/quimica');
+    expect(result).toMatch(/Materias y horarios registrados|Ahora ingresá/);
+
+    const { ManagedClassRepository, ClassCommissionScheduleRepository } = reposModule as any;
+    const classRepo = new ManagedClassRepository(db);
+    const scheduleRepo = new ClassCommissionScheduleRepository(db);
+
+    const classes = await classRepo.listAll();
+    const created = classes.find((entry: any) => entry.subject === 'Química Analítica');
+    expect(created).toBeDefined();
+
+    const schedules = await scheduleRepo.listByManagedClass(created.id);
+    expect(schedules.length).toBeGreaterThanOrEqual(1);
+    expect(schedules[0].schedule_day.toLowerCase()).toContain('miér');
+    expect(schedules[0].meet_link).toContain('https://meet.example.com/quimica');
+  });
+
   it('creates a unified exam (exam_commission_id = NULL) and stores single row', async () => {
     const { ManagedClassRepository, ManagedExamRepository } = reposModule as any;
     const classRepo = new ManagedClassRepository(db);

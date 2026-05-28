@@ -78,6 +78,7 @@ interface PendingGroupContextData {
   subjectIndex?: number;
   commissionIndex?: number;
   inScopedAdminMenu?: boolean;
+  lastGroupList?: string[];
 }
 
 export class PrivateChatWorkflowService {
@@ -546,7 +547,31 @@ export class PrivateChatWorkflowService {
       if (lowered === '1') {
         const groups = this.groupRepository ? await this.groupRepository.findAll() : [];
         if (!groups || groups.length === 0) return 'No hay grupos registrados.';
-        return groups.map((g) => `- ${g.group_id} | ${g.display_name || ''} | año=${g.entry_year ?? 'N/D'} | active=${g.is_active ? 'sí' : 'no'}`).join('\n');
+        // Agrupar por entry_year (cohorte) y ordenar: años asc, 'General' al final
+        const grouped: Record<string, any[]> = {};
+        for (const g of groups) {
+          const key = g.entry_year ? String(g.entry_year) : 'General';
+          grouped[key] = grouped[key] || [];
+          grouped[key].push(g);
+        }
+        const years = Object.keys(grouped).filter((k) => k !== 'General').sort((a, b) => Number(a) - Number(b));
+        if (grouped['General']) years.push('General');
+        const parts: string[] = [];
+        // guardar lista para selección por número
+        const flatList: string[] = [];
+        for (const y of years) {
+          parts.push(y === 'General' ? 'General:' : `Cohorte ${y}:`);
+          const list = grouped[y].sort((a, b) => (a.display_name || a.group_id).localeCompare(b.display_name || b.group_id));
+          for (const g of list) {
+            parts.push(`- ${g.display_name || g.group_id} (${g.group_id})`);
+            flatList.push(g.group_id);
+          }
+        }
+        // almacenar en pendingSuperAdminData para seleccionar por número
+        this.pendingSuperAdminData.set(userId, { ...(this.pendingSuperAdminData.get(userId) || {}), lastGroupList: flatList });
+        this.pendingAdminState.set(userId, 'super_admin_listed_groups');
+        parts.push('', 'Escribí el número del grupo para seleccionarlo, o "menu" para volver.');
+        return parts.join('\n');
       }
 
       if (lowered === '2') {
@@ -646,7 +671,18 @@ export class PrivateChatWorkflowService {
         this.pendingAdminState.delete(userId);
         return 'No encontré ese grupo. Volvé al menú principal con admin-grupos.';
       }
+      // Si el grupo no tiene cohorte definida preguntar qué hacer
       this.pendingSuperAdminData.set(userId, { groupId: gid });
+      if (group.entry_year == null) {
+        this.pendingAdminState.set(userId, 'super_admin_handle_group_without_cohort');
+        return [
+          `El grupo ${group.display_name || gid} no tiene cohorte registrada. Qué querés hacer?`,
+          '',
+          '1 - Registrar cohorte ahora',
+          '2 - Marcar como General (no cohorte)',
+          '3 - Cancelar/Salir',
+        ].join('\n');
+      }
       this.pendingAdminState.set(userId, 'super_admin_manage_group');
       return [
         `Administrando grupo: ${gid}`,
@@ -660,6 +696,83 @@ export class PrivateChatWorkflowService {
         '7 - Ir al menú de Admin de este Grupo',
         '0 - Volver al menú Super-Admin',
       ].join('\n');
+    }
+
+    if (currentState === 'super_admin_listed_groups') {
+      const cmd = cleaned.trim().toLowerCase();
+      if (cmd === 'menu' || cmd === '0') {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
+      }
+      // si el usuario pide ir a seleccionar por JID
+      if (cmd === '2' || cmd === 'seleccionar' || cmd === 'seleccionar grupo') {
+        this.pendingAdminState.set(userId, 'super_admin_await_select_group');
+        return 'Ingresá el group_id (JID) del grupo que querés administrar:';
+      }
+      // intentar interpretar como número de lista
+      if (/^\d+$/.test(cmd)) {
+        const idx = Number(cmd) - 1;
+        const data = this.pendingSuperAdminData.get(userId) || {} as any;
+        const list: string[] = data?.lastGroupList || [];
+        if (idx < 0 || idx >= list.length) {
+          return `Número inválido. Enviá un número entre 1 y ${list.length}, o 'menu' para volver.`;
+        }
+        const gid = list[idx];
+        // verificar cohorte para mantener mismo comportamiento que seleccionar por JID
+        const group = this.groupRepository ? await this.groupRepository.findByGroupId(gid) : null;
+        this.pendingSuperAdminData.set(userId, { ...(this.pendingSuperAdminData.get(userId) || {}), groupId: gid });
+        if (group && group.entry_year == null) {
+          this.pendingAdminState.set(userId, 'super_admin_handle_group_without_cohort');
+          return [
+            `El grupo ${group.display_name || gid} no tiene cohorte registrada. Qué querés hacer?`,
+            '',
+            '1 - Registrar cohorte ahora',
+            '2 - Marcar como General (no cohorte)',
+            '3 - Cancelar/Salir',
+          ].join('\n');
+        }
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        return [
+          `Administrando grupo: ${gid}`,
+          '',
+          '1 - Editar entry_year',
+          '2 - Activar/Desactivar grupo',
+          '3 - Ver membresías',
+          '4 - Forzar re-onboarding (lanzará config por privado)',
+          '5 - Promover usuario a Admin de Grupo',
+          '6 - Quitar Admin de Grupo',
+          '7 - Ir al menú de Admin de este Grupo',
+          '0 - Volver al menú Super-Admin',
+        ].join('\n');
+      }
+      return 'Comando inválido. Escribí el número del grupo para seleccionarlo, o "menu" para volver.';
+    }
+
+    if (currentState === 'super_admin_handle_group_without_cohort') {
+      const choice = cleaned.trim().toLowerCase();
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay grupo seleccionado. Volvé a iniciar con admin-grupos.';
+      }
+
+      if (choice === '1' || choice === 'registrar' || choice === 'r') {
+        // Reusar estado de edición de entry_year
+        this.pendingAdminState.set(userId, 'super_admin_edit_entry_year');
+        return 'Ingresá el año (4 dígitos) o escribí "general" para marcar como general:';
+      }
+
+      if (choice === '2' || choice === 'general' || choice === 'g') {
+        if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+        await this.groupRepository.updateEntryYear(gid, null);
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        return `Grupo ${gid} marcado como "General".`;
+      }
+
+      // cancelar o cualquier otro
+      this.pendingAdminState.set(userId, 'super_admin_main');
+      return 'Operación cancelada. Volviendo al menú Super-Admin.';
     }
 
     if (currentState === 'super_admin_manage_group') {
@@ -1206,6 +1319,14 @@ export class PrivateChatWorkflowService {
       }
       this.pendingAdminState.set(userId, 'super_admin_main');
       return this.superAdminMenuText(userId);
+    }
+
+    if ((lowered === '!auditar-grupos' || lowered === 'auditar-grupos') && isSuperAdmin) {
+      if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+      const groups = await this.groupRepository.findAll();
+      const without = groups.filter((g) => g.entry_year == null);
+      if (!without.length) return 'No hay grupos sin cohorte.';
+      return ['Grupos sin cohorte:', ...without.map((g) => `- ${g.display_name || g.group_id} (${g.group_id})`)].join('\n');
     }
 
     if (lowered === 'menu' || lowered === '0') {
@@ -2012,8 +2133,20 @@ export class PrivateChatWorkflowService {
 
     if (scopedData?.inScopedAdminMenu && scopedData.groupId) {
       this.pendingAdminState.set(userId, 'super_admin_scoped_admin_main');
+      // intentar enriquecer cabecera con display_name y cohorte
+      let headerLabel = scopedData.groupId;
+      try {
+        if (this.groupRepository) {
+          const g = await this.groupRepository.findByGroupId(scopedData.groupId);
+          if (g) {
+            headerLabel = `${g.display_name || scopedData.groupId} — Cohorte: ${g.entry_year ?? 'General'}`;
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
       return [
-        `Panel admin del Grupo (${scopedData.groupId}):`,
+        `Panel admin del Grupo (${headerLabel}):`,
         '',
         '1 - Configurar avisos de clase',
         '2 - Gestionar avisos de exámenes',
@@ -2988,10 +3121,22 @@ export class PrivateChatWorkflowService {
 
     const txt = cleaned.trim();
     if (txt.toLowerCase() !== 'skip') {
-      // expected format: Day HH:MM|link  or Day HH:MM
-      const parts = txt.split('|').map((s) => s.trim());
-      const dayAndTime = parts[0] || '';
-      const meetLink = parts[1] || null;
+      const normalizedInput = txt.replace(/\s+/g, ' ').trim();
+      let dayAndTime = normalizedInput;
+      let meetLink: string | null = null;
+
+      if (normalizedInput.includes('|')) {
+        const parts = normalizedInput.split('|').map((s) => s.trim());
+        dayAndTime = parts[0] || '';
+        meetLink = parts[1] || null;
+      } else {
+        const urlMatch = normalizedInput.match(/^(.*\S)\s+(https?:\/\/\S+)$/i);
+        if (urlMatch) {
+          dayAndTime = urlMatch[1].trim();
+          meetLink = urlMatch[2].trim();
+        }
+      }
+
       const m = dayAndTime.match(/^(\S+)\s+(\d{1,2}:\d{2})$/);
       if (m) {
         const day = m[1];
@@ -3018,6 +3163,8 @@ export class PrivateChatWorkflowService {
         } catch (e) {
           // ignore and continue
         }
+      } else {
+        return `Formato inválido. Usá "Lunes 08:30|https://...", "Lunes 08:30 https://..." o escribí 'skip'.`;
       }
     }
 

@@ -12,6 +12,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "tsc",
     "cleanup:data": "node scripts/cleanup-bot-data.mjs",
+    "cleanup:onboarding": "node scripts/reset-onboarding-data.mjs",
     "rag:index": "node dist/rag/cli.js index",
     "rag:check": "node dist/rag/cli.js check",
     "rag:reindex": "node dist/rag/cli.js reindex",
