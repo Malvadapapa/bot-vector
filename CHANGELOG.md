@@ -12,14 +12,19 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 - Flujo de promover/ despromover Admin de Grupo (promoción paginada, selección por número).
 - Paginación de selección para listas largas (usuarios) en flujos privados.
 - Gestión por cohorte de avisos y exámenes: CRUD básico para avisos y exámenes etiquetados por cohorte.
+- Migración versión 24: nuevas columnas `frecuencia`, `grupo_selector` y `confirmed_at` en la tabla `institutional_notices`.
+- Integración en `InstitutionalEmailMonitor` de resolución dinámica de grupos de WhatsApp: soporte para segmentar avisos por camada específica (ej: `camada: 2026`), canales generales o envío a todos los grupos activos.
+- Validaciones de rango de fecha y vigencia temporal para avisos entrantes, con respuestas automáticas por e-mail informando al emisor sobre el éxito (procesado/confirmado) o error detallado del rechazo.
 
 ### Modificado
 - `PrivateChatWorkflowService`: nuevos estados y handlers para cohortes, emails, avisos y examenes.
 - Tests: migración a Vitest y nuevos tests para promotion/demotion y cohort-emails.
+- `email-service.ts`: adaptación para habilitar soporte de emails de salida de confirmación/error en el flujo IMAP.
 
 ### Tests
 - Se añadieron pruebas unitarias en `src/__tests__/promotion-demotion.spec.ts` y `src/__tests__/cohort-emails.spec.ts`.
 - La suite `npm run test:vitest` pasa localmente tras estos cambios.
+- Nuevas pruebas funcionales añadidas en `src/__tests__/institutional-notices.spec.ts` para cubrir las validaciones de fechas, resolución de grupos y envío de correos en avisos institucionales.
 
 ### Notas
 - Los avisos creados por cohorte se prefijan con `[Cohorte <year>]` mientras no exista columna específica en la tabla para scoping.
