@@ -42,6 +42,7 @@ import {
 } from './infrastructure/persistence/db/repositories.js';
 import { MessageIntentParserService } from './infrastructure/integrations/message-understanding/message-intent-parser.service.js';
 import { EmailService } from './infrastructure/integrations/email-service.js';
+import { OutboundEmailService } from './infrastructure/integrations/email-service.js';
 import { GeminiService } from './infrastructure/integrations/ai/gemini.service.js';
 import { GroqProvider } from './infrastructure/integrations/ai/groq.provider.js';
 import { FallbackAIService } from './infrastructure/integrations/ai/fallback-ai.service.js';
@@ -378,23 +379,30 @@ async function bootstrap() {
   });
 
   const emailService = new EmailService();
+  const outboundEmailService = new OutboundEmailService();
   const emailMonitor = settings.imapHost && settings.imapUser && settings.imapPassword
     ? new InstitutionalEmailMonitor(
       emailService,
       institutionalNoticeRepository,
       reminderRepository,
-      async (text: string) => {
-        // PHASE 5: Send to active groups from database
+      async (text: string, groupId?: string) => {
+        // If groupId provided, send only to that group; otherwise send to all active groups
+        if (groupId) {
+          await cabezonWhatsAppGateway.sendTextMessage(groupId, text);
+          return;
+        }
         const activeGroupIds = await groupRepository.getAllActiveIds();
         for (const gid of activeGroupIds) {
           await cabezonWhatsAppGateway.sendTextMessage(gid, text);
         }
       },
       async () => {
-        // PHASE 5: Get first active group dynamically
         const activeGroupIds = await groupRepository.getAllActiveIds();
         return activeGroupIds[0] || undefined;
       },
+      managedTeacherRepository,
+      groupRepository,
+      outboundEmailService,
     )
     : undefined;
 

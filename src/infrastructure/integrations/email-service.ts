@@ -1,5 +1,6 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser, ParsedMail } from 'mailparser';
+import nodemailer from 'nodemailer';
 
 export class EmailService {
   constructor() {}
@@ -57,5 +58,37 @@ export class EmailService {
       }
     }
     return emails;
+  }
+}
+
+export class OutboundEmailService {
+  private transporter: nodemailer.Transporter;
+
+  constructor() {
+    this.transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || '',
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: (process.env.SMTP_SECURE || 'false') === 'true',
+      auth: {
+        user: process.env.SMTP_USER || '',
+        pass: process.env.SMTP_PASS || '',
+      },
+    });
+  }
+
+  async send(to: string, subject: string, body: string): Promise<void> {
+    if (!to) throw new Error('Missing recipient');
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@example.com';
+    try {
+      await this.transporter.sendMail({
+        from,
+        to,
+        subject,
+        text: body,
+      });
+    } catch (err) {
+      console.error('[OutboundEmailService] Error sending email:', err);
+      throw err;
+    }
   }
 }

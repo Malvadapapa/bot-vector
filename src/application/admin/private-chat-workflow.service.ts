@@ -77,6 +77,7 @@ interface PendingGroupContextData {
   subjects?: string[];
   subjectIndex?: number;
   commissionIndex?: number;
+  inScopedAdminMenu?: boolean;
 }
 
 export class PrivateChatWorkflowService {
@@ -115,7 +116,7 @@ export class PrivateChatWorkflowService {
   private pendingNoticeData = new Map<string, PendingNoticeData>();
   private pendingNoticeEditData = new Map<string, PendingNoticeEditData>();
   private pendingGroupContextData = new Map<string, PendingGroupContextData>();
-  private pendingSuperAdminData = new Map<string, { groupId?: string }>();
+  private pendingSuperAdminData = new Map<string, PendingGroupContextData>();
   private postRegistrationWarningShown = new Set<string>();
   private profileUpdateNoticeShown = new Set<string>();
   // Contador de reintentos por campo en el registro (evitar spam loops)
