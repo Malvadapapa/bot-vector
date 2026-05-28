@@ -400,6 +400,15 @@ const MIGRATIONS: Migration[] = [
         WHERE commission_id IS NOT NULL`
     ],
   },
+  {
+    version: 24,
+    description: 'Add frecuencia, grupo_selector and confirmed_at to institutional_notices',
+    sql: [
+      `ALTER TABLE institutional_notices ADD COLUMN frecuencia TEXT NOT NULL DEFAULT 'unica'`,
+      `ALTER TABLE institutional_notices ADD COLUMN grupo_selector TEXT NOT NULL DEFAULT 'todos'`,
+      `ALTER TABLE institutional_notices ADD COLUMN confirmed_at TEXT`,
+    ],
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {

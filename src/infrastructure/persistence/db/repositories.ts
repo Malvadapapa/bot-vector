@@ -268,8 +268,8 @@ export class InstitutionalNoticeRepository {
     try {
       await run(
         this.db,
-        `INSERT INTO institutional_notices(title, body, start_date, end_date, event_time, source_email, unique_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO institutional_notices(title, body, start_date, end_date, event_time, source_email, unique_hash, frecuencia, grupo_selector)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           notice.title,
           notice.body,
@@ -278,12 +278,34 @@ export class InstitutionalNoticeRepository {
           notice.event_time ?? null,
           notice.source_email ?? null,
           notice.unique_hash,
+          notice.frecuencia ?? 'unica',
+          notice.grupo_selector ?? 'todos',
         ]
       );
       return true;
     } catch {
       return false;
     }
+  }
+
+  async getByUniqueHash(uniqueHash: string): Promise<InstitutionalNotice | null> {
+    const row = await get<any>(this.db, 'SELECT * FROM institutional_notices WHERE unique_hash = ? LIMIT 1', [uniqueHash]);
+    if (!row) return null;
+    return rowToNotice(row);
+  }
+
+  async getByUniqueHashWithId(uniqueHash: string): Promise<{ id: number; notice: InstitutionalNotice } | null> {
+    const row = await get<any>(this.db, 'SELECT * FROM institutional_notices WHERE unique_hash = ? LIMIT 1', [uniqueHash]);
+    if (!row) return null;
+    return { id: Number(row.id), notice: rowToNotice(row) };
+  }
+
+  async markConfirmed(id: number): Promise<void> {
+    await run(this.db, 'UPDATE institutional_notices SET confirmed_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  }
+
+  async markPublished(id: number): Promise<void> {
+    await run(this.db, 'UPDATE institutional_notices SET published_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
   }
 
   async listRecent(limit = 5): Promise<InstitutionalNotice[]> {
@@ -969,6 +991,10 @@ function rowToNotice(row: any): InstitutionalNotice {
     event_time: row.event_time ? String(row.event_time) : undefined,
     source_email: row.source_email ? String(row.source_email) : undefined,
     unique_hash: String(row.unique_hash),
+    grupo_selector: row.grupo_selector ? String(row.grupo_selector) : undefined,
+    frecuencia: row.frecuencia ? String(row.frecuencia) : undefined,
+    published_at: row.published_at ? new Date(String(row.published_at)) : undefined,
+    confirmed_at: row.confirmed_at ? new Date(String(row.confirmed_at)) : undefined,
   };
 }
 
@@ -1196,6 +1222,11 @@ function rowToManagedClass(row: any): ManagedClass {
       return row ? rowToTeacher(row) : null;
     }
 
+    async getByEmail(email: string): Promise<ManagedTeacher | null> {
+      const row = await get<any>(this.db, `SELECT * FROM managed_teachers WHERE LOWER(email) = LOWER(?) LIMIT 1`, [email]);
+      return row ? rowToTeacher(row) : null;
+    }
+
     async update(teacherId: number, teacher: Partial<ManagedTeacherCreateInput>): Promise<void> {
       const updates: string[] = [];
       const params: unknown[] = [];
@@ -1271,6 +1302,11 @@ function rowToManagedClass(row: any): ManagedClass {
     async getAllActiveIds(): Promise<string[]> {
       const rows = await all<any>(this.db, 'SELECT group_id FROM whatsapp_groups WHERE is_active = 1 ORDER BY created_at ASC');
       return rows.map((r) => String(r.group_id));
+    }
+
+    async getAllActiveGroupsWithEntryYear(): Promise<Array<{ group_id: string; display_name?: string; entry_year?: number | null }>> {
+      const rows = await all<any>(this.db, 'SELECT group_id, display_name, entry_year FROM whatsapp_groups WHERE is_active = 1 ORDER BY created_at ASC');
+      return rows.map((r) => ({ group_id: String(r.group_id), display_name: r.display_name ? String(r.display_name) : undefined, entry_year: r.entry_year !== null && r.entry_year !== undefined ? Number(r.entry_year) : null }));
     }
 
     /**

@@ -50,6 +50,10 @@ export interface InstitutionalNotice {
   event_time?: string;
   source_email?: string;
   unique_hash: string;
+  frecuencia?: string;
+  grupo_selector?: string;
+  published_at?: Date;
+  confirmed_at?: Date;
 }
 
 export interface UserProfile {
