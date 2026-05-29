@@ -46,14 +46,14 @@ import { FallbackAIService } from './features/ai/providers/fallback-ai.service.j
 import { GeminiEmbeddingProvider } from './features/ai/providers/gemini-embedding.provider.js';
 import { InstitutionalEmailMonitor } from './features/notifications/integrations/institutional-email-monitor.js';
 import { RssParserService } from './features/notifications/integrations/rss.service.js';
-import { CabezonWhatsAppGateway } from './interfaces/whatsapp/cabezon-whatsapp-gateway.js';
+import { VectoritoWhatsAppGateway } from './interfaces/whatsapp/vectorito-whatsapp-gateway.js';
 import { SchedulerService } from './scheduler/scheduler-service.js';
 import { RagQueryService } from './features/ai/rag/rag-query.service.js';
 import { RagPipelineService } from './features/ai/rag/rag-pipeline.service.js';
 
 // Esto es para que esté disponible en main.ts si no lo estaba
 const DEFAULT_BOT_INSTRUCTIONS = [
-  'Tu nombre es "Cabezón" y sos el bot creado por Cristian Vargas para el ISPC.',
+  'Tu nombre es "Vectorito" y sos el bot creado por Cristian Vargas para el ISPC.',
   'Respondé siempre en español de Argentina, con voseo y tono claro, amable y cercano.',
   'IMPORTANTE: Dirigite al usuario por su nombre (si figura en el contexto) para darle un toque personal.',
   'IMPORTANTE: Cuando respondas preguntas académicas, reglamentos o correlativas, sé sintético, ordenado y estructurado. Evitá introducciones largas y no repitas la información al final, si hay una enumeracion de datos haz una lista por ejemplo cuando hables de correlatividades.',
@@ -212,7 +212,7 @@ function setupProcessSafetyHandlers() {
 async function bootstrap() {
   ensureSingleInstance();
   setupProcessSafetyHandlers();
-  console.log('=== Cabezón: inicio de servicio ===');
+  console.log('=== Vectorito: inicio de servicio ===');
   console.log('Cargando configuración, base de datos y conexión a WhatsApp...');
 
   const settings = getSettings();
@@ -349,7 +349,7 @@ async function bootstrap() {
     groupMembershipRepository,
     classCommissionScheduleRepository,
   );
-  const cabezonWhatsAppGateway = new CabezonWhatsAppGateway(
+  const vectoritoWhatsAppGateway = new VectoritoWhatsAppGateway(
     messageRouter,
     privateChatWorkflow,
     userProfileRepository,
@@ -362,7 +362,7 @@ async function bootstrap() {
   // Enlazar callbacks de moderación para notificaciones privadas
   moderationService.setPrivateChatCallback(async (userId: string, message: string) => {
     try {
-      await cabezonWhatsAppGateway.sendTextMessage(userId, message, undefined, true);
+      await vectoritoWhatsAppGateway.sendTextMessage(userId, message, undefined, true);
     } catch (e) {
       console.error('[Main] Error enviando mensaje privado de moderación al usuario:', e);
     }
@@ -371,7 +371,7 @@ async function bootstrap() {
   academicCalendarService.setNotificationSender(async (message: string) => {
     const activeGroupIds = await groupRepository.getAllActiveIds();
     for (const gid of activeGroupIds) {
-      await cabezonWhatsAppGateway.sendTextMessage(gid, message);
+      await vectoritoWhatsAppGateway.sendTextMessage(gid, message);
     }
   });
 
@@ -385,12 +385,12 @@ async function bootstrap() {
       async (text: string, groupId?: string) => {
         // If groupId provided, send only to that group; otherwise send to all active groups
         if (groupId) {
-          await cabezonWhatsAppGateway.sendTextMessage(groupId, text);
+          await vectoritoWhatsAppGateway.sendTextMessage(groupId, text);
           return;
         }
         const activeGroupIds = await groupRepository.getAllActiveIds();
         for (const gid of activeGroupIds) {
-          await cabezonWhatsAppGateway.sendTextMessage(gid, text);
+          await vectoritoWhatsAppGateway.sendTextMessage(gid, text);
         }
       },
       async () => {
@@ -405,7 +405,7 @@ async function bootstrap() {
 
   const scheduler = new SchedulerService(
     groupRepository,
-    cabezonWhatsAppGateway,
+    vectoritoWhatsAppGateway,
     rateLimitService,
     reminderRepository,
     confirmationRepository,
@@ -419,12 +419,12 @@ async function bootstrap() {
     emailMonitor,
   );
 
-  await cabezonWhatsAppGateway.startConnection();
+  await vectoritoWhatsAppGateway.startConnection();
   await scheduler.startJobs();
 
   process.on('SIGINT', () => {
-    console.log('\n=== Cerrando Cabezón ===');
-    cabezonWhatsAppGateway.close();
+    console.log('\n=== Cerrando Vectorito ===');
+    vectoritoWhatsAppGateway.close();
     databaseConnection.close();
     process.exit(0);
   });

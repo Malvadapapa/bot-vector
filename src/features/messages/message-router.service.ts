@@ -5,7 +5,7 @@ import { MessageIntentParserService } from './message-intent-parser.service.js';
 import { DailyGreetingRepository } from './messages.repository.js';
 
 export class MessageRouter {
-  private static BOT_MENTION_ALIASES = ['@cabezon', '@cabezón'];
+  private static BOT_MENTION_ALIASES = ['@vectorito', '@Vectorito'];
 
   private static HELLO_JOKES = [
     'Chiste nerd: mi compu y yo tenemos una relación estable... se cuelga, pero vuelve.',

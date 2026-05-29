@@ -8,7 +8,7 @@ import { GroupRepository, ManagedExamRepository, ReminderRepository, SchedulerRu
 import { OutboxDedupRepository } from '../features/messages/messages.repository.js';
 import { ConfirmationRepository } from '../features/conversation/conversation.repository.js';
 import { InstitutionalEmailMonitor } from '../features/notifications/integrations/institutional-email-monitor.js';
-import { CabezonWhatsAppGateway } from '../interfaces/whatsapp/cabezon-whatsapp-gateway.js';
+import { VectoritoWhatsAppGateway } from '../interfaces/whatsapp/vectorito-whatsapp-gateway.js';
 import { RagPipelineService } from '../features/ai/rag/rag-pipeline.service.js';
 
 export class SchedulerService {
@@ -16,7 +16,7 @@ export class SchedulerService {
 
   constructor(
     private groupRepository: GroupRepository,
-    private whatsappGateway: CabezonWhatsAppGateway,
+    private whatsappGateway: VectoritoWhatsAppGateway,
     private rateLimitService: RateLimitService,
     private reminderRepository: ReminderRepository,
     private confirmationRepository: ConfirmationRepository,

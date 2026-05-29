@@ -1,4 +1,4 @@
-# 🤖 Bot Cabezón
+# 🤖 Bot Vectorito
 
 **Asistente académico automatizado para WhatsApp orientado a estudiantes del ISPC**
 
@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/License-MIT-gray)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Alpha%202.1.0-alpha.1-yellow)](CHANGELOG.md)
 
-Bot Cabezón es un asistente académico automatizado diseñado para centralizar y simplificar el acceso a la información de cursada para los estudiantes de la Tecnicatura Superior en Desarrollo de Software del ISPC (Instituto Superior Politécnico Córdoba).
+Bot Vectorito es un asistente académico automatizado diseñado para centralizar y simplificar el acceso a la información de cursada para los estudiantes de la Tecnicatura Superior en Desarrollo de Software del ISPC (Instituto Superior Politécnico Córdoba).
 
 ## 📖 Contenido
 
@@ -37,7 +37,7 @@ En la práctica, esto genera varios problemas para los estudiantes:
 
 El resultado es una experiencia académica fragmentada, donde muchos estudiantes terminan perdiendo información importante o recurriendo constantemente a otros estudiantes para resolver dudas administrativas o académicas.
 
-**La solución:** Bot Cabezón integra en WhatsApp un asistente académico automatizado que centraliza información clave de cursada y reduce fricción en el acceso a datos importantes.
+**La solución:** Bot Vectorito integra en WhatsApp un asistente académico automatizado que centraliza información clave de cursada y reduce fricción en el acceso a datos importantes.
 
 El objetivo del bot es acercar la información académica al entorno donde mas interactúan los alumnos, simplificando el acceso a clases compartiendo los enlaces, avisos institucionales, avisos de exámenes y consultas frecuentes mediante automatización e IA contextualizada.
 
@@ -49,7 +49,7 @@ El asistente permite:
 - 💬 Reducir la dependencia de mensajes perdidos en grupos o foros extensos.
 - ⚡ Brindar respuestas rápidas desde una interfaz cotidiana y accesible como WhatsApp.
 
-Más que un bot de comandos, Cabezón actúa como un asistente académico automatizado orientado a mejorar la experiencia diaria de estudiantes del ISPC en una modalidad educativa distribuida y asincrónica.
+Más que un bot de comandos, Vectorito actúa como un asistente académico automatizado orientado a mejorar la experiencia diaria de estudiantes del ISPC en una modalidad educativa distribuida y asincrónica.
 
 ---
 
@@ -156,7 +156,7 @@ src/
 1. **Clonar e instalar dependencias:**
    ```bash
    git clone <URL_DEL_REPOSITORIO>
-   cd bot-cabezon
+   cd bot-vectorito
    npm install
    ```
 2. **Configurar entorno: **
@@ -209,9 +209,9 @@ Ejemplos:
 - *"Qué materias tengo que ver esta semana?"*
 - *"Me falta Cálculo, ¿cuándo se recupera?"*
 
-**Mencionar al bot (@cabezon):** Si quieres forzar una respuesta con IA en un contexto específico, menciona al bot con `@cabezon` seguido de tu pregunta:
-- `@cabezon ¿Cuáles son las fechas de los exámenes finales?`
-- `@cabezon Necesito correlativas de Algoritmos`
+**Mencionar al bot (@vectorito):** Si quieres forzar una respuesta con IA en un contexto específico, menciona al bot con `@vectorito` seguido de tu pregunta:
+- `@vectorito ¿Cuáles son las fechas de los exámenes finales?`
+- `@vectorito Necesito correlativas de Algoritmos`
 
 ### 🔹 Comandos rápidos (En Grupos)
 

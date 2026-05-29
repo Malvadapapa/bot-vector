@@ -4,14 +4,14 @@
  */
 
 import { ManagedExamRepository } from '../../infrastructure/persistence/db/repositories.js';
-import { CabezonWhatsAppGateway } from '../../interfaces/whatsapp/cabezon-whatsapp-gateway.js';
+import { VectoritoWhatsAppGateway } from '../../interfaces/whatsapp/vectorito-whatsapp-gateway.js';
 
 export class ExamNotificationService {
   private readonly cronWindowMs = 6 * 60 * 1000;
 
   constructor(
     private examRepository: ManagedExamRepository,
-    private gateway: CabezonWhatsAppGateway,
+    private gateway: VectoritoWhatsAppGateway,
     private groupIds: string[],
   ) {}
 

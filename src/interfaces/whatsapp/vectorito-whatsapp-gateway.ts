@@ -29,7 +29,7 @@ const ANSI = {
 };
 
 const NEW_USER_REGISTRATION_MESSAGES = [
-  '¡Hola! Soy Cabezón, el bot del ISPC. Antes de que podamos charlar, necesito que te registres por privado 🙂\nMandame un "hola" al privado y lo hacemos en un toque.',
+  '¡Hola! Soy Vectorito, el bot del ISPC. Antes de que podamos charlar, necesito que te registres por privado 🙂\nMandame un "hola" al privado y lo hacemos en un toque.',
   '¡Buenas! Para poder responderte necesito conocerte un poco. ¿Me mandás un "hola" por privado para registrarte? Es súper rápido 🙂',
   '¡Ey! Bienvenido. Porfa, escribime "hola" por privado así te registro y te puedo ayudar con lo que necesites del ISPC.',
 ];
@@ -46,7 +46,7 @@ const NO_PENDING_APPROVAL_MESSAGES = [
   'Todavía no veo solicitudes pendientes para habilitar.',
 ];
 
-export class CabezonWhatsAppGateway {
+export class VectoritoWhatsAppGateway {
   private whatsappSocket: any;
   private isConnecting = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -110,7 +110,7 @@ export class CabezonWhatsAppGateway {
         },
         printQRInTerminal: false,
         logger: pino.default({ level: 'silent' }),
-        browser: Browsers.ubuntu('CabezonBot'),
+        browser: Browsers.ubuntu('VectoritoBot'),
         markOnlineOnConnect: true,
         syncFullHistory: true,
         connectTimeoutMs: 60_000,
@@ -670,7 +670,7 @@ export class CabezonWhatsAppGateway {
       }
     }
 
-    // 2) Respaldo: mención textual por alias (ej: @cabezon, @Cabezón Bot)
+    // 2) Respaldo: mención textual por alias (ej: @vectorito, @Vectorito Bot)
     if (!incomingText) return false;
     const normalizedText = this.normalizeMentionText(incomingText);
     const aliases = this.getBotMentionAliases();
@@ -715,8 +715,8 @@ export class CabezonWhatsAppGateway {
       String(user?.name || ''),
       String(user?.pushName || ''),
       String(user?.notify || ''),
-      'cabezon',
-      'cabezón',
+      'vectorito',
+      'Vectorito Bot',
     ];
 
     return candidates
@@ -838,7 +838,7 @@ export class CabezonWhatsAppGateway {
       }
 
       // Suprimir líneas tipo "Removing old closed session:" y similares
-      if (typeof first === 'string' && CabezonWhatsAppGateway.noisySessionLogPatterns.some((p) => p.test(first))) {
+      if (typeof first === 'string' && VectoritoWhatsAppGateway.noisySessionLogPatterns.some((p) => p.test(first))) {
         this.suppressNextSessionDump = true;
         return;
       }

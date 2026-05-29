@@ -48,7 +48,7 @@ type MenuNode = {
 
 const GENERAL_MENU_TREE: Record<string, MenuNode> = {
   inicio: {
-    mensaje: "¡Hola! Soy Cabezón, el asistente virtual del grupo🤖. ¿Cómo te puedo ayudar hoy?\n1️⃣ Fechas Útiles\n2️⃣ Comunicarse con ISPC\n3️⃣ Noticias de Software =)\n4️⃣ Avisos del ISPC\n5️⃣ Preguntas frecuentes",
+    mensaje: "¡Hola! Soy Vectorito, el asistente virtual del grupo🤖. ¿Cómo te puedo ayudar hoy?\n1️⃣ Fechas Útiles\n2️⃣ Comunicarse con ISPC\n3️⃣ Noticias de Software =)\n4️⃣ Avisos del ISPC\n5️⃣ Preguntas frecuentes",
     opciones: {
       "1": "fechas_utiles",
       "2": "comunicarse_ispc",
@@ -576,7 +576,7 @@ export class AcademicCalendarService {
     const displayName = profile?.name?.trim();
     const greeting = displayName ? `Hola, ${displayName} 👋` : 'Hola 👋';
     return [
-      '¡Hola! Soy Cabezón, el asistente virtual del grupo 🤖.',
+      '¡Hola! Soy Vectorito, el asistente virtual del grupo 🤖.',
       greeting,
       '',
       '¿En qué te puedo ayudar hoy?',

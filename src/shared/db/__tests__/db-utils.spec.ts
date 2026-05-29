@@ -26,17 +26,17 @@ describe('db-utils', () => {
   it('debería ejecutar comandos run, get y all correctamente', async () => {
     await run(db, 'CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
     
-    const insertResult = await run(db, 'INSERT INTO test (name) VALUES (?)', ['Cabezón']);
+    const insertResult = await run(db, 'INSERT INTO test (name) VALUES (?)', ['Vectorito']);
     expect(insertResult.lastID).toBe(1);
     expect(insertResult.changes).toBe(1);
 
     const getResult = await get<{ id: number; name: string }>(db, 'SELECT * FROM test WHERE id = ?', [1]);
     expect(getResult).toBeDefined();
-    expect(getResult?.name).toBe('Cabezón');
+    expect(getResult?.name).toBe('Vectorito');
 
     const allResult = await all<{ id: number; name: string }>(db, 'SELECT * FROM test');
     expect(allResult.length).toBe(1);
-    expect(allResult[0].name).toBe('Cabezón');
+    expect(allResult[0].name).toBe('Vectorito');
   });
 
   it('debería formatear fechas locales correctamente', () => {
