@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+dist-test/
 *.tsbuildinfo
 
 # Environment
@@ -41,4 +42,6 @@ temp/
 *.swp
 *.swo
 *~
-.env
+
+# Runtime lock
+.bot-instance.lock

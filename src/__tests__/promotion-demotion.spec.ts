@@ -66,7 +66,9 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     await svc.handlePrivateMessage(adminId, '2');
     // provide group id
     const menu = await svc.handlePrivateMessage(adminId, 'group1');
-    expect(menu).toContain('Administrando grupo: group1');
+    expect(menu).toContain('G');
+    expect(menu).toContain('Cohorte: 2024');
+    expect(menu).toContain('group1');
 
     // choose promote option
     const promotePage = await svc.handlePrivateMessage(adminId, '5');
@@ -83,7 +85,9 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     await svc.handlePrivateMessage(adminId, '!admin-grupos');
     await svc.handlePrivateMessage(adminId, '2');
     const menu = await svc.handlePrivateMessage(adminId, 'group1');
-    expect(menu).toContain('Administrando grupo: group1');
+    expect(menu).toContain('G');
+    expect(menu).toContain('Cohorte: 2024');
+    expect(menu).toContain('group1');
 
     // choose demote option
     const listAdmins = await svc.handlePrivateMessage(adminId, '6');

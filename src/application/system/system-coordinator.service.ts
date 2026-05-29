@@ -5,9 +5,9 @@
 
 import { ConversationAnalysisService, ConversationPattern } from '../analysis/conversation-analysis.service.js';
 import { CaseEscalationService, EscalatedCase, EscalationLevel } from '../admin/case-escalation.service.js';
-import { ScheduledReminderService, ScheduledReminder } from '../notifications/scheduled-reminder.service.js';
+import { ScheduledReminderService, ScheduledReminder } from '../../features/notifications/scheduled-reminder.service.js';
 import { DashboardPanelService } from '../admin/dashboard-panel.service.js';
-import { BanWarningSystem } from '../moderation/ban-warning-system.js';
+import { BanWarningSystem } from '../../features/moderation/ban-warning-system.js';
 
 export class SystemCoordinatorService {
   constructor(

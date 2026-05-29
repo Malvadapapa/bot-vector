@@ -3,7 +3,7 @@
  * Maneja: !log-errores, !log-moderacion, !stats
  */
 
-import { LoggingService } from '../../infrastructure/logging/logging.service.js';
+import { LoggingService } from '../../shared/logging/logging.service.js';
 
 export class AdminLoggingCommandService {
   private readonly ADMIN_THRESHOLD = 3; // Mínimo de caracteres en comando para considerarlo válido

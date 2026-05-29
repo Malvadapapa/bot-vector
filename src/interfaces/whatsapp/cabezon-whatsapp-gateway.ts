@@ -9,10 +9,10 @@ import * as pino from 'pino';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
-import { MessageRouter } from '../../application/messages/message-router.service.js';
+import { MessageRouter } from '../../features/messages/message-router.service.js';
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
-import { RateLimitService } from '../../application/ai/rate-limit.service.js';
-import { UserModerationService } from '../../application/moderation/user-moderation.service.js';
+import { RateLimitService } from '../../features/ai/rate-limit.service.js';
+import { UserModerationService } from '../../features/moderation/user-moderation.service.js';
 import { AdminRepository, GroupRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -221,98 +221,153 @@ export class CabezonWhatsAppGateway {
           this.isConnecting = false;
           this.consecutiveConnectionReplaced = 0;
           console.log('\n[WhatsApp] Conectado correctamente a WhatsApp.');
+          this.syncGroupDisplayNames().catch((err) => {
+            console.warn('[Gateway] Error al sincronizar nombres de grupo en el inicio:', err);
+          });
         }
       });
 
       this.whatsappSocket.ev.on('messages.upsert', async (event: any) => {
         try {
-          const incomingMessage = event?.messages?.[0];
-          if (!incomingMessage?.message || incomingMessage?.key?.fromMe) return;
-          await this.markMessageAsRead(incomingMessage);
+          const incomingMessages = Array.isArray(event?.messages) ? event.messages : [];
+          for (const incomingMessage of incomingMessages) {
+            if (!incomingMessage?.message || incomingMessage?.key?.fromMe) continue;
+            await this.markMessageAsRead(incomingMessage);
 
-          const eventId = String(incomingMessage?.key?.id || '');
-          if (!eventId || this.isDuplicate(eventId)) return;
+            const eventId = String(incomingMessage?.key?.id || '');
+            if (!eventId || this.isDuplicate(eventId)) continue;
 
-          const rawChatId = String(incomingMessage?.key?.remoteJid || '');
-          if (!rawChatId) return;
-          const chatId = rawChatId.split(' ')[0];
+            const rawChatId = String(incomingMessage?.key?.remoteJid || '');
+            if (!rawChatId) continue;
+            const chatId = rawChatId.split(' ')[0];
 
-          const isGroup = chatId.includes('@g.us');
-          const rawSenderJid = String(incomingMessage?.key?.participant || chatId);
-          const senderJid = rawSenderJid.split(' ')[0];
+            const isGroup = chatId.includes('@g.us');
+            const rawSenderJid = String(incomingMessage?.key?.participant || chatId);
+            const senderJid = rawSenderJid.split(' ')[0];
 
-          const incomingText = this.extractMessageText(incomingMessage).trim();
-          const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
-            ? await (this.adminRepository as any).isSuperAdmin(senderJid)
-            : !!(await this.adminRepository.get(senderJid))?.is_super_admin;
-          const isGlobalAdmin = typeof (this.adminRepository as any).isGlobalAdmin === 'function'
-            ? await (this.adminRepository as any).isGlobalAdmin(senderJid)
-            : (await this.adminRepository.isAuthenticated(senderJid)) && !isSuperAdmin;
-          const isAdmin = isGlobalAdmin || isSuperAdmin;
-          const isGroupAdmin = isGroup ? await this.adminRepository.isGroupAdmin(senderJid, chatId) : false;
-          const isActiveGroup = !isGroup ? true : await this.groupRepository.isActive(chatId);
+            const incomingText = this.extractMessageText(incomingMessage).trim();
+            const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+              ? await (this.adminRepository as any).isSuperAdmin(senderJid)
+              : !!(await this.adminRepository.get(senderJid))?.is_super_admin;
+            const isGlobalAdmin = typeof (this.adminRepository as any).isGlobalAdmin === 'function'
+              ? await (this.adminRepository as any).isGlobalAdmin(senderJid)
+              : (await this.adminRepository.isAuthenticated(senderJid)) && !isSuperAdmin;
+            const isAdmin = isGlobalAdmin || isSuperAdmin;
+            const isGroupAdmin = isGroup ? await this.adminRepository.isGroupAdmin(senderJid, chatId) : false;
+            const isActiveGroup = !isGroup ? true : await this.groupRepository.isActive(chatId);
 
-          // Auto-registro en primera activación: si el grupo no existe, registrarlo y notificar super-admins
-          if (isGroup && !isActiveGroup) {
-            const existing = await this.groupRepository.findByGroupId(chatId);
-            if (!existing) {
-              try {
-                await this.groupRepository.register(chatId, `Grupo ${chatId}`, senderJid);
-              } catch (e) {
-                console.warn('[Gateway] No se pudo registrar el grupo automáticamente:', (e as any)?.message || e);
-              }
+            if (incomingText) {
+              this.logIncoming(chatId, senderJid, incomingText, isGroup, isAdmin);
+            } else if (isGroup) {
+              console.warn(`⚠️ [Gateway] Mensaje de grupo sin texto reconocible: chat=${chatId} sender=${senderJid}`);
+            }
 
-              // Notificar super-admins para que completen la configuración por privado
-              let superAdmins: string[] = [];
-              try {
-                if (typeof (this.adminRepository as any).listSuperAdminIds === 'function') {
-                  superAdmins = await (this.adminRepository as any).listSuperAdminIds();
-                } else {
-                  superAdmins = await this.adminRepository.listAllAdminIds();
+            // Dynamic display_name update for active groups if currently generic
+            if (isGroup && isActiveGroup) {
+              const existing = await this.groupRepository.findByGroupId(chatId);
+              if (existing) {
+                if (!existing.display_name || existing.display_name.startsWith('Grupo ')) {
+                  try {
+                    if (this.whatsappSocket && typeof this.whatsappSocket.groupMetadata === 'function') {
+                      const meta = await this.whatsappSocket.groupMetadata(chatId);
+                      if (meta && meta.subject && meta.subject !== existing.display_name) {
+                        await this.groupRepository.updateDisplayName(chatId, meta.subject);
+                        existing.display_name = meta.subject;
+                      }
+                    }
+                  } catch (e) {
+                    // Silently ignore if metadata cannot be fetched at the moment
+                  }
                 }
-              } catch (e) {
-                console.warn('[Gateway] Error obteniendo super-admins:', (e as any)?.message || e);
               }
+            }
 
-              for (const sa of superAdmins) {
+            // Auto-registro en primera activación: si el grupo no existe, registrarlo y notificar super-admins
+            if (isGroup && !isActiveGroup) {
+              const existing = await this.groupRepository.findByGroupId(chatId);
+              if (!existing) {
+                let groupName = `Grupo ${chatId}`;
                 try {
-                  const cfgMsg = await this.privateChatWorkflow.startGroupContextConfiguration(sa, chatId);
-                  await this.sendTextMessage(sa, `Nuevo grupo detectado: ${chatId}\nSe creó un registro mínimo.\n\n${cfgMsg}`, undefined, true);
+                  if (this.whatsappSocket && typeof this.whatsappSocket.groupMetadata === 'function') {
+                    const meta = await this.whatsappSocket.groupMetadata(chatId);
+                    if (meta && meta.subject) {
+                      groupName = meta.subject;
+                    }
+                  }
                 } catch (e) {
-                  console.warn('[Gateway] No se pudo notificar super-admin', sa, (e as any)?.message || e);
+                  console.warn('[Gateway] No se pudo obtener metadata del grupo:', (e as any)?.message || e);
                 }
+
+                try {
+                  await this.groupRepository.register(chatId, groupName, senderJid);
+                } catch (e) {
+                  console.warn('[Gateway] No se pudo registrar el grupo automáticamente:', (e as any)?.message || e);
+                }
+
+                // Notificar super-admins para que completen la configuración por privado
+                let superAdmins: string[] = [];
+                try {
+                  if (typeof (this.adminRepository as any).listSuperAdminIds === 'function') {
+                    superAdmins = await (this.adminRepository as any).listSuperAdminIds();
+                  } else {
+                    superAdmins = await this.adminRepository.listAllAdminIds();
+                  }
+                } catch (e) {
+                  console.warn('[Gateway] Error obteniendo super-admins:', (e as any)?.message || e);
+                }
+
+                for (const sa of superAdmins) {
+                  try {
+                    const cfgMsg = await this.privateChatWorkflow.startGroupContextConfiguration(sa, chatId);
+                    await this.sendTextMessage(sa, `Nuevo grupo detectado: ${chatId}\nSe creó un registro mínimo.\n\n${cfgMsg}`, undefined, true);
+                  } catch (e) {
+                    console.warn('[Gateway] No se pudo notificar super-admin', sa, (e as any)?.message || e);
+                  }
+                }
+
+                // Informar al grupo que fue registrado y que los super-admins fueron notificados
+                try {
+                  await this.sendTextMessage(chatId, 'Gracias. Este grupo fue registrado y los super-admins fueron notificados para completar la configuración. Un admin puede ejecutar !config-grupo para iniciar la configuración ahora.', undefined, false);
+                } catch {}
+
+                continue;
               }
 
-              // Informar al grupo que fue registrado y que los super-admins fueron notificados
+              // Si existe pero está inactivo, permitir registro si quien envía es admin
+              if (!isAdmin) {
+                await this.handleUnauthorizedGroup(chatId);
+                continue;
+              }
+
+              // Si es admin y el grupo está inactivo, re-registrar/activar
+              let groupName = `Grupo ${chatId}`;
               try {
-                await this.sendTextMessage(chatId, 'Gracias. Este grupo fue registrado y los super-admins fueron notificados para completar la configuración. Un admin puede ejecutar !config-grupo para iniciar la configuración ahora.', undefined, false);
-              } catch {}
-
-              return;
+                if (this.whatsappSocket && typeof this.whatsappSocket.groupMetadata === 'function') {
+                  const meta = await this.whatsappSocket.groupMetadata(chatId);
+                  if (meta && meta.subject) {
+                    groupName = meta.subject;
+                  }
+                }
+              } catch (e) {
+                console.warn('[Gateway] No se pudo obtener metadata del grupo:', (e as any)?.message || e);
+              }
+              await this.groupRepository.register(chatId, groupName, senderJid);
+              if (groupName !== `Grupo ${chatId}`) {
+                await this.groupRepository.updateDisplayName(chatId, groupName);
+              }
             }
-
-            // Si existe pero está inactivo, permitir registro si quien envía es admin
-            if (!isAdmin) {
-              await this.handleUnauthorizedGroup(chatId);
-              return;
-            }
-
-            // Si es admin y el grupo está inactivo, re-registrar/activar
-            await this.groupRepository.register(chatId, `Grupo ${chatId}`, senderJid);
-          }
-          if (!incomingText) return;
-          this.logIncoming(chatId, senderJid, incomingText, isGroup, isAdmin);
+          if (!incomingText) continue;
 
           if (!isGroup) {
             const privateReply = await this.privateChatWorkflow.handlePrivateMessage(senderJid, incomingText);
-            if (!privateReply) return;
+            if (!privateReply) continue;
             const parts = privateReply.split('|||SPLIT|||');
             for (const part of parts) {
               if (part.trim()) {
                 await this.sendTextMessage(chatId, part, senderJid, true);
               }
             }
-            return;
+            continue;
           }
 
           const mentionedJids = this.extractMentionedJids(incomingMessage);
@@ -378,7 +433,8 @@ export class CabezonWhatsAppGateway {
 
           // Si es un número y NO hay menú activo, ignorar completamente
           if (isNumericReply && !hasPendingMenu && !messageMentionsBot) {
-            return;
+            console.warn(`⚠️ [Gateway] Número ignorado fuera de menú: chat=${chatId} sender=${senderJid} text="${incomingText}"`);
+            continue;
           }
 
           if (messageMentionsBot && !isRegisteredUser && !isCommand) {
@@ -390,12 +446,15 @@ export class CabezonWhatsAppGateway {
               senderJid,
               false,
             );
-            return;
+            continue;
           }
 
           // Procesar solo comandos, menciones al bot o números dentro de un menú activo.
           const shouldProcess = isCommand || messageMentionsBot || (hasPendingMenu && isNumericReply);
-          if (!shouldProcess) return;
+          if (!shouldProcess) {
+            console.warn(`⚠️ [Gateway] Mensaje de grupo descartado antes del router: chat=${chatId} sender=${senderJid} command=${isCommand} mentioned=${messageMentionsBot} menu=${hasPendingMenu} text="${incomingText}"`);
+            continue;
+          }
 
           const invokedByMention = messageMentionsBot;
 
@@ -403,13 +462,13 @@ export class CabezonWhatsAppGateway {
             const moderation = await this.moderationService.evaluate(senderJid, normalizedGroupText, isAdmin || isSuperAdmin, new Date());
             if (moderation.warningMessage) {
               await this.sendTextMessage(chatId, moderation.warningMessage, senderJid, false);
-              return;
+              continue;
             }
             if (moderation.blocked) {
               if (invokedByMention) {
                 await this.sendTextMessage(chatId, '⚠️ Ahora no puedo responderte. Si creés que es un error, hablá con un admin.', senderJid, false);
               }
-              return;
+              continue;
             }
           }
 
@@ -424,14 +483,14 @@ export class CabezonWhatsAppGateway {
             chatId,
             isSuperAdmin,
           );
-          if (groupReply == null) return;
+          if (groupReply == null) continue;
 
           // PHASE 4: Handle group configuration command
           if (typeof groupReply === 'string' && groupReply.startsWith('config-grupo:')) {
             const groupId = groupReply.substring('config-grupo:'.length);
             const configReply = await this.privateChatWorkflow.startGroupContextConfiguration(senderJid, groupId);
             await this.sendTextMessage(senderJid, configReply, undefined, true);
-            return;
+            continue;
           }
 
           const safeReply = String(groupReply).trim() || 'No pude generar una respuesta en este momento.';
@@ -449,7 +508,7 @@ export class CabezonWhatsAppGateway {
               console.log(`⚠️ [IntentDetect] Pregunta fuera de contexto detectada: ${intent}`);
               const warning = `⚠️ Esa pregunta está fuera de mis funciones del ISPC.\n\nIntenta preguntar algo sobre:\n• Materias y clases\n• Horarios y agenda\n• Coordinación y profesores\n• Noticias del ISPC\n\nSi insistís con temas off-topic, podrías recibir una restricción.`;
               await this.sendTextMessage(chatId, warning, senderJid, false);
-              return;
+              continue;
             }
           }
 
@@ -463,6 +522,7 @@ export class CabezonWhatsAppGateway {
               await this.sendTextMessage(chatId, cleanedForSend, senderJid, false);
             }
           }
+        }
         } catch (msgErr) {
           const msg = (msgErr as any)?.message || 'error desconocido';
           console.error(`❌ Error procesando mensaje entrante: ${msg}`);
@@ -735,7 +795,21 @@ export class CabezonWhatsAppGateway {
         await this.handleUnauthorizedGroup(groupId);
       } else {
         // Admin agregó el bot: registrar el grupo automáticamente en SQLite.
-        await this.groupRepository.register(groupId, `Grupo ${groupId}`, actor || 'admin');
+        let groupName = `Grupo ${groupId}`;
+        try {
+          if (this.whatsappSocket && typeof this.whatsappSocket.groupMetadata === 'function') {
+            const meta = await this.whatsappSocket.groupMetadata(groupId);
+            if (meta && meta.subject) {
+              groupName = meta.subject;
+            }
+          }
+        } catch (e) {
+          console.warn('[Gateway] No se pudo obtener metadata del grupo:', (e as any)?.message || e);
+        }
+        await this.groupRepository.register(groupId, groupName, actor || 'admin');
+        if (groupName !== `Grupo ${groupId}`) {
+          await this.groupRepository.updateDisplayName(groupId, groupName);
+        }
         console.log(`✅ Bot agregado al nuevo grupo por admin: ${groupId}`);
       }
     } catch (error) {
@@ -756,6 +830,12 @@ export class CabezonWhatsAppGateway {
     const originalLog = console.log.bind(console);
     console.log = (...args: any[]) => {
       const first = args[0];
+
+      // Evitar filtrar si es un log de trazabilidad del bot (📩 o 📤)
+      if (typeof first === 'string' && (first.includes('📩') || first.includes('📤'))) {
+        originalLog(...args);
+        return;
+      }
 
       // Suprimir líneas tipo "Removing old closed session:" y similares
       if (typeof first === 'string' && CabezonWhatsAppGateway.noisySessionLogPatterns.some((p) => p.test(first))) {
@@ -797,5 +877,29 @@ export class CabezonWhatsAppGateway {
       if (shouldSuppress(chunk)) return true;
       return originalStderrWrite(chunk, encoding, callback);
     }) as any;
+  }
+
+  private async syncGroupDisplayNames(): Promise<void> {
+    if (!this.groupRepository) return;
+    try {
+      const groups = await this.groupRepository.findAll();
+      for (const g of groups) {
+        if (!g.display_name || g.display_name.startsWith('Grupo ')) {
+          try {
+            if (this.whatsappSocket && typeof this.whatsappSocket.groupMetadata === 'function') {
+              const meta = await this.whatsappSocket.groupMetadata(g.group_id);
+              if (meta && meta.subject && meta.subject !== g.display_name) {
+                await this.groupRepository.updateDisplayName(g.group_id, meta.subject);
+                console.log(`[Gateway] Sincronizado display_name del grupo ${g.group_id} a: "${meta.subject}"`);
+              }
+            }
+          } catch (e) {
+            // Evitar spam de errores para grupos a los que no tenemos acceso o ya no estamos
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Gateway] Error leyendo grupos para sincronizar:', err);
+    }
   }
 }

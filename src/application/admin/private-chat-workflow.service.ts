@@ -1,14 +1,13 @@
 import crypto from 'crypto';
-import { DynamicMessageService } from '../messages/dynamic-message.service.js';
-import { ManagedExam, ManagedClassCreateInput, ManagedTeacherCreateInput, InstitutionalNotice } from '../../domain/models.js';
+import { DynamicMessageService } from '../../features/messages/dynamic-message.service.js';
+import { ManagedExam, ManagedClassCreateInput, ManagedTeacherCreateInput } from '../../domain/models.js';
+import { InstitutionalNotice } from '../../features/notifications/notifications.models.js';
 import {
   AdminRepository,
   AdminVerificationCodeRepository,
-  InstitutionalNoticeRepository,
   ManagedExamRepository,
   ManagedClassRepository,
   ManagedTeacherRepository,
-  UserModerationRepository,
   UserProfileRepository,
   GroupContextRepository,
   GroupRepository,
@@ -17,6 +16,8 @@ import {
   ClassCommissionScheduleRepository,
   CommissionRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
+import { InstitutionalNoticeRepository } from '../../features/notifications/notifications.repository.js';
+import { UserModerationRepository } from '../../features/moderation/moderation.repository.js';
 
 interface PendingProfile {
   name?: string;
@@ -306,7 +307,10 @@ export class PrivateChatWorkflowService {
   }
 
   private async handleAdminFlow(userId: string, cleaned: string): Promise<string | null> {
-    const lowered = cleaned.toLowerCase();
+    let lowered = cleaned.toLowerCase().trim();
+    if (lowered === 'menú') {
+      lowered = 'menu';
+    }
     const currentState = this.pendingAdminState.get(userId);
 
     if (currentState === 'await_admin_registration_code') {
@@ -563,8 +567,8 @@ export class PrivateChatWorkflowService {
           parts.push(y === 'General' ? 'General:' : `Cohorte ${y}:`);
           const list = grouped[y].sort((a, b) => (a.display_name || a.group_id).localeCompare(b.display_name || b.group_id));
           for (const g of list) {
-            parts.push(`- ${g.display_name || g.group_id} (${g.group_id})`);
             flatList.push(g.group_id);
+            parts.push(`- ${flatList.length} - ${g.display_name || g.group_id} (${g.group_id})`);
           }
         }
         // almacenar en pendingSuperAdminData para seleccionar por número
@@ -595,8 +599,8 @@ export class PrivateChatWorkflowService {
       }
 
       if (lowered === '0' || lowered === 'menu') {
-        this.pendingAdminState.set(userId, 'super_admin_main');
-        return this.superAdminMenuText(userId);
+        this.pendingAdminState.delete(userId);
+        return this.adminMenuText(userId);
       }
 
       return this.superAdminMenuText(userId);
@@ -614,18 +618,7 @@ export class PrivateChatWorkflowService {
         data.inScopedAdminMenu = false;
         this.pendingSuperAdminData.set(userId, data);
         this.pendingAdminState.set(userId, 'super_admin_manage_group');
-        return [
-          `Administrando grupo: ${gid}`,
-          '',
-          '1 - Editar entry_year',
-          '2 - Activar/Desactivar grupo',
-          '3 - Ver membresías',
-          '4 - Forzar re-onboarding (lanzará config por privado)',
-          '5 - Promover usuario a Admin de Grupo',
-          '6 - Quitar Admin de Grupo',
-          '7 - Ir al menú de Admin de este Grupo',
-          '0 - Volver al menú Super-Admin',
-        ].join('\n');
+        return await this.superAdminManageGroupMenuText(gid);
       }
 
       if (lowered === '1') {
@@ -666,10 +659,13 @@ export class PrivateChatWorkflowService {
 
     if (currentState === 'super_admin_await_select_group') {
       const gid = cleaned.trim();
+      if (lowered === 'menu' || lowered === '0' || lowered === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
+      }
       const group = this.groupRepository ? await this.groupRepository.findByGroupId(gid) : null;
       if (!group) {
-        this.pendingAdminState.delete(userId);
-        return 'No encontré ese grupo. Volvé al menú principal con admin-grupos.';
+        return 'No encontré ese grupo. Ingresá otro JID, o escribí "menu" para volver:';
       }
       // Si el grupo no tiene cohorte definida preguntar qué hacer
       this.pendingSuperAdminData.set(userId, { groupId: gid });
@@ -684,28 +680,20 @@ export class PrivateChatWorkflowService {
         ].join('\n');
       }
       this.pendingAdminState.set(userId, 'super_admin_manage_group');
-      return [
-        `Administrando grupo: ${gid}`,
-        '',
-        '1 - Editar entry_year',
-        '2 - Activar/Desactivar grupo',
-        '3 - Ver membresías',
-        '4 - Forzar re-onboarding (lanzará config por privado)',
-        '5 - Promover usuario a Admin de Grupo',
-        '6 - Quitar Admin de Grupo',
-        '7 - Ir al menú de Admin de este Grupo',
-        '0 - Volver al menú Super-Admin',
-      ].join('\n');
+      return await this.superAdminManageGroupMenuText(gid);
     }
 
     if (currentState === 'super_admin_listed_groups') {
-      const cmd = cleaned.trim().toLowerCase();
+      let cmd = cleaned.trim().toLowerCase();
+      if (cmd === 'menú') {
+        cmd = 'menu';
+      }
       if (cmd === 'menu' || cmd === '0') {
         this.pendingAdminState.set(userId, 'super_admin_main');
         return this.superAdminMenuText(userId);
       }
       // si el usuario pide ir a seleccionar por JID
-      if (cmd === '2' || cmd === 'seleccionar' || cmd === 'seleccionar grupo') {
+      if (cmd === 'seleccionar' || cmd === 'seleccionar grupo') {
         this.pendingAdminState.set(userId, 'super_admin_await_select_group');
         return 'Ingresá el group_id (JID) del grupo que querés administrar:';
       }
@@ -732,18 +720,7 @@ export class PrivateChatWorkflowService {
           ].join('\n');
         }
         this.pendingAdminState.set(userId, 'super_admin_manage_group');
-        return [
-          `Administrando grupo: ${gid}`,
-          '',
-          '1 - Editar entry_year',
-          '2 - Activar/Desactivar grupo',
-          '3 - Ver membresías',
-          '4 - Forzar re-onboarding (lanzará config por privado)',
-          '5 - Promover usuario a Admin de Grupo',
-          '6 - Quitar Admin de Grupo',
-          '7 - Ir al menú de Admin de este Grupo',
-          '0 - Volver al menú Super-Admin',
-        ].join('\n');
+        return await this.superAdminManageGroupMenuText(gid);
       }
       return 'Comando inválido. Escribí el número del grupo para seleccionarlo, o "menu" para volver.';
     }
@@ -767,12 +744,14 @@ export class PrivateChatWorkflowService {
         if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
         await this.groupRepository.updateEntryYear(gid, null);
         this.pendingAdminState.set(userId, 'super_admin_manage_group');
-        return `Grupo ${gid} marcado como "General".`;
+        const menuText = await this.superAdminManageGroupMenuText(gid);
+        return `Grupo ${gid} marcado como "General".\n\n${menuText}`;
       }
 
       // cancelar o cualquier otro
       this.pendingAdminState.set(userId, 'super_admin_main');
-      return 'Operación cancelada. Volviendo al menú Super-Admin.';
+      const saMenu = await this.superAdminMenuText(userId);
+      return `Operación cancelada. Volviendo al menú Super-Admin.\n\n${saMenu}`;
     }
 
     if (currentState === 'super_admin_manage_group') {
@@ -793,7 +772,8 @@ export class PrivateChatWorkflowService {
         const grp = await this.groupRepository.findByGroupId(gid);
         const newState = !(grp?.is_active ?? false);
         await this.groupRepository.setActive(gid, newState);
-        return `Grupo ${gid} ahora está ${newState ? 'activo' : 'inactivo'}.`;
+        const menuText = await this.superAdminManageGroupMenuText(gid);
+        return `Grupo ${gid} ahora está ${newState ? 'activo' : 'inactivo'}.\n\n${menuText}`;
       }
 
       if (lowered === '3') {
@@ -836,9 +816,14 @@ export class PrivateChatWorkflowService {
         return this.adminMenuText(userId);
       }
 
-      if (lowered === '0') {
+      if (lowered === '8') {
+        this.pendingAdminState.set(userId, 'super_admin_edit_display_name');
+        return 'Ingresá el nuevo nombre de apoyo (referencia interna) para este grupo:';
+      }
+
+      if (lowered === '0' || lowered === 'menu' || lowered === 'volver') {
         this.pendingAdminState.set(userId, 'super_admin_main');
-        return this.superAdminMenuText(userId);
+        return await this.superAdminMenuText(userId);
       }
 
       return 'Opción inválida. Elegí una opción del menú.';
@@ -853,21 +838,42 @@ export class PrivateChatWorkflowService {
         if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
         await this.groupRepository.updateEntryYear(gid, null);
         this.pendingAdminState.set(userId, 'super_admin_manage_group');
-        return `Entry_year del grupo ${gid} actualizado a "general".`;
+        const menuText = await this.superAdminManageGroupMenuText(gid);
+        return `Entry_year del grupo ${gid} actualizado a "general".\n\n${menuText}`;
       }
       if (!/^\d{4}$/.test(val)) return 'Año inválido. Escribí 4 dígitos o "general".';
       const year = Number(val);
       if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
       await this.groupRepository.updateEntryYear(gid, year);
       this.pendingAdminState.set(userId, 'super_admin_manage_group');
-      return `Entry_year del grupo ${gid} actualizado a ${year}.`;
+      const menuText = await this.superAdminManageGroupMenuText(gid);
+      return `Entry_year del grupo ${gid} actualizado a ${year}.\n\n${menuText}`;
+    }
+
+    if (currentState === 'super_admin_edit_display_name') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) return 'No hay grupo seleccionado.';
+      const newName = cleaned.trim();
+      if (!newName) return 'El nombre de apoyo no puede estar vacío.';
+      if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+      await this.groupRepository.updateDisplayName(gid, newName);
+      this.pendingAdminState.set(userId, 'super_admin_manage_group');
+      const menuText = await this.superAdminManageGroupMenuText(gid);
+      return `Nombre de apoyo para el grupo ${gid} actualizado a "${newName}".\n\n${menuText}`;
     }
 
     if (currentState === 'super_admin_await_memberships_group') {
       const gid = cleaned.trim();
+      if (lowered === 'menu' || lowered === '0' || lowered === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
+      }
       if (!this.groupMembershipRepository) return 'Repositorio de membresías no disponible.';
       const list = await this.groupMembershipRepository.listByGroup(gid);
-      if (!list || list.length === 0) return 'No hay miembros registrados en este grupo.';
+      if (!list || list.length === 0) {
+        return 'No hay miembros registrados en este grupo o el JID es inválido. Ingresá otro JID, o escribí "menu" para volver:';
+      }
       this.pendingAdminState.set(userId, 'super_admin_main');
       return list.map((m) => `- ${m.user_id} | ${m.role} | active=${m.is_active ? 'sí' : 'no'}`).join('\n');
     }
@@ -901,9 +907,12 @@ export class PrivateChatWorkflowService {
 
     if (currentState === 'super_admin_await_cohort_year') {
       const val = cleaned.trim();
+      if (lowered === 'menu' || lowered === '0' || lowered === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_main');
+        return this.superAdminCohortMenuText(userId);
+      }
       if (!/^\d{4}$/.test(val)) {
-        this.pendingAdminState.delete(userId);
-        return 'Año inválido. Volvé al menú de cohortes.';
+        return 'Año inválido. Ingresá un año de 4 dígitos, o escribí "menu" para volver:';
       }
       const year = Number(val);
       // ensure repo
@@ -920,15 +929,18 @@ export class PrivateChatWorkflowService {
 
     if (currentState === 'super_admin_await_cohort_select') {
       const val = cleaned.trim();
+      if (lowered === 'menu' || lowered === '0' || lowered === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_cohort_main');
+        return this.superAdminCohortMenuText(userId);
+      }
       if (!/^\d{4}$/.test(val)) {
-        this.pendingAdminState.delete(userId);
-        return 'Año inválido. Volvé al menú de cohortes.';
+        return 'Año inválido. Ingresá un año de 4 dígitos, o escribí "menu" para volver:';
       }
       const year = Number(val);
       if (!this.cohortConfigRepository) return 'Repositorio de cohortes no disponible.';
       const existing = await this.cohortConfigRepository.getByYear(year);
       if (!existing) {
-        return `No existe configuración para ${year}. Podés crearla con la opción 2 del menú.`;
+        return `No existe configuración para ${year}. Podés crearla con la opción 2 del menú, o escribí "menu" para volver:`;
       }
       this.pendingSuperAdminData.set(userId, { groupId: String(year) });
       this.pendingAdminState.set(userId, 'super_admin_manage_cohort');
@@ -1295,6 +1307,14 @@ export class PrivateChatWorkflowService {
 
     if (currentState === 'super_admin_await_reonboard_group') {
       const gid = cleaned.trim();
+      if (lowered === 'menu' || lowered === '0' || lowered === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_main');
+        return this.superAdminMenuText(userId);
+      }
+      const group = this.groupRepository ? await this.groupRepository.findByGroupId(gid) : null;
+      if (!group) {
+        return 'No encontré ese grupo. Ingresá otro JID para forzar re-onboarding, o escribí "menu" para volver:';
+      }
       const cfg = await this.startGroupContextConfiguration(userId, gid);
       this.pendingAdminState.set(userId, 'super_admin_main');
       return `Re-onboarding iniciado por privado:\n\n${cfg}`;
@@ -1397,6 +1417,34 @@ export class PrivateChatWorkflowService {
       '5 - Gestionar cohortes (por entry_year)',
       '',
       '0/menu - Volver al menú admin normal',
+    ].join('\n');
+  }
+
+  private async superAdminManageGroupMenuText(gid: string): Promise<string> {
+    let groupInfo = `Administrando grupo: ${gid}`;
+    try {
+      if (this.groupRepository) {
+        const g = await this.groupRepository.findByGroupId(gid);
+        if (g) {
+          groupInfo = `Grupo: ${g.display_name || gid} — Cohorte: ${g.entry_year ?? 'General'}\nID: ${gid}`;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    return [
+      groupInfo,
+      '',
+      '1 - Editar entry_year',
+      '2 - Activar/Desactivar grupo',
+      '3 - Ver membresías',
+      '4 - Forzar re-onboarding (lanzará config por privado)',
+      '5 - Promover usuario a Admin de Grupo',
+      '6 - Quitar Admin de Grupo',
+      '7 - Ir al menú de Admin de este Grupo',
+      '8 - Editar nombre de apoyo (display_name)',
+      '0 - Volver al menú Super-Admin',
     ].join('\n');
   }
 
@@ -2139,7 +2187,7 @@ export class PrivateChatWorkflowService {
         if (this.groupRepository) {
           const g = await this.groupRepository.findByGroupId(scopedData.groupId);
           if (g) {
-            headerLabel = `${g.display_name || scopedData.groupId} — Cohorte: ${g.entry_year ?? 'General'}`;
+            headerLabel = `${g.display_name || scopedData.groupId} — Cohorte: ${g.entry_year ?? 'General'}\nID: ${scopedData.groupId}`;
           }
         }
       } catch (e) {
@@ -2415,7 +2463,7 @@ export class PrivateChatWorkflowService {
 
       return [
         'Usuarios baneados:',
-        ...banned.map((u) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone} | Tipo: ${u.ban_type} | Hasta: ${u.banned_until.toISOString().slice(0, 10)}`),
+        ...banned.map((u: any) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone} | Tipo: ${u.ban_type} | Hasta: ${u.banned_until.toISOString().slice(0, 10)}`),
       ].join('\n');
     }
 
@@ -2429,7 +2477,7 @@ export class PrivateChatWorkflowService {
 
       return [
         'Pasame el ID a desbloquear:',
-        ...banned.map((u) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone}`),
+        ...banned.map((u: any) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone}`),
       ].join('\n');
     }
 
@@ -2867,11 +2915,23 @@ export class PrivateChatWorkflowService {
     this.pendingGroupContextData.set(userId, pending);
     this.pendingAdminState.set(userId, 'await_group_context_entry_year');
 
+    let groupHeader = `Grupo ID: ${groupId}`;
+    try {
+      if (this.groupRepository) {
+        const g = await this.groupRepository.findByGroupId(groupId);
+        if (g) {
+          groupHeader = `Grupo: ${g.display_name || groupId} — Cohorte: ${g.entry_year ?? 'General'}\nID: ${groupId}`;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const currentYear = new Date().getFullYear();
     return [
       `📋 Configuración del grupo para comisiones`,
       '',
-      `Grupo ID: ${groupId}`,
+      groupHeader,
       '',
       `Primero, ingresá el año de la camada (ej: ${currentYear}).\nSi es un grupo general sin camada, escribí: general`,
     ].join('\n');

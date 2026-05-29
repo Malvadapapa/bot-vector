@@ -1,3 +1,4 @@
+/*
 export interface Reminder {
   id?: number;
   user_id: string;
@@ -22,26 +23,13 @@ export interface ReminderCreateInput {
   notify_7d_sent?: boolean;
   notify_3d_sent?: boolean;
 }
+*/
 
-export interface RateLimitRecord {
-  user_id: string;
-  question_count: number;
-  last_reset_date: Date;
-  bonus_questions_remaining: number;
-  approval_pending: boolean;
-  approval_requested_at?: Date | null;
-  approval_expires_at?: Date | null;
-}
 
-export interface PendingConfirmation {
-  id?: number;
-  user_id: string;
-  state: string;
-  intent: string;
-  pending_payload_json: string;
-  expires_at: Date;
-}
 
+
+
+/*
 export interface InstitutionalNotice {
   title: string;
   body: string;
@@ -55,6 +43,7 @@ export interface InstitutionalNotice {
   published_at?: Date;
   confirmed_at?: Date;
 }
+*/
 
 export interface UserProfile {
   user_id: string;
@@ -70,25 +59,7 @@ export interface AdminUser {
   is_super_admin?: boolean;
 }
 
-export interface UserModerationState {
-  id?: number;
-  user_id: string;
-  warning_count: number;
-  suspension_count_week: number;
-  first_week_suspension_at?: Date | null;
-  temp_ban_until?: Date | null;
-  week_ban_until?: Date | null;
-  last_offense_at?: Date | null;
-}
 
-export interface BannedUserView {
-  id: number;
-  user_id: string;
-  name?: string;
-  phone: string;
-  ban_type: 'temp' | 'week';
-  banned_until: Date;
-}
 
 export interface SchedulerRunRecord {
   id?: number;
@@ -98,14 +69,9 @@ export interface SchedulerRunRecord {
   ran_at?: Date;
 }
 
-export interface RateLimitDecision {
-  allowed: boolean;
-  remaining_after_request: number;
-  message: string;
-  quota_message: string;
-  approval_pending: boolean;
-}
 
+
+/*
 export interface ManagedExam {
   id?: number;
   subject: string;
@@ -144,14 +110,18 @@ export interface ManagedClassCreateInput {
   notifications_enabled?: boolean;
   commission_count?: number;
 }
+*/
 
+/*
 export interface ClassNotificationRecord {
   id?: number;
   managed_class_id: number;
   notification_sent_at: Date;
   minutes_before: number;
 }
+*/
 
+/*
   export interface ManagedTeacher {
     id?: number;
     name: string;
@@ -166,14 +136,17 @@ export interface ClassNotificationRecord {
     email: string;
     subject?: string;
   }
+*/
 
 // NUEVAS INTERFACES - SISTEMA DE COMISIONES
+/*
 export interface Comision {
   id: string;
   nombre: string;         // "A", "B", "1", "2", "Única"
   año?: number;
   cuatrimestre?: number;
 }
+*/
 
 // NUEVAS INTERFACES - LOGGING Y ERRORES
 export interface ErrorLog {
@@ -187,26 +160,7 @@ export interface ErrorLog {
   grupoId?: string;
 }
 
-export interface BannedUserRecord {
-  userId: string;
-  username: string;
-  banDate: Date;
-  reason: string;
-  warnings: 1 | 2 | 3;
-  status: 'activo' | 'baneado' | 'levantado';
-  unbannedAt?: Date;
-  unbannedBy?: string;
-}
 
-export interface InfractionRecord {
-  userId: string;
-  username: string;
-  type: string;
-  date: Date;
-  description: string;
-  severity: string;
-  warnings: number;
-}
 
 // PHASE 1: Multi-tenant Groups - unlimited groups in database
 export interface WhatsAppGroup {
@@ -220,6 +174,7 @@ export interface WhatsAppGroup {
   updated_at?: Date;
 }
 
+/*
 // PHASE 2: Academic Commissions - replaces orphaned Comision interface
 export interface Commission {
   id?: number;
@@ -262,3 +217,7 @@ export interface ClassCommissionSchedule {
   created_at?: Date;
   updated_at?: Date;
 }
+*/
+
+export type { Reminder, ReminderCreateInput, ManagedExam, ManagedClass, ManagedClassCreateInput, ManagedTeacher, ManagedTeacherCreateInput, Commission, GroupContext, CohortConfig, ClassCommissionSchedule } from '../features/academic-calendar/academic-calendar.models.js';
+

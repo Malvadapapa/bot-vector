@@ -1,18 +1,13 @@
 import sqlite3 from 'sqlite3';
 import {
   AdminUser,
-  BannedUserView,
-  InstitutionalNotice,
   ManagedExam,
   ManagedClass,
   ManagedClassCreateInput,
   ManagedTeacher,
   ManagedTeacherCreateInput,
-  PendingConfirmation,
-  RateLimitRecord,
   Reminder,
   ReminderCreateInput,
-  UserModerationState,
   UserProfile,
   ClassCommissionSchedule,
   WhatsAppGroup,
@@ -20,34 +15,11 @@ import {
   GroupContext,
   CohortConfig,
 } from '../../../domain/models.js';
+import { run, get, all, formatLocalDateOnly, formatLocalTime } from '../../../shared/db/db-utils.js';
 
-function run(db: sqlite3.Database, sql: string, params: unknown[] = []): Promise<{ lastID: number; changes: number }> {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params as any[], function onRun(err) {
-      if (err) reject(err);
-      else resolve({ lastID: this.lastID ?? 0, changes: this.changes ?? 0 });
-    });
-  });
-}
 
-function get<T = any>(db: sqlite3.Database, sql: string, params: unknown[] = []): Promise<T | undefined> {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params as any[], (err, row) => {
-      if (err) reject(err);
-      else resolve(row as T | undefined);
-    });
-  });
-}
 
-function all<T = any>(db: sqlite3.Database, sql: string, params: unknown[] = []): Promise<T[]> {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params as any[], (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows as T[]);
-    });
-  });
-}
-
+/*
 export class ReminderRepository {
   constructor(private db: sqlite3.Database) {}
 
@@ -136,131 +108,13 @@ export class ReminderRepository {
     await run(this.db, 'DELETE FROM reminders WHERE id = ?', [reminderId]);
   }
 }
+*/
 
-export class RateLimitRepository {
-  constructor(private db: sqlite3.Database) {}
 
-  async get(userId: string): Promise<RateLimitRecord | null> {
-    const row = await get<any>(this.db, 'SELECT * FROM rate_limit WHERE user_id = ?', [userId]);
-    if (!row) return null;
-    return {
-      user_id: String(row.user_id),
-      question_count: Number(row.question_count),
-      last_reset_date: new Date(String(row.last_reset_date)),
-      bonus_questions_remaining: Number(row.bonus_questions_remaining ?? 0),
-      approval_pending: Number(row.approval_pending ?? 0) === 1,
-      approval_requested_at: row.approval_requested_at ? new Date(String(row.approval_requested_at)) : null,
-      approval_expires_at: row.approval_expires_at ? new Date(String(row.approval_expires_at)) : null,
-    };
-  }
 
-  async save(record: RateLimitRecord): Promise<void> {
-    await run(
-      this.db,
-      `INSERT INTO rate_limit(
-         user_id, question_count, last_reset_date, bonus_questions_remaining,
-         approval_pending, approval_requested_at, approval_expires_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(user_id) DO UPDATE SET
-         question_count=excluded.question_count,
-         last_reset_date=excluded.last_reset_date,
-         bonus_questions_remaining=excluded.bonus_questions_remaining,
-         approval_pending=excluded.approval_pending,
-         approval_requested_at=excluded.approval_requested_at,
-         approval_expires_at=excluded.approval_expires_at,
-         updated_at=CURRENT_TIMESTAMP`,
-      [
-        record.user_id,
-        record.question_count,
-        record.last_reset_date.toISOString().slice(0, 10),
-        record.bonus_questions_remaining,
-        record.approval_pending ? 1 : 0,
-        record.approval_requested_at ? record.approval_requested_at.toISOString() : null,
-        record.approval_expires_at ? record.approval_expires_at.toISOString() : null,
-      ]
-    );
-  }
 
-  async resetAll(resetDate: Date): Promise<void> {
-    await run(
-      this.db,
-      `UPDATE rate_limit
-       SET question_count=0,
-           last_reset_date=?,
-           bonus_questions_remaining=0,
-           approval_pending=0,
-           approval_requested_at=NULL,
-           approval_expires_at=NULL,
-           updated_at=CURRENT_TIMESTAMP`,
-      [resetDate.toISOString().slice(0, 10)]
-    );
-  }
 
-  async getOldestPendingApproval(now: Date): Promise<RateLimitRecord | null> {
-    const row = await get<any>(
-      this.db,
-      `SELECT * FROM rate_limit
-       WHERE approval_pending = 1
-         AND (approval_expires_at IS NULL OR approval_expires_at > ?)
-       ORDER BY approval_requested_at ASC, updated_at ASC
-       LIMIT 1`,
-      [now.toISOString()]
-    );
-
-    if (!row) return null;
-
-    return {
-      user_id: String(row.user_id),
-      question_count: Number(row.question_count),
-      last_reset_date: new Date(String(row.last_reset_date)),
-      bonus_questions_remaining: Number(row.bonus_questions_remaining ?? 0),
-      approval_pending: Number(row.approval_pending ?? 0) === 1,
-      approval_requested_at: row.approval_requested_at ? new Date(String(row.approval_requested_at)) : null,
-      approval_expires_at: row.approval_expires_at ? new Date(String(row.approval_expires_at)) : null,
-    };
-  }
-}
-
-export class ConfirmationRepository {
-  constructor(private db: sqlite3.Database) {}
-
-  async save(userId: string, state: string, intent: string, payload: object, expiresAt: Date): Promise<void> {
-    await run(
-      this.db,
-      `INSERT INTO confirmaciones(user_id, state, intent, pending_payload_json, expires_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(user_id) DO UPDATE SET
-         state=excluded.state,
-         intent=excluded.intent,
-         pending_payload_json=excluded.pending_payload_json,
-         expires_at=excluded.expires_at,
-         updated_at=CURRENT_TIMESTAMP`,
-      [userId, state, intent, JSON.stringify(payload), expiresAt.toISOString()]
-    );
-  }
-
-  async get(userId: string): Promise<PendingConfirmation | null> {
-    const row = await get<any>(this.db, 'SELECT * FROM confirmaciones WHERE user_id = ?', [userId]);
-    if (!row) return null;
-    return {
-      user_id: String(row.user_id),
-      state: String(row.state),
-      intent: String(row.intent),
-      pending_payload_json: String(row.pending_payload_json),
-      expires_at: new Date(String(row.expires_at)),
-    };
-  }
-
-  async delete(userId: string): Promise<void> {
-    await run(this.db, 'DELETE FROM confirmaciones WHERE user_id = ?', [userId]);
-  }
-
-  async deleteExpired(nowUtc: Date): Promise<number> {
-    const result = await run(this.db, 'DELETE FROM confirmaciones WHERE expires_at < ?', [nowUtc.toISOString()]);
-    return result.changes;
-  }
-}
-
+/*
 export class InstitutionalNoticeRepository {
   constructor(private db: sqlite3.Database) {}
 
@@ -369,7 +223,9 @@ export class InstitutionalNoticeRepository {
     return result.changes > 0;
   }
 }
+*/
 
+/*
 export class ManagedExamRepository {
   constructor(private db: sqlite3.Database) {}
 
@@ -492,6 +348,7 @@ export class ManagedExamRepository {
     );
   }
 }
+*/
 
 export class UserProfileRepository {
   constructor(private db: sqlite3.Database) {}
@@ -705,121 +562,7 @@ export class AdminVerificationCodeRepository {
   }
 }
 
-export class UserModerationRepository {
-  constructor(private db: sqlite3.Database) {}
 
-  async getOrCreate(userId: string): Promise<UserModerationState> {
-    const existing = await this.getByUser(userId);
-    if (existing) return existing;
-
-    await run(
-      this.db,
-      'INSERT OR IGNORE INTO user_moderation_state(user_id, updated_at) VALUES (?, CURRENT_TIMESTAMP)',
-      [userId]
-    );
-
-    return (await this.getByUser(userId)) || {
-      user_id: userId,
-      warning_count: 0,
-      suspension_count_week: 0,
-      first_week_suspension_at: null,
-      temp_ban_until: null,
-      week_ban_until: null,
-      last_offense_at: null,
-    };
-  }
-
-  async save(state: UserModerationState): Promise<void> {
-    await run(
-      this.db,
-      `INSERT INTO user_moderation_state(
-         user_id, warning_count, suspension_count_week, first_week_suspension_at,
-         temp_ban_until, week_ban_until, last_offense_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(user_id) DO UPDATE SET
-         warning_count=excluded.warning_count,
-         suspension_count_week=excluded.suspension_count_week,
-         first_week_suspension_at=excluded.first_week_suspension_at,
-         temp_ban_until=excluded.temp_ban_until,
-         week_ban_until=excluded.week_ban_until,
-         last_offense_at=excluded.last_offense_at,
-         updated_at=CURRENT_TIMESTAMP`,
-      [
-        state.user_id,
-        state.warning_count,
-        state.suspension_count_week,
-        state.first_week_suspension_at ? state.first_week_suspension_at.toISOString() : null,
-        state.temp_ban_until ? state.temp_ban_until.toISOString() : null,
-        state.week_ban_until ? state.week_ban_until.toISOString() : null,
-        state.last_offense_at ? state.last_offense_at.toISOString() : null,
-      ]
-    );
-  }
-
-  async listCurrentlyBanned(now: Date, limit = 50): Promise<BannedUserView[]> {
-    const rows = await all<any>(
-      this.db,
-      `SELECT m.id, m.user_id, p.name, m.temp_ban_until, m.week_ban_until
-       FROM user_moderation_state m
-       LEFT JOIN user_profiles p ON p.user_id = m.user_id
-       WHERE (m.temp_ban_until IS NOT NULL AND m.temp_ban_until > ?)
-          OR (m.week_ban_until IS NOT NULL AND m.week_ban_until > ?)
-       ORDER BY COALESCE(m.week_ban_until, m.temp_ban_until) DESC
-       LIMIT ?`,
-      [now.toISOString(), now.toISOString(), limit]
-    );
-
-    return rows.map((row) => {
-      const week = row.week_ban_until ? new Date(String(row.week_ban_until)) : null;
-      const temp = row.temp_ban_until ? new Date(String(row.temp_ban_until)) : null;
-      const banType = week && week > now ? 'week' : 'temp';
-      const bannedUntil = banType === 'week' && week ? week : (temp || now);
-      const userId = String(row.user_id);
-      const phone = userId.split('@')[0] || userId;
-
-      return {
-        id: Number(row.id),
-        user_id: userId,
-        name: row.name ? String(row.name) : undefined,
-        phone,
-        ban_type: banType,
-        banned_until: bannedUntil,
-      } as BannedUserView;
-    });
-  }
-
-  async unblockById(id: number): Promise<boolean> {
-    const result = await run(
-      this.db,
-      `UPDATE user_moderation_state
-       SET warning_count = 0,
-           suspension_count_week = 0,
-           first_week_suspension_at = NULL,
-           temp_ban_until = NULL,
-           week_ban_until = NULL,
-           last_offense_at = NULL,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [id]
-    );
-    return result.changes > 0;
-  }
-
-  private async getByUser(userId: string): Promise<UserModerationState | null> {
-    const row = await get<any>(this.db, 'SELECT * FROM user_moderation_state WHERE user_id = ?', [userId]);
-    if (!row) return null;
-    return {
-      id: Number(row.id),
-      user_id: String(row.user_id),
-      warning_count: Number(row.warning_count ?? 0),
-      suspension_count_week: Number(row.suspension_count_week ?? 0),
-      first_week_suspension_at: row.first_week_suspension_at ? new Date(String(row.first_week_suspension_at)) : null,
-      temp_ban_until: row.temp_ban_until ? new Date(String(row.temp_ban_until)) : null,
-      week_ban_until: row.week_ban_until ? new Date(String(row.week_ban_until)) : null,
-      last_offense_at: row.last_offense_at ? new Date(String(row.last_offense_at)) : null,
-    };
-  }
-}
 
 export class SchedulerRunRepository {
   constructor(private db: sqlite3.Database) {}
@@ -829,6 +572,7 @@ export class SchedulerRunRepository {
   }
 }
 
+/*
 export class DailyGreetingRepository {
   constructor(private db: sqlite3.Database) {}
 
@@ -870,6 +614,7 @@ export class OutboxDedupRepository {
     return result.changes;
   }
 }
+*/
 
 // PHASE 3: Group Memberships
 export class GroupMembershipRepository {
@@ -917,6 +662,7 @@ export class GroupMembershipRepository {
   }
 }
 
+/*
 // Cohort-level configuration repository
 export class CohortConfigRepository {
   constructor(private db: sqlite3.Database) {}
@@ -959,7 +705,9 @@ export class CohortConfigRepository {
     } as CohortConfig));
   }
 }
+*/
 
+/*
 function rowToReminder(row: any): Reminder {
   const [year, month, day] = String(row.event_date).split('-').map(Number);
   return {
@@ -975,7 +723,9 @@ function rowToReminder(row: any): Reminder {
     notify_3d_sent: Number(row.notify_3d_sent) === 1,
   };
 }
+*/
 
+/*
 function rowToNotice(row: any): InstitutionalNotice {
   const parseLocalDate = (value: any): Date | undefined => {
     if (!value) return undefined;
@@ -997,7 +747,9 @@ function rowToNotice(row: any): InstitutionalNotice {
     confirmed_at: row.confirmed_at ? new Date(String(row.confirmed_at)) : undefined,
   };
 }
+*/
 
+/*
 function rowToExam(row: any): ManagedExam {
   const dateStr = String(row.exam_date);
   const [year, month, day] = dateStr.split('-').map(Number);
@@ -1021,19 +773,7 @@ function rowToExam(row: any): ManagedExam {
   };
 }
 
-function formatLocalDateOnly(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
-function formatLocalTime(date: Date): string {
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  return `${hours}:${minutes}:${seconds}`;
-}
 
 function getReminderDateTime(reminder: Reminder): Date {
   return new Date(reminder.event_date.getFullYear(), reminder.event_date.getMonth(), reminder.event_date.getDate());
@@ -1055,7 +795,9 @@ function getExamDateTime(exam: ManagedExam): Date {
   const [hours, minutes] = String(exam.exam_time || '00:00').split(':').map(Number);
   return new Date(exam.exam_date.getFullYear(), exam.exam_date.getMonth(), exam.exam_date.getDate(), hours || 0, minutes || 0, 0, 0);
 }
+*/
 
+/*
 export class ManagedClassRepository {
   constructor(private db: sqlite3.Database) {}
 
@@ -1144,7 +886,9 @@ export class ManagedClassRepository {
     return rows.map((r) => Number(r.commission_count)).filter((n) => n > 0);
   }
 }
+*/
 
+/*
 export class ClassNotificationRepository {
   constructor(private db: sqlite3.Database) {}
 
@@ -1169,7 +913,9 @@ export class ClassNotificationRepository {
     return row ? new Date(String(row.notification_sent_at)) : null;
   }
 }
+*/
 
+/*
 function rowToManagedClass(row: any): ManagedClass {
   return {
     id: Number(row.id),
@@ -1183,7 +929,9 @@ function rowToManagedClass(row: any): ManagedClass {
     updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
   };
 }
+*/
 
+/*
   export class ManagedTeacherRepository {
     constructor(private db: sqlite3.Database) {}
 
@@ -1251,6 +999,7 @@ function rowToManagedClass(row: any): ManagedClass {
       );
     }
   }
+*/
 
   // PHASE 1: Multi-tenant Groups Repository
   export class GroupRepository {
@@ -1330,6 +1079,16 @@ function rowToManagedClass(row: any): ManagedClass {
     }
 
     /**
+     * Update the display_name for a whatsapp group.
+     */
+    async updateDisplayName(groupId: string, displayName: string): Promise<void> {
+      await run(this.db, 'UPDATE whatsapp_groups SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ?', [
+        displayName,
+        groupId,
+      ]);
+    }
+
+    /**
      * Delete a group (hard delete - use setActive(false) to soft delete instead)
      */
     async delete(groupId: string): Promise<boolean> {
@@ -1354,13 +1113,12 @@ function rowToManagedClass(row: any): ManagedClass {
     }
   }
 
+/*
   // PHASE 2: Commissions Repository
   export class CommissionRepository {
     constructor(private db: sqlite3.Database) {}
 
-    /**
-     * Create or get a commission
-     */
+    // Create or get a commission
     async createOrGet(name: string, year?: number, shift?: string): Promise<number> {
       // Try to find existing
       let row = await get<any>(
@@ -1379,17 +1137,13 @@ function rowToManagedClass(row: any): ManagedClass {
       return result.lastID;
     }
 
-    /**
-     * Get commission by ID
-     */
+    // Get commission by ID
     async getById(id: number): Promise<Commission | null> {
       const row = await get<any>(this.db, 'SELECT * FROM commissions WHERE id = ?', [id]);
       return row ? rowToCommission(row) : null;
     }
 
-    /**
-     * List all commissions for a given year
-     */
+    // List all commissions for a given year
     async listByYear(year: number): Promise<Commission[]> {
       const rows = await all<any>(
         this.db,
@@ -1399,38 +1153,32 @@ function rowToManagedClass(row: any): ManagedClass {
       return rows.map(rowToCommission);
     }
 
-    /**
-     * List all commissions
-     */
+    // List all commissions
     async findAll(): Promise<Commission[]> {
       const rows = await all<any>(this.db, 'SELECT * FROM commissions ORDER BY year DESC, shift, name');
       return rows.map(rowToCommission);
     }
 
-    /**
-     * Delete a commission
-     */
+    // Delete a commission
     async delete(id: number): Promise<boolean> {
       const result = await run(this.db, 'DELETE FROM commissions WHERE id = ?', [id]);
       return result.changes > 0;
     }
 
-    /**
-     * Get distinct years
-     */
+    // Get distinct years
     async getDistinctYears(): Promise<number[]> {
       const rows = await all<any>(this.db, 'SELECT DISTINCT year FROM commissions WHERE year IS NOT NULL ORDER BY year DESC');
       return rows.map((r) => Number(r.year));
     }
   }
+*/
 
+/*
   // PHASE 2: Group Context Repository
   export class GroupContextRepository {
     constructor(private db: sqlite3.Database) {}
 
-    /**
-     * Create or update group context
-     */
+    // Create or update group context
     async upsert(
       groupId: string,
       year: number,
@@ -1461,41 +1209,31 @@ function rowToManagedClass(row: any): ManagedClass {
       }
     }
 
-    /**
-     * Get context by group ID
-     */
+    // Get context by group ID
     async getByGroupId(groupId: string): Promise<GroupContext | null> {
       const row = await get<any>(this.db, 'SELECT * FROM group_context WHERE group_id = ?', [groupId]);
       return row ? rowToGroupContext(row) : null;
     }
 
-    /**
-     * Get all contexts
-     */
+    // Get all contexts
     async findAll(): Promise<GroupContext[]> {
       const rows = await all<any>(this.db, 'SELECT * FROM group_context ORDER BY created_at DESC');
       return rows.map(rowToGroupContext);
     }
 
-    /**
-     * Get contexts by commission
-     */
+    // Get contexts by commission
     async getByCommissionId(commissionId: number): Promise<GroupContext[]> {
       const rows = await all<any>(this.db, 'SELECT * FROM group_context WHERE commission_id = ?', [commissionId]);
       return rows.map(rowToGroupContext);
     }
 
-    /**
-     * Get contexts by year
-     */
+    // Get contexts by year
     async getByYear(year: number): Promise<GroupContext[]> {
       const rows = await all<any>(this.db, 'SELECT * FROM group_context WHERE year = ?', [year]);
       return rows.map(rowToGroupContext);
     }
 
-    /**
-     * Set commissions for a group context (replaces existing mappings)
-     */
+    // Set commissions for a group context (replaces existing mappings)
     async setCommissionsForGroupContext(groupContextId: number, commissionIds: number[]): Promise<void> {
       // remove old mappings
       await run(this.db, 'DELETE FROM group_context_commissions WHERE group_context_id = ?', [groupContextId]);
@@ -1512,9 +1250,7 @@ function rowToManagedClass(row: any): ManagedClass {
       }
     }
 
-    /**
-     * List commissions mapped to a group context
-     */
+    // List commissions mapped to a group context
     async listCommissionsForGroupContext(groupContextId: number): Promise<Commission[]> {
       const rows = await all<any>(
         this.db,
@@ -1527,9 +1263,7 @@ function rowToManagedClass(row: any): ManagedClass {
       return rows.map(rowToCommission);
     }
 
-    /**
-     * Remove commissions for a group context. If commissionIds omitted, remove all.
-     */
+    // Remove commissions for a group context. If commissionIds omitted, remove all.
     async removeCommissionsForGroupContext(groupContextId: number, commissionIds?: number[]): Promise<void> {
       if (!commissionIds || commissionIds.length === 0) {
         await run(this.db, 'DELETE FROM group_context_commissions WHERE group_context_id = ?', [groupContextId]);
@@ -1541,15 +1275,15 @@ function rowToManagedClass(row: any): ManagedClass {
       await run(this.db, `DELETE FROM group_context_commissions WHERE group_context_id = ? AND commission_id IN (${placeholders})`, params);
     }
 
-    /**
-     * Delete context
-     */
+    // Delete context
     async delete(groupId: string): Promise<boolean> {
       const result = await run(this.db, 'DELETE FROM group_context WHERE group_id = ?', [groupId]);
       return result.changes > 0;
     }
   }
+*/
 
+/*
   // PHASE 3: ClassCommissionSchedule Repository
   export class ClassCommissionScheduleRepository {
     constructor(private db: sqlite3.Database) {}
@@ -1602,7 +1336,9 @@ function rowToManagedClass(row: any): ManagedClass {
       return result.changes > 0;
     }
   }
+*/
 
+/*
   function rowToClassCommissionSchedule(row: any): ClassCommissionSchedule {
     return {
       id: Number(row.id),
@@ -1639,6 +1375,7 @@ function rowToManagedClass(row: any): ManagedClass {
       updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
     };
   }
+*/
 
   function rowToWhatsAppGroup(row: any): WhatsAppGroup {
     return {
@@ -1653,6 +1390,7 @@ function rowToManagedClass(row: any): ManagedClass {
     };
   }
 
+/*
   function rowToTeacher(row: any): ManagedTeacher {
     return {
       id: Number(row.id),
@@ -1663,3 +1401,9 @@ function rowToManagedClass(row: any): ManagedClass {
       updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
     };
   }
+*/
+
+export { InstitutionalNoticeRepository, ClassNotificationRepository } from '../../../features/notifications/notifications.repository.js';
+export { DailyGreetingRepository, OutboxDedupRepository } from '../../../features/messages/messages.repository.js';
+export { ReminderRepository, ManagedExamRepository, ManagedClassRepository, ManagedTeacherRepository, CommissionRepository, GroupContextRepository, ClassCommissionScheduleRepository, CohortConfigRepository } from '../../../features/academic-calendar/academic-calendar.repository.js';
+
