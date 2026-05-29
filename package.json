@@ -6,8 +6,6 @@
   "scripts": {
     "test": "vitest",
     "test:vitest": "vitest run --threads=false",
-    "build:test": "tsc -p tsconfig.test.json",
-    "test:dist": "vitest run --threads=false",
     "start": "node dist/main.js",
     "dev": "node scripts/dev.mjs",
     "build": "tsc",
