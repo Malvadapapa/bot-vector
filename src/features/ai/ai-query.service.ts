@@ -2,14 +2,12 @@ import { AIProvider } from './providers/ai-provider.interface.js';
 import { KnowledgeContextService } from './knowledge-context.service.js';
 import { RateLimitService } from './rate-limit.service.js';
 import { RagQueryService } from './rag/rag-query.service.js';
-import { UserModerationRepository } from '../moderation/moderation.repository.js';
+import { UserModerationService } from '../moderation/user-moderation.service.js';
 
 export class AIQueryService {
-  // 25 segundos — los modelos gratuitos pueden ser lentos, 8s era insuficiente.
   private static readonly RESPONSE_TIMEOUT_MS = 25_000;
   private static readonly TOPIC_CLASSIFICATION_TIMEOUT_MS = 8_000;
 
-  // Palabras clave que indican contenido académico del ISPC
   private static readonly ACADEMIC_KEYWORDS = [
     'ispc', 'materia', 'clase', 'examen', 'parcial', 'final', 'cursada', 'nota',
     'inscripcion', 'profesor', 'profe', 'correlativa', 'programacion', 'algoritmo',
@@ -19,7 +17,6 @@ export class AIQueryService {
     'reglamento', 'regimen', 'régimen', 'académico', 'academico', 'carrera',
   ];
 
-  // Patrones de saludos (NO son infracciones)
   private static readonly GREETING_PATTERNS: RegExp[] = [
     /^\s*(hola|hi|hey|buenos|buenas|buen|buena|saludos|ola|olá)\s*$/i,
     /^\s*(hola|hi|hey)\s+[a-záéíóúñ]+\s*$/i,
@@ -34,53 +31,44 @@ export class AIQueryService {
     private aiProvider: AIProvider,
     private rateLimitService: RateLimitService,
     private knowledgeContextService: KnowledgeContextService,
-    private moderationRepository: UserModerationRepository,
+    private userModerationService: UserModerationService,
     private ragQueryService?: RagQueryService,
   ) {}
 
-  public async answer(userId: string, prompt: string, now?: Date, isAdmin = false): Promise<string> {
-    // Los admins pueden preguntar cualquier cosa y no generan sanciones.
+  public async answer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin = false): Promise<string> {
+    const nowResolved = now || new Date();
+
+    // 0) Compruebo bloqueo a través del servicio de moderación (envía notificación privada si corresponde)
+    const evalResult = await this.userModerationService.evaluate(userId, prompt, isAdmin, nowResolved);
+    if (evalResult.blocked) {
+      return '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.';
+    }
+
     if (isAdmin) {
-      return this.generateAnswer(userId, prompt, now, true);
+      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin);
     }
 
-    // Los saludos simples no se consideran off-topic.
-    const isGreeting = this.isGreetingPrompt(prompt);
-    let isOffTopic = false;
+    // 1) Clasificar (heurística simple)
+    const cls = await this.classifyPromptQualityAndTopic(prompt);
 
-    try {
-      if (!isGreeting) {
-        isOffTopic = await this.classifyOffTopicWithAI(userId, prompt);
-      }
-
-      // Si es off-topic, incrementar infracción
-      if (isOffTopic) {
-        const state = await this.moderationRepository.getOrCreate(userId);
-        state.warning_count += 1;
-        state.last_offense_at = now || new Date();
-
-        // Si alcanza 5 infracciones, banear por 24 horas
-        if (state.warning_count >= AIQueryService.INFRACTION_THRESHOLD) {
-          state.temp_ban_until = new Date((now || new Date()).getTime() + 24 * 60 * 60 * 1000);
-          console.log(`[IA] Usuario ${userId} baneado por acumular ${state.warning_count} infracciones`);
-        }
-
-        await this.moderationRepository.save(state);
-
-        return '[OFF_TOPIC_DETECTED]';
-      }
-
-      return this.generateAnswer(userId, prompt, now, false);
-    } catch (err: any) {
-      const hint = err?.message?.includes('timeout')
-        ? 'La respuesta tardó demasiado.'
-        : 'No pude generar una respuesta en este momento.';
-      console.error(`[IA] Error en answer para ${userId} con proveedor ${this.aiProvider.getModelName()}: ${err?.message}`);
-      return hint;
+    if (cls.status === 'ok') {
+      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin);
     }
+
+    if (cls.status === 'unclear') {
+      return this.generateClarifyingQuestion(prompt);
+    }
+
+    // 2) Off-topic -> delegar escalado a UserModerationService
+    const action = await this.userModerationService.handleInfraction(userId, undefined, cls.reason || 'offtopic', nowResolved);
+    if (action.action === 'warn-private') return `[MODERATION::WARN_PRIVATE] ${action.message}`;
+    if (action.action === 'warn-public-restrict') return `[MODERATION::WARN_PUBLIC] ${action.message}`;
+    if (action.action === 'ban') return `[MODERATION::BAN] ${action.message}`;
+
+    return 'No pude procesar tu pedido.';
   }
 
-  private async generateAnswer(userId: string, prompt: string, now: Date | undefined, isAdmin: boolean): Promise<string> {
+  private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean): Promise<string> {
     // 1. Contexto dinámico de BD (exámenes, avisos, clases, perfil)
     const dbContext = await this.knowledgeContextService.buildContext(userId);
 
@@ -202,5 +190,24 @@ export class AIQueryService {
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
+  }
+
+  // retorna { status: 'ok'|'unclear'|'offtopic', topic?: string, reason?: string }
+  private async classifyPromptQualityAndTopic(prompt: string): Promise<{status:string, topic?:string, reason?:string}> {
+    const text = prompt.trim().toLowerCase();
+    if (text.length < 5) return { status: 'unclear', reason: 'muy corto' };
+    // heurística: si menciona palabras clave del ISPC -> ok
+    const isRelated = /materia|profesor|horario|inscripción|examen|práctica|aula|ispc|coordinación/.test(text);
+    if (isRelated) return { status: 'ok', topic: 'ispc' };
+    // si contiene palabras sensibles (política, sexual, porn, crimen, etc) => off-topic
+    if (/porno|sexual|bomb|atentad|crimen|ilícit|drogas|suicid/i.test(prompt)) {
+      return { status: 'offtopic', reason: 'contenido inapropiado' };
+    }
+    // fallback: pedir aclaración
+    return { status: 'unclear', reason: 'no está claro si es sobre ISPC' };
+  }
+
+  private generateClarifyingQuestion(prompt: string): string {
+    return `Perdón, no entendí bien tu pregunta: ¿podés dar más detalles o decir exactamente qué necesitas sobre el ISPC?`;
   }
 }

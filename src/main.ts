@@ -321,7 +321,7 @@ async function bootstrap() {
     console.error(`[RAG] Error en sincronización inicial (se mantiene el flujo IA con contexto interno):`, err?.message);
   });
 
-  const aiQueryService = new AIQueryService(fallbackAiService, rateLimitService, knowledgeContextService, userModerationRepository, ragQueryService);
+  const aiQueryService = new AIQueryService(fallbackAiService, rateLimitService, knowledgeContextService, moderationService, ragQueryService);
   const conversationStateService = new ConversationStateService(reminderRepository, confirmationRepository);
   const messageRouter = new MessageRouter(
     messageIntentParserService,

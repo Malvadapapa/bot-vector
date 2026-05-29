@@ -221,7 +221,7 @@ export class VectoritoWhatsAppGateway {
           this.isConnecting = false;
           this.consecutiveConnectionReplaced = 0;
           console.log('\n[WhatsApp] Conectado correctamente a WhatsApp.');
-          this.syncGroupDisplayNames().catch((err) => {
+          this.syncGroupDisplayNames().catch((err: any) => {
             console.warn('[Gateway] Error al sincronizar nombres de grupo en el inicio:', err);
           });
         }
@@ -498,14 +498,41 @@ export class VectoritoWhatsAppGateway {
           // 🔍 Detección dinámica de intención de respuesta IA
           const intentMatch = safeReply.match(/^\s*\[([^\]]+)\]\s*/);
           if (intentMatch) {
-            const intent = intentMatch[1].toLowerCase();
-            const isOutOfScope = intent.includes('fuera de lugar') || 
-                               intent.includes('off-topic') || 
-                               intent.includes('no relacionado') ||
-                               intent.includes('fuera de contexto');
-            
+            const intentRaw = intentMatch[1] || '';
+            const intent = intentRaw.toUpperCase();
+
+            // Manejo explícito de tokens de moderación
+            if (intent.startsWith('MODERATION::')) {
+              const body = safeReply.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+
+              if (intent.includes('WARN_PRIVATE')) {
+                // Enviar sólo al usuario por privado (no al grupo)
+                await this.sendTextMessage(senderJid, body, undefined, true);
+                continue;
+              }
+
+              if (intent.includes('WARN_PUBLIC')) {
+                // Advertencia pública en el grupo
+                await this.sendTextMessage(chatId, body, senderJid, false);
+                continue;
+              }
+
+              if (intent.includes('BAN')) {
+                // Notificar al grupo y no enviar respuesta IA adicional
+                await this.sendTextMessage(chatId, body, senderJid, false);
+                continue;
+              }
+            }
+
+            // Compatibilidad: detección antigua de "fuera de lugar" en texto de intención
+            const lowerIntent = String(intentRaw).toLowerCase();
+            const isOutOfScope = lowerIntent.includes('fuera de lugar') ||
+                               lowerIntent.includes('off-topic') ||
+                               lowerIntent.includes('no relacionado') ||
+                               lowerIntent.includes('fuera de contexto');
+
             if (isOutOfScope && messageMentionsBot) {
-              console.log(`⚠️ [IntentDetect] Pregunta fuera de contexto detectada: ${intent}`);
+              console.log(`⚠️ [IntentDetect] Pregunta fuera de contexto detectada: ${intentRaw}`);
               const warning = `⚠️ Esa pregunta está fuera de mis funciones del ISPC.\n\nIntenta preguntar algo sobre:\n• Materias y clases\n• Horarios y agenda\n• Coordinación y profesores\n• Noticias del ISPC\n\nSi insistís con temas off-topic, podrías recibir una restricción.`;
               await this.sendTextMessage(chatId, warning, senderJid, false);
               continue;
@@ -894,7 +921,7 @@ export class VectoritoWhatsAppGateway {
               }
             }
           } catch (e) {
-            // Evitar spam de errores para grupos a los que no tenemos acceso o ya no estamos
+            // Silently ignore if metadata cannot be fetched at the moment
           }
         }
       }
