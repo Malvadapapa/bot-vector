@@ -2,6 +2,118 @@
 
 Todas las modificaciones notables de este proyecto serán documentadas en este archivo.
 
+## [2.1.0-alpha.1] - 2026-05-29
+
+### Refactorización Arquitectónica: Vertical Slicing + Screaming Architecture
+
+Migración completa de la arquitectura del proyecto desde un diseño hexagonal monolítico hacia **Vertical Slicing** y **Screaming Architecture**. El código se reorganizó en 7 fases incrementales con cobertura de tests unitarios (Vitest) en cada paso, siguiendo un protocolo estricto de: crear → comentar legacy → testear → verificar → eliminar código muerto.
+
+### Agregado
+
+#### Nueva estructura `src/features/` (Vertical Slices)
+
+- **`features/moderation/`** — Slice autocontenido de moderación de usuarios
+  - `moderation.models.ts`: Modelos `UserModerationState`, `BannedUserView`, `BannedUserRecord`, `InfractionRecord`
+  - `moderation.repository.ts`: `UserModerationRepository` con acceso directo a SQLite
+  - `user-moderation.service.ts`: Orquestación de advertencias, baneos y levantamiento de suspensiones
+  - `ban-warning-system.ts`: Sistema progresivo de penalización
+  - `infraction-detector.ts`: Detección de infracciones y off-topic
+  - `moderation-admin-command.service.ts`: Comandos administrativos de moderación
+  - Tests: `__tests__/moderation.test.ts`
+
+- **`features/conversation/`** — Slice de estado de conversación
+  - `conversation.models.ts`: Modelo `PendingConfirmation`
+  - `conversation.repository.ts`: `ConfirmationRepository`
+  - `conversation-state.service.ts`: Gestión de confirmaciones pendientes y expiración
+  - Tests: `__tests__/conversation.test.ts`
+
+- **`features/ai/`** — Slice de Inteligencia Artificial y RAG
+  - `ai.models.ts`: Modelos de rate limit
+  - `ai-query.service.ts`: Orquestación de consultas IA con contexto
+  - `rate-limit.service.ts` / `rate-limit.repository.ts`: Control de cuota diaria por usuario
+  - `knowledge-context.service.ts`: Construcción del contexto dinámico (SQLite + RAG)
+  - `providers/`: Gemini, Groq, Fallback, Embeddings
+  - `rag/`: Pipeline de indexación, consulta semántica y CLI
+  - Tests: `__tests__/ai-rate-limit.test.ts`
+
+- **`features/notifications/`** — Slice de notificaciones y recordatorios
+  - `notifications.models.ts`: Modelos de avisos y recordatorios
+  - `notifications.repository.ts`: `ReminderRepository`, `ClassNotificationRepository`, `DailyGreetingRepository`
+  - `class-notification.service.ts`: Notificaciones de clase automáticas
+  - `exam-notification.service.ts`: Alertas de exámenes (7d, 3d, 1d)
+  - `scheduled-reminder.service.ts`: Recordatorios programados
+  - `smart-notification.service.ts`: Servicio inteligente de notificaciones
+  - `integrations/`: `EmailService`, `InstitutionalEmailMonitor`, `RssParserService`
+  - Tests: `__tests__/notifications.test.ts`
+
+- **`features/messages/`** — Slice de enrutamiento de mensajes
+  - `messages.models.ts` / `messages.repository.ts`: Modelos y repositorio de de-duplicación (`OutboxDedupRepository`)
+  - `message-router.service.ts`: Enrutador principal de mensajes entrantes
+  - `message-intent-parser.service.ts`: Parser de intenciones y comandos
+  - `dynamic-message.service.ts`: Servicio de mensajes dinámicos (avisos, noticias)
+  - Tests: `__tests__/messages.test.ts`
+
+- **`features/academic-calendar/`** — Slice del calendario académico (mayor y más complejo)
+  - `academic-calendar.models.ts`: 11 entidades académicas (`ManagedExam`, `ManagedClass`, `ManagedTeacher`, `Commission`, etc.)
+  - `academic-calendar.repository.ts`: `ManagedExamRepository`, `ManagedClassRepository`, `ManagedTeacherRepository`, `ReminderRepository` y más
+  - `academic-calendar.service.ts`: Servicio principal de calendario con todos los flujos de agenda
+  - `comision-management.service.ts`: Gestión de comisiones multi-horario
+  - `exam-menu.service.ts`: Menú interactivo de exámenes
+  - `edit-exam-menu.service.ts`: Menú de edición de exámenes existentes
+  - `menu-persistence.service.ts`: Integración menús ↔ persistencia
+  - `multi-comision-exam-menu.service.ts`: Soporte multi-comisión en carga de exámenes
+  - `remove-notification-menu.service.ts`: Menú de eliminación de avisos/exámenes
+  - Tests: `__tests__/calendar.test.ts`
+
+#### Nueva estructura `src/shared/` (Componentes transversales)
+
+- **`shared/db/`** — Utilidades de base de datos SQLite compartidas
+  - `db-utils.ts`: Helpers `run()`, `get()`, `all()` y formateadores de fechas (`formatLocalDateOnly`, `formatLocalTime`)
+  - `database.ts`: `DatabaseConnection` (reubicado desde `infrastructure/`)
+  - `migrations.ts`: Migraciones de esquema SQLite (reubicado desde `infrastructure/`)
+  - Tests: `__tests__/db-utils.test.ts`
+
+- **`shared/config/`** — Configuración de entorno (reubicado desde `src/config/`)
+- **`shared/logging/`** — Servicio de logging (reubicado desde `src/infrastructure/logging/`)
+
+### Modificado
+
+- **`src/main.ts`**: Todos los imports actualizados para apuntar a los nuevos módulos en `features/` y `shared/`. La composición raíz ahora instancia dependencias desde los slices verticales.
+- **`src/domain/models.ts`**: Las interfaces migradas a sus respectivos slices se re-exportan desde este archivo para compatibilidad con legacy restante (admin, analysis).
+- **`src/infrastructure/persistence/db/repositories.ts`**: Los repositorios migrados se re-exportan desde este archivo para compatibilidad. El código original fue eliminado.
+- **`package.json`**: Scripts RAG actualizados para apuntar a `dist/features/ai/rag/`.
+
+### Eliminado
+
+- Código legacy de repositorios monolíticos: las clases `UserModerationRepository`, `ConfirmationRepository`, `RateLimitRepository`, `DailyGreetingRepository`, `OutboxDedupRepository`, `ManagedExamRepository`, `ManagedClassRepository`, `ManagedTeacherRepository`, `ReminderRepository`, `ClassNotificationRepository` y helpers de fecha fueron removidos de `repositories.ts`.
+- Código legacy de modelos: las interfaces `UserModerationState`, `BannedUserView`, `PendingConfirmation`, `RateLimit`, `Reminder`, `ManagedExam`, `ManagedClass`, `ManagedTeacher` fueron removidas de `domain/models.ts`.
+- Servicios legacy de `src/application/calendar/`: `academic-calendar.service.ts`, `edit-exam-menu.service.ts`, `exam-menu.service.ts`, `menu-persistence.service.ts`, `multi-comision-exam-menu.service.ts`, `remove-notification-menu.service.ts`, `comision-management.service.ts`.
+- Servicios legacy de `src/application/ai/`: `ai-query.service.ts`, `rate-limit.service.ts`, `knowledge-context.service.ts`.
+- Servicios legacy de `src/application/moderation/`: Código original de moderación.
+- Servicios legacy de `src/application/messages/`: Enrutador y parser de intenciones originales.
+- Servicios legacy de `src/application/notifications/`: Notificaciones y recordatorios originales.
+
+### Tests
+
+- Suite completa de tests unitarios con Vitest para cada slice migrado:
+  - `src/features/moderation/__tests__/moderation.test.ts`
+  - `src/features/conversation/__tests__/conversation.test.ts`
+  - `src/features/ai/__tests__/ai-rate-limit.test.ts`
+  - `src/features/messages/__tests__/messages.test.ts`
+  - `src/features/notifications/__tests__/notifications.test.ts`
+  - `src/features/academic-calendar/__tests__/calendar.test.ts`
+  - `src/shared/db/__tests__/db-utils.test.ts`
+- Todos los tests pasan con `npx vitest run`.
+- El proyecto compila sin errores con `npm run build`.
+
+### Notas
+
+- Las carpetas legacy `src/application/`, `src/domain/` y `src/infrastructure/` aún existen con archivos residuales que no forman parte de los slices migrados (admin workflows, analysis, persistence bridge). Estos pueden migrarse en futuras iteraciones.
+- Los re-exports en `models.ts` y `repositories.ts` garantizan compatibilidad backward con módulos que aún importan desde las rutas legacy.
+- El protocolo de migración (crear → comentar → testear → verificar → eliminar) evitó regresiones y pérdida de funcionalidad en las 7 fases.
+
+---
+
 ## [Unreleased] - 2026-05-27
 
 ### Agregado

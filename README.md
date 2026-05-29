@@ -6,7 +6,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5%2B-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![RAG](https://img.shields.io/badge/Architecture-RAG-orange)](https://en.wikipedia.org/wiki/Retrieval-augmented_generation)
 [![License](https://img.shields.io/badge/License-MIT-gray)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Alpha%202.0.0-alpha.1-yellow)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/Status-Alpha%202.1.0-alpha.1-yellow)](CHANGELOG.md)
 
 Bot Cabezón es un asistente académico automatizado diseñado para centralizar y simplificar el acceso a la información de cursada para los estudiantes de la Tecnicatura Superior en Desarrollo de Software del ISPC (Instituto Superior Politécnico Córdoba).
 
@@ -84,35 +84,61 @@ Más que un bot de comandos, Cabezón actúa como un asistente académico automa
 
 ## 🏗️ Arquitectura & Diseño
 
-El sistema emplea una **arquitectura por capas** para separar responsabilidades, inyectar dependencias fácilmente y permitir una escalabilidad fluida.
+El sistema emplea una combinación de **Vertical Slicing**, **Screaming Architecture** y **Hexagonal (Ports & Adapters)** para lograr módulos autocontenidos, alta cohesión y bajo acoplamiento.
+
+- **Screaming Architecture (nivel global):** La estructura de carpetas "grita" las capacidades de negocio (`academic-calendar`, `ai`, `moderation`) en vez de capas técnicas genéricas.
+- **Vertical Slicing (nivel de aplicación):** Cada carpeta en `features/` es un slice completo de principio a fin (Request → Logic → DB).
+- **Hexagonal (nivel interno):** Dentro de cada slice, modelos y lógica de negocio permanecen aislados de la infraestructura concreta.
 
 ```text
-┌─────────────────────────────────────────┐
-│   Interfaz: WhatsApp (Baileys)          │ ← Conexión, QR, eventos
-├─────────────────────────────────────────┤
-│   Controlador: MessageRouterService     │ ← Ruteo: comandos vs IA
-├─────────────────────────────────────────┤
-│   Lógica de negocio:                    │
-│   • AIQueryService (IA + RAG)           │ ← Orquestación IA y moderación
-│   • AcademicCalendarService (comandos)  │ ← Respuestas rápidas
-│   • PrivateChatWorkflowService          │ ← Flujos privados/admin
-├─────────────────────────────────────────┤
-│   Contexto dinámico & RAG:              │
-│   • KnowledgeContextService             │ ← Datos duros (SQLite)
-│   • RagQueryService                     │ ← Búsqueda semántica
-├─────────────────────────────────────────┤
-│   Persistencia, Tareas & Externos:      │
-│   • RagPipelineService                  │ ← Indexación de vectores
-│   • SchedulerService (cron)             │ ← Automatización
-│   • IMAP / RSS                          │ ← Integraciones externas
-└─────────────────────────────────────────┘
+src/
+├── main.ts                         # Composición raíz y bootstrap
+├── features/                       # ── SLICES VERTICALES DE NEGOCIO ──
+│   ├── academic-calendar/          # Clases, exámenes, profesores, comisiones
+│   │   ├── academic-calendar.models.ts
+│   │   ├── academic-calendar.repository.ts
+│   │   ├── academic-calendar.service.ts
+│   │   ├── exam-menu.service.ts / edit-exam-menu.service.ts
+│   │   ├── comision-management.service.ts
+│   │   └── __tests__/
+│   ├── ai/                         # IA conversacional, RAG, rate limiting
+│   │   ├── ai-query.service.ts / knowledge-context.service.ts
+│   │   ├── rate-limit.service.ts / rate-limit.repository.ts
+│   │   ├── providers/              # Gemini, Groq, Fallback, Embeddings
+│   │   ├── rag/                    # Pipeline, consulta semántica, CLI
+│   │   └── __tests__/
+│   ├── moderation/                 # Warnings, baneos, detección off-topic
+│   │   ├── moderation.models.ts / moderation.repository.ts
+│   │   ├── user-moderation.service.ts / ban-warning-system.ts
+│   │   └── __tests__/
+│   ├── conversation/               # Estado de conversación y confirmaciones
+│   │   ├── conversation.models.ts / conversation.repository.ts
+│   │   ├── conversation-state.service.ts
+│   │   └── __tests__/
+│   ├── notifications/              # Alertas, recordatorios, IMAP, RSS, email
+│   │   ├── notifications.repository.ts / class-notification.service.ts
+│   │   ├── exam-notification.service.ts / scheduled-reminder.service.ts
+│   │   ├── integrations/           # EmailService, IMAP monitor, RSS parser
+│   │   └── __tests__/
+│   └── messages/                   # Enrutamiento, intenciones, de-duplicación
+│       ├── message-router.service.ts / message-intent-parser.service.ts
+│       ├── dynamic-message.service.ts
+│       └── __tests__/
+├── shared/                         # ── COMPONENTES TRANSVERSALES ──
+│   ├── config/                     # Configuración de entorno
+│   ├── db/                         # SQLite: database, migrations, db-utils
+│   └── logging/                    # Servicio de logs
+├── interfaces/                     # ── ADAPTADORES DE ENTRADA/SALIDA ──
+│   └── whatsapp/                   # Baileys gateway
+└── scheduler/                      # ── TAREAS EN SEGUNDO PLANO ──
+    └── scheduler-service.ts        # Cron jobs del sistema
 ```
 
 **Flujo de una consulta con IA:**
-1. Mensaje recibido → Gateway valida permisos.
-2. `MessageRouterService` deriva a `AIQueryService`.
-3. Se verifica moderación (off-topic, rate limit).
-4. Se ensambla el contexto uniendo datos de SQLite y búsqueda RAG.
+1. Mensaje recibido → `WhatsAppGateway` valida permisos.
+2. `MessageRouterService` (features/messages) deriva a `AIQueryService` (features/ai).
+3. Se verifica moderación (features/moderation) y rate limit (features/ai).
+4. Se ensambla el contexto uniendo datos de SQLite y búsqueda RAG (features/ai/rag).
 5. El modelo de IA genera la respuesta contextualizada y se envía al grupo.
 
 ---
@@ -251,13 +277,17 @@ Los documentos que ya estaban en `data/ai-context/` antes de esta versión se tr
 ---
 
 ## 📖 Desarrollo y Decisiones Técnicas
-**En desarrollo**
 
 ### Scripts Útiles
 ```bash
-npm run dev           # Hot reload
+npm run dev           # Hot reload con recompilación automática
+npm run build         # Compilación TypeScript
+npm run test          # Ejecutar tests con Vitest (watch)
+npm run test:vitest   # Ejecutar tests una sola vez
 npm run rag:index     # Indexa PDFs nuevos en data/ai-context/
 npm run rag:test      # Prueba interactiva del motor RAG
+npm run rag:status    # Estado del índice RAG
+npm run rag:reindex   # Re-indexar todo el contenido RAG
 npm run cleanup:data  # ⚠️ Limpia la BD y vectores
 ```
 
