@@ -41,3 +41,4 @@ temp/
 *.swp
 *.swo
 *~
+.bot-instance.lock
