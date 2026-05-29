@@ -46,6 +46,56 @@ type MenuNode = {
   feriados_lista?: Array<{ fecha: string; nombre: string }>;
 };
 
+const GENERAL_MENU_TREE: Record<string, MenuNode> = {
+  inicio: {
+    mensaje: "¡Hola! Soy Cabezón, el asistente virtual del grupo🤖. ¿Cómo te puedo ayudar hoy?\n1️⃣ Fechas Útiles\n2️⃣ Comunicarse con ISPC\n3️⃣ Noticias de Software =)\n4️⃣ Avisos del ISPC\n5️⃣ Preguntas frecuentes",
+    opciones: {
+      "1": "fechas_utiles",
+      "2": "comunicarse_ispc",
+      "3": "noticias",
+      "4": "avisos_ispc",
+      "5": "faq"
+    }
+  },
+  fechas_utiles: {
+    mensaje: "📅 *Fechas Útiles*\n\nAcá están las fechas importantes del ciclo académico:\n\n• Inicio de clases: [fecha]\n• Receso de invierno: [fecha]\n• Fin de semestre: [fecha]\n\nSi necesitás más detalles, escribí !calendario\n\nEscribí 0 o !menu para volver al inicio.",
+    opciones: {}
+  },
+  comunicarse_ispc: {
+    mensaje: "☎️ *Comunicarse con ISPC*\n\nSi te trabas, escribi !menu y arrancamos de nuevo.\n¿Qué necesitás?\n1️⃣ Coordinación\n2️⃣ Profesores\n3️⃣ Redes Sociales\n\nEscribí 0 o !menu para volver al inicio.",
+    opciones: {
+      "1": "coordinacion",
+      "2": "profesores",
+      "3": "redes_sociales"
+    }
+  },
+  coordinacion: {
+    mensaje: "👩‍💼 *Coordinación - Tecnicatura en Desarrollo de Software*\n\n*Coordinadora General*\n📧 Tatiana Manzanelli\n✉️ coordinacion.software@ispc.edu.ar\n\n*Tutora Virtual*\n📧 Natalia Morán\n✉️ tutorias.software@ispc.edu.ar\n\nTambién podes escribir !menu para volver al inicio.",
+    opciones: {}
+  },
+  profesores: {
+    mensaje: "👨‍🏫 *Profesores*\n\nPara contactar a los profesores:\n\n• Consultá el cronograma de horarios de atención\n• Escribí el nombre del profesor para buscar su mail\n\nEscribí !menu para volver al inicio.",
+    opciones: {}
+  },
+  redes_sociales: {
+    mensaje: "📱 *Redes Sociales del ISPC*\n\nEsta es la info de nuestras redes:\n\n• Instagram: @ispc.official\n• Facebook: ISPC Oficial\n• Twitter: @ISPCoficial\n\nEscribí !menu para volver al inicio.",
+    opciones: {}
+  },
+  noticias: {
+    mensaje: "📰 *Noticias de Software*\n\nÚltimas noticias del mundo de la programación y tecnología.\nPara ver más, escribí !noticias\n\nEscribí !menu para volver al inicio.",
+    opciones: {}
+  },
+  avisos_ispc: {
+    mensaje: "📢 *Avisos del ISPC*\n\nÚltimos comunicados institucionales.\n\nPara ver todos los avisos, escribí !avisos\n\nEscribí !menu para volver al inicio.",
+    opciones: {}
+  },
+  faq: {
+    mensaje: "❓ *Preguntas Frecuentes*\n\n• ¿Cómo accedo a las clases virtuales?\n• ¿Dónde veo mis calificaciones?\n• ¿Cómo comunico inasistencias?\n\nPara más detalles, escribí !help\n\nEscribí !menu para volver al inicio.",
+    opciones: {}
+  }
+};
+
+
 export class AcademicCalendarService {
   private menuStateByUser = new Map<string, string>();
   private menusPath: string;
@@ -227,10 +277,13 @@ export class AcademicCalendarService {
   }
 
   public async handleMenuInput(userId: string, rawText: string, groupId?: string): Promise<string | null> {
-    const normalized = rawText.trim().toLowerCase();
-    const isMenuCommand = normalized === '!menu' || normalized === '!m';
+    let normalized = rawText.trim().toLowerCase();
+    if (normalized === 'menú') {
+      normalized = 'menu';
+    }
+    const isMenuCommand = normalized === '!menu' || normalized === '!m' || normalized === '!menú';
 
-    // NUEVO: Procesar flujos de exámenes si el usuario está en uno
+    // Procesar flujos de exámenes si el usuario está en uno
     if (this.examMenuService?.isInFlow(userId)) {
       const { response, completed, examData } = this.examMenuService.processInput(userId, rawText);
 
@@ -283,46 +336,33 @@ export class AcademicCalendarService {
     const currentNode = this.menuStateByUser.get(userId);
     if (!currentNode) return null;
 
+    // Si el usuario escribe "0", "menu", "volver" o "regresar", regresamos a inicio
+    if (normalized === '0' || normalized === 'menu' || normalized === 'volver' || normalized === 'regresar') {
+      this.menuStateByUser.set(userId, 'inicio');
+      return this.renderNode(menuTree, 'inicio', userId);
+    }
+
     const node = menuTree[currentNode];
-    const hasOptions = !!node?.opciones && Object.keys(node.opciones).length > 0;
-    if (!node || !hasOptions) {
+    if (!node) {
       this.menuStateByUser.delete(userId);
       return null;
     }
 
-    const options = node.opciones as Record<string, string>;
-
+    const options = node.opciones || {};
     const nextNode = options[normalized];
+
     if (!nextNode) {
-      // Solo retornar "opción inválida" si realmente hay un menú activo
-      // Si no hay opción válida y es un número, indicar error
+      // Si la opción no es válida y es un número, indicamos error y mantenemos el estado
       if (/^\d+$/.test(normalized)) {
         return 'Opcion invalida. Elegi una opcion del menu o escribi !menu para volver al inicio.';
       }
+      // Si es un comando o texto libre, salimos del flujo del menú general del grupo para permitir comandos e IA
+      this.menuStateByUser.delete(userId);
       return null;
     }
 
-    const next = menuTree[nextNode];
-    const nextHasOptions = !!next?.opciones && Object.keys(next.opciones).length > 0;
-    const nextOptionKeys = next?.opciones ? Object.keys(next.opciones) : [];
-    const navigationalOnly = nextOptionKeys.length > 0 && nextOptionKeys.every((key) => {
-      const value = String(next?.opciones?.[key] || '').toLowerCase();
-      return key === '0' || /volver|menu|inicio/.test(key) || /volver|menu|inicio/.test(value);
-    });
-    const promptText = String(next?.mensaje || '').toLowerCase();
-    const asksForChoice = /(elegi|elegí|selecciona|seleccioná|mandame el numero|mandame el número|que necesitás|qué necesitás|que querés|qué querés|opcion|opción)/i.test(promptText) || /\d️⃣/.test(promptText);
-    const keepState = nextHasOptions && !navigationalOnly && asksForChoice;
-
-    // Debug logging
-    const debugMsg = `📌 Menu flow: userId=${userId.slice(-5)}, current=${currentNode}, selected=${normalized}, next=${nextNode}, hasOptions=${nextHasOptions}, navigationalOnly=${navigationalOnly}`;
-    if (keepState) {
-      console.log(`${debugMsg} -> MANTENER estado`);
-      this.menuStateByUser.set(userId, nextNode);
-    } else {
-      console.log(`${debugMsg} -> LIMPIAR estado`);
-      this.menuStateByUser.delete(userId);
-    }
-
+    // Si la opción es válida, realizamos la transición
+    this.menuStateByUser.set(userId, nextNode);
     return this.renderNode(menuTree, nextNode, userId);
   }
 
@@ -506,17 +546,7 @@ export class AcademicCalendarService {
   }
 
   private loadMenus(): Record<string, MenuNode> | null {
-    try {
-      if (!fs.existsSync(this.menusPath)) {
-        console.warn(`⚠️ No se encontro menus.json en: ${this.menusPath}`);
-        return null;
-      }
-      const raw = fs.readFileSync(this.menusPath, 'utf-8');
-      const parsed = JSON.parse(raw) as any;
-      return parsed.bot_flujo || null;
-    } catch {
-      return null;
-    }
+    return GENERAL_MENU_TREE;
   }
 
   private resolveDataFilePath(fileName: string): string {

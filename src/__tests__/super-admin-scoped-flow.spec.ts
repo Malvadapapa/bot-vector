@@ -100,13 +100,13 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
     const listRes = await svc.handlePrivateMessage('sa1', '1');
     expect(listRes).toContain('Grupo Activo A');
     expect(listRes).toContain('Grupo Activo B');
-
-    // 3. Select option 2 to select a group to manage
-    await svc.handlePrivateMessage('sa1', '2');
-
+    // 3. Select option 'seleccionar' to select a group to manage by JID
+    await svc.handlePrivateMessage('sa1', 'seleccionar');
     // 4. Enter the JID of the group
     const manageRes = await svc.handlePrivateMessage('sa1', 'g1@g.us');
-    expect(manageRes).toContain('Administrando grupo: g1@g.us');
+    expect(manageRes).toContain('Grupo Seleccionado');
+    expect(manageRes).toContain('Cohorte: 2024');
+    expect(manageRes).toContain('g1@g.us');
     expect(manageRes).toContain('7 - Ir al menú de Admin de este Grupo');
 
     // 5. Choose option 7 to enter scoped admin menu
@@ -126,7 +126,9 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
 
     // 8. Exit scoped admin menu by typing 0 -> should return to group management menu
     const backToMgmt = await svc.handlePrivateMessage('sa1', '0');
-    expect(backToMgmt).toContain('Administrando grupo: g1@g.us');
+    expect(backToMgmt).toContain('Grupo Seleccionado');
+    expect(backToMgmt).toContain('Cohorte: 2024');
+    expect(backToMgmt).toContain('g1@g.us');
 
     // 9. Exit group management menu by typing 0 -> should return to superadmin main menu
     const backToSaMain = await svc.handlePrivateMessage('sa1', '0');

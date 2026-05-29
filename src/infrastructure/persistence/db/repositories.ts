@@ -1330,6 +1330,16 @@ function rowToManagedClass(row: any): ManagedClass {
     }
 
     /**
+     * Update the display_name for a whatsapp group.
+     */
+    async updateDisplayName(groupId: string, displayName: string): Promise<void> {
+      await run(this.db, 'UPDATE whatsapp_groups SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ?', [
+        displayName,
+        groupId,
+      ]);
+    }
+
+    /**
      * Delete a group (hard delete - use setActive(false) to soft delete instead)
      */
     async delete(groupId: string): Promise<boolean> {

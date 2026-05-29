@@ -16,6 +16,22 @@ export class LoggingService {
     this.ensureDataDirExists();
   }
 
+  private async ensureFileExists(filePath: string, header: string): Promise<void> {
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+    } catch {}
+    try {
+      await fs.access(filePath);
+    } catch {
+      try {
+        await fs.writeFile(filePath, header);
+      } catch (e) {
+        console.error(`[LoggingService] Error creating file with header: ${filePath}`, e);
+        throw e;
+      }
+    }
+  }
+
   /**
    * Registra un error automáticamente clasificado
    */
@@ -36,10 +52,13 @@ export class LoggingService {
       .map(field => `"${String(field).replace(/"/g, '""')}"`)
       .join(',');
 
+    const filePath = path.join(this.dataDir, this.erroresPath);
     try {
-      await fs.appendFile(path.join(this.dataDir, this.erroresPath), csvLine + '\n');
+      await this.ensureFileExists(filePath, '"timestamp","tipo","componente","mensaje","stack","usuario","grupoId"\n');
+      await fs.appendFile(filePath, csvLine + '\n');
     } catch (e) {
       console.error('[LoggingService] Error escribiendo errores.csv:', e);
+      throw e;
     }
   }
 
@@ -66,10 +85,13 @@ export class LoggingService {
       .map(field => `"${String(field).replace(/"/g, '""')}"`)
       .join(',');
 
+    const filePath = path.join(this.dataDir, this.moderationPath);
     try {
-      await fs.appendFile(path.join(this.dataDir, this.moderationPath), csvLine + '\n');
+      await this.ensureFileExists(filePath, '"timestamp","userId","username","action","reason","details"\n');
+      await fs.appendFile(filePath, csvLine + '\n');
     } catch (e) {
       console.error('[LoggingService] Error escribiendo moderation.csv:', e);
+      throw e;
     }
   }
 
@@ -96,10 +118,13 @@ export class LoggingService {
       .map(field => `"${String(field).replace(/"/g, '""')}"`)
       .join(',');
 
+    const filePath = path.join(this.dataDir, this.bannedUsersPath);
     try {
-      await fs.appendFile(path.join(this.dataDir, this.bannedUsersPath), csvLine + '\n');
+      await this.ensureFileExists(filePath, '"timestamp","userId","username","reason","infractions","details"\n');
+      await fs.appendFile(filePath, csvLine + '\n');
     } catch (e) {
       console.error('[LoggingService] Error escribiendo banned-users.csv:', e);
+      throw e;
     }
   }
 
@@ -108,14 +133,22 @@ export class LoggingService {
    */
   async getRecentErrors(tipo?: 'grave' | 'moderado' | 'leve', limit = 10): Promise<string[]> {
     try {
-      const content = await fs.readFile(path.join(this.dataDir, this.erroresPath), 'utf-8');
-      const lines = content.split('\n').filter(Boolean).slice(-limit);
+      const filePath = path.join(this.dataDir, this.erroresPath);
+      await this.ensureFileExists(filePath, '"timestamp","tipo","componente","mensaje","stack","usuario","grupoId"\n');
+      const content = await fs.readFile(filePath, 'utf-8');
+      const lines = content.split('\n').filter(Boolean);
+      // El primer line es el header
+      const dataLines = lines.length > 0 && lines[0].startsWith('"timestamp"') ? lines.slice(1) : lines;
 
-      if (tipo) {
-        return lines.filter(line => line.includes(`"${tipo}"`));
-      }
+      const filtered = tipo
+        ? dataLines.filter(line => {
+            const parts = line.split(',');
+            const t = parts[1]?.replace(/"/g, '') || '';
+            return t === tipo;
+          })
+        : dataLines;
 
-      return lines;
+      return filtered.slice(-limit);
     } catch {
       return [];
     }
@@ -126,13 +159,19 @@ export class LoggingService {
    */
   async getUserModerationHistory(userId: string, limit = 20): Promise<string[]> {
     try {
-      const content = await fs.readFile(path.join(this.dataDir, this.moderationPath), 'utf-8');
-      const lines = content
-        .split('\n')
-        .filter(line => line.includes(userId))
-        .slice(-limit);
+      const filePath = path.join(this.dataDir, this.moderationPath);
+      await this.ensureFileExists(filePath, '"timestamp","userId","username","action","reason","details"\n');
+      const content = await fs.readFile(filePath, 'utf-8');
+      const lines = content.split('\n').filter(Boolean);
+      const dataLines = lines.length > 0 && lines[0].startsWith('"timestamp"') ? lines.slice(1) : lines;
 
-      return lines;
+      const filtered = dataLines.filter(line => {
+        const parts = line.split(',');
+        const uid = parts[1]?.replace(/"/g, '') || '';
+        return uid === userId;
+      });
+
+      return filtered.slice(-limit);
     } catch {
       return [];
     }
