@@ -11,13 +11,15 @@ describe('Multi-commission config and unified exam flows', () => {
   beforeAll(async () => {
     db = new sqlite3.Database(':memory:');
     const baseDir = path.dirname(fileURLToPath(import.meta.url));
-    const migrationsModule = await import(path.join(baseDir, '..', 'infrastructure', 'persistence', 'db', 'migrations.ts'));
+    const migrationsModule = await import(path.join(baseDir, '..', 'shared', 'db', 'migrations.ts'));
     reposModule = await import(path.join(baseDir, '..', 'infrastructure', 'persistence', 'db', 'repositories.ts'));
+    const moderationModule = await import(path.join(baseDir, '..', 'features', 'moderation', 'moderation.repository.ts'));
     workflowModule = await import(path.join(baseDir, '..', 'application', 'admin', 'private-chat-workflow.service.ts'));
 
     const { applyMigrations } = migrationsModule as any;
     await applyMigrations(db);
 
+    const { UserModerationRepository } = moderationModule as any;
     const {
       UserProfileRepository,
       AdminRepository,
@@ -26,7 +28,6 @@ describe('Multi-commission config and unified exam flows', () => {
       ManagedExamRepository,
       ManagedClassRepository,
       ManagedTeacherRepository,
-      UserModerationRepository,
       GroupContextRepository,
       CommissionRepository,
       ClassCommissionScheduleRepository,

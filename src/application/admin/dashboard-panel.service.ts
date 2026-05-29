@@ -3,8 +3,8 @@
  * Proporciona vista unificada del estado del bot
  */
 
-import { BanWarningSystem } from '../moderation/ban-warning-system.js';
-import { LoggingService } from '../../infrastructure/logging/logging.service.js';
+import { BanWarningSystem } from '../../features/moderation/ban-warning-system.js';
+import { LoggingService } from '../../shared/logging/logging.service.js';
 
 export class DashboardPanelService {
   constructor(private banWarningSystem?: BanWarningSystem, private loggingService?: LoggingService) {}

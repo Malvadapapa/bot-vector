@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AcademicCalendarService } from '../application/calendar/academic-calendar.service.js';
+import { AcademicCalendarService } from '../features/academic-calendar/academic-calendar.service.js';
 
 describe('AcademicCalendarService - group admin permissions', () => {
   it('rejects !config-grupo unless the sender is a group admin', async () => {

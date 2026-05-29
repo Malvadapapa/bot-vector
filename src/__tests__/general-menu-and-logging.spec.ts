@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AcademicCalendarService } from '../application/calendar/academic-calendar.service.js';
-import { LoggingService } from '../infrastructure/logging/logging.service.js';
+import { AcademicCalendarService } from '../features/academic-calendar/academic-calendar.service.js';
+import { LoggingService } from '../shared/logging/logging.service.js';
 import fs from 'fs/promises';
 import path from 'path';
 

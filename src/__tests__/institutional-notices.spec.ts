@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import crypto from 'crypto';
-import { InstitutionalEmailMonitor } from '../infrastructure/integrations/imap/institutional-email-monitor.js';
-import { EmailService, OutboundEmailService } from '../infrastructure/integrations/email-service.js';
-import { InstitutionalNoticeRepository, ManagedTeacherRepository, GroupRepository } from '../infrastructure/persistence/db/repositories.js';
+import { InstitutionalEmailMonitor } from '../features/notifications/integrations/institutional-email-monitor.js';
+import { EmailService, OutboundEmailService } from '../features/notifications/integrations/email.service.js';
+import { ManagedTeacherRepository, GroupRepository } from '../infrastructure/persistence/db/repositories.js';
+import { InstitutionalNoticeRepository } from '../features/notifications/notifications.repository.js';
 import { InstitutionalNotice, ManagedTeacher, WhatsAppGroup } from '../domain/models.js';
 
 // ============================================================================

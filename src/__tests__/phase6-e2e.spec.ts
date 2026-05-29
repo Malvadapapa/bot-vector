@@ -21,11 +21,13 @@ describe('Fase 6 E2E - !config-grupo flow', () => {
     db = new sqlite3.Database(':memory:');
     // Dynamic imports to avoid ESM resolver issues in the test runner
     const baseDir = path.dirname(fileURLToPath(import.meta.url));
-    const migrationsModule = await import(path.join(baseDir, '..', 'infrastructure', 'persistence', 'db', 'migrations.ts'));
+    const migrationsModule = await import(path.join(baseDir, '..', 'shared', 'db', 'migrations.ts'));
     const reposModule = await import(path.join(baseDir, '..', 'infrastructure', 'persistence', 'db', 'repositories.ts'));
+    const moderationModule = await import(path.join(baseDir, '..', 'features', 'moderation', 'moderation.repository.ts'));
     const workflowModule = await import(path.join(baseDir, '..', 'application', 'admin', 'private-chat-workflow.service.ts'));
 
     const { applyMigrations } = migrationsModule as any;
+    const { UserModerationRepository } = moderationModule as any;
     const {
       UserProfileRepository,
       AdminRepository,
@@ -34,7 +36,6 @@ describe('Fase 6 E2E - !config-grupo flow', () => {
       ManagedExamRepository,
       ManagedClassRepository,
       ManagedTeacherRepository,
-      UserModerationRepository,
       GroupContextRepository,
       CommissionRepository,
     } = reposModule as any;

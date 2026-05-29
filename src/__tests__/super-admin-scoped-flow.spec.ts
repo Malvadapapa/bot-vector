@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PrivateChatWorkflowService } from '../application/admin/private-chat-workflow.service.js';
-import { AcademicCalendarService } from '../application/calendar/academic-calendar.service.js';
-import { MessageRouter } from '../application/messages/message-router.service.js';
+import { AcademicCalendarService } from '../features/academic-calendar/academic-calendar.service.js';
+import { MessageRouter } from '../features/messages/message-router.service.js';
 
 describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
   let svc: any;

@@ -1,13 +1,15 @@
 import cron from 'node-cron';
 
-import { ClassNotificationService } from '../application/notifications/class-notification.service.js';
-import { ExamNotificationService } from '../application/notifications/exam-notification.service.js';
-import { DynamicMessageService } from '../application/messages/dynamic-message.service.js';
-import { RateLimitService } from '../application/ai/rate-limit.service.js';
-import { ConfirmationRepository, GroupRepository, ManagedExamRepository, OutboxDedupRepository, ReminderRepository, SchedulerRunRepository, UserProfileRepository } from '../infrastructure/persistence/db/repositories.js';
-import { InstitutionalEmailMonitor } from '../infrastructure/integrations/imap/institutional-email-monitor.js';
+import { ClassNotificationService } from '../features/notifications/class-notification.service.js';
+import { ExamNotificationService } from '../features/notifications/exam-notification.service.js';
+import { DynamicMessageService } from '../features/messages/dynamic-message.service.js';
+import { RateLimitService } from '../features/ai/rate-limit.service.js';
+import { GroupRepository, ManagedExamRepository, ReminderRepository, SchedulerRunRepository, UserProfileRepository } from '../infrastructure/persistence/db/repositories.js';
+import { OutboxDedupRepository } from '../features/messages/messages.repository.js';
+import { ConfirmationRepository } from '../features/conversation/conversation.repository.js';
+import { InstitutionalEmailMonitor } from '../features/notifications/integrations/institutional-email-monitor.js';
 import { CabezonWhatsAppGateway } from '../interfaces/whatsapp/cabezon-whatsapp-gateway.js';
-import { RagPipelineService } from '../rag/rag-pipeline.service.js';
+import { RagPipelineService } from '../features/ai/rag/rag-pipeline.service.js';
 
 export class SchedulerService {
   private examNotificationService: ExamNotificationService;

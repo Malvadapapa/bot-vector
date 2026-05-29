@@ -1,58 +1,55 @@
-import { getSettings } from './config/settings.js';
+import { getSettings } from './shared/config/settings.js';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { AcademicCalendarService } from './application/calendar/academic-calendar.service.js';
-import { ExamMenuService } from './application/calendar/exam-menu.service.js';
-import { EditExamMenuService } from './application/calendar/edit-exam-menu.service.js';
-import { RemoveNotificationMenuService } from './application/calendar/remove-notification-menu.service.js';
-import { AIQueryService } from './application/ai/ai-query.service.js';
-import { ClassNotificationService } from './application/notifications/class-notification.service.js';
-import { ConversationStateService } from './application/conversation/conversation-state.service.js';
-import { DynamicMessageService } from './application/messages/dynamic-message.service.js';
-import { MessageRouter } from './application/messages/message-router.service.js';
+import { AcademicCalendarService } from './features/academic-calendar/academic-calendar.service.js';
+import { ExamMenuService } from './features/academic-calendar/exam-menu.service.js';
+import { EditExamMenuService } from './features/academic-calendar/edit-exam-menu.service.js';
+import { RemoveNotificationMenuService } from './features/academic-calendar/remove-notification-menu.service.js';
+import { AIQueryService } from './features/ai/ai-query.service.js';
+import { ClassNotificationService } from './features/notifications/class-notification.service.js';
+import { ConversationStateService } from './features/conversation/conversation-state.service.js';
+import { DynamicMessageService } from './features/messages/dynamic-message.service.js';
+import { MessageRouter } from './features/messages/message-router.service.js';
 import { PrivateChatWorkflowService } from './application/admin/private-chat-workflow.service.js';
-import { RateLimitService } from './application/ai/rate-limit.service.js';
-import { KnowledgeContextService } from './application/ai/knowledge-context.service.js';
-import { UserModerationService } from './application/moderation/user-moderation.service.js';
-import { LoggingService } from './infrastructure/logging/logging.service.js';
-import { DatabaseConnection } from './infrastructure/persistence/database.js';
+import { RateLimitService } from './features/ai/rate-limit.service.js';
+import { KnowledgeContextService } from './features/ai/knowledge-context.service.js';
+import { UserModerationService } from './features/moderation/user-moderation.service.js';
+import { LoggingService } from './shared/logging/logging.service.js';
+import { DatabaseConnection } from './shared/db/database.js';
 import {
   AdminRepository,
   AdminVerificationCodeRepository,
-  ClassNotificationRepository,
   ClassCommissionScheduleRepository,
   CommissionRepository,
-  ConfirmationRepository,
-  DailyGreetingRepository,
   GroupContextRepository,
   GroupRepository,
   CohortConfigRepository,
   GroupMembershipRepository,
-  InstitutionalNoticeRepository,
   ManagedClassRepository,
   ManagedExamRepository,
   ManagedTeacherRepository,
-  OutboxDedupRepository,
-  RateLimitRepository,
   ReminderRepository,
   SchedulerRunRepository,
-  UserModerationRepository,
   UserProfileRepository,
 } from './infrastructure/persistence/db/repositories.js';
-import { MessageIntentParserService } from './infrastructure/integrations/message-understanding/message-intent-parser.service.js';
-import { EmailService } from './infrastructure/integrations/email-service.js';
-import { OutboundEmailService } from './infrastructure/integrations/email-service.js';
-import { GeminiService } from './infrastructure/integrations/ai/gemini.service.js';
-import { GroqProvider } from './infrastructure/integrations/ai/groq.provider.js';
-import { FallbackAIService } from './infrastructure/integrations/ai/fallback-ai.service.js';
-import { GeminiEmbeddingProvider } from './infrastructure/integrations/ai/gemini-embedding.provider.js';
-import { InstitutionalEmailMonitor } from './infrastructure/integrations/imap/institutional-email-monitor.js';
-import { RssParserService } from './infrastructure/integrations/rss.service.js';
+import { ClassNotificationRepository, InstitutionalNoticeRepository } from './features/notifications/notifications.repository.js';
+import { DailyGreetingRepository, OutboxDedupRepository } from './features/messages/messages.repository.js';
+import { ConfirmationRepository } from './features/conversation/conversation.repository.js';
+import { UserModerationRepository } from './features/moderation/moderation.repository.js';
+import { RateLimitRepository } from './features/ai/rate-limit.repository.js';
+import { MessageIntentParserService } from './features/messages/message-intent-parser.service.js';
+import { EmailService, OutboundEmailService } from './features/notifications/integrations/email.service.js';
+import { GeminiService } from './features/ai/providers/gemini.service.js';
+import { GroqProvider } from './features/ai/providers/groq.provider.js';
+import { FallbackAIService } from './features/ai/providers/fallback-ai.service.js';
+import { GeminiEmbeddingProvider } from './features/ai/providers/gemini-embedding.provider.js';
+import { InstitutionalEmailMonitor } from './features/notifications/integrations/institutional-email-monitor.js';
+import { RssParserService } from './features/notifications/integrations/rss.service.js';
 import { CabezonWhatsAppGateway } from './interfaces/whatsapp/cabezon-whatsapp-gateway.js';
 import { SchedulerService } from './scheduler/scheduler-service.js';
-import { RagQueryService } from './rag/rag-query.service.js';
-import { RagPipelineService } from './rag/rag-pipeline.service.js';
+import { RagQueryService } from './features/ai/rag/rag-query.service.js';
+import { RagPipelineService } from './features/ai/rag/rag-pipeline.service.js';
 
 // Esto es para que esté disponible en main.ts si no lo estaba
 const DEFAULT_BOT_INSTRUCTIONS = [

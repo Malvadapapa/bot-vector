@@ -1,14 +1,13 @@
 import crypto from 'crypto';
-import { DynamicMessageService } from '../messages/dynamic-message.service.js';
-import { ManagedExam, ManagedClassCreateInput, ManagedTeacherCreateInput, InstitutionalNotice } from '../../domain/models.js';
+import { DynamicMessageService } from '../../features/messages/dynamic-message.service.js';
+import { ManagedExam, ManagedClassCreateInput, ManagedTeacherCreateInput } from '../../domain/models.js';
+import { InstitutionalNotice } from '../../features/notifications/notifications.models.js';
 import {
   AdminRepository,
   AdminVerificationCodeRepository,
-  InstitutionalNoticeRepository,
   ManagedExamRepository,
   ManagedClassRepository,
   ManagedTeacherRepository,
-  UserModerationRepository,
   UserProfileRepository,
   GroupContextRepository,
   GroupRepository,
@@ -17,6 +16,8 @@ import {
   ClassCommissionScheduleRepository,
   CommissionRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
+import { InstitutionalNoticeRepository } from '../../features/notifications/notifications.repository.js';
+import { UserModerationRepository } from '../../features/moderation/moderation.repository.js';
 
 interface PendingProfile {
   name?: string;
@@ -2462,7 +2463,7 @@ export class PrivateChatWorkflowService {
 
       return [
         'Usuarios baneados:',
-        ...banned.map((u) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone} | Tipo: ${u.ban_type} | Hasta: ${u.banned_until.toISOString().slice(0, 10)}`),
+        ...banned.map((u: any) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone} | Tipo: ${u.ban_type} | Hasta: ${u.banned_until.toISOString().slice(0, 10)}`),
       ].join('\n');
     }
 
@@ -2476,7 +2477,7 @@ export class PrivateChatWorkflowService {
 
       return [
         'Pasame el ID a desbloquear:',
-        ...banned.map((u) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone}`),
+        ...banned.map((u: any) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone}`),
       ].join('\n');
     }
 

@@ -9,10 +9,10 @@ import * as pino from 'pino';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
-import { MessageRouter } from '../../application/messages/message-router.service.js';
+import { MessageRouter } from '../../features/messages/message-router.service.js';
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
-import { RateLimitService } from '../../application/ai/rate-limit.service.js';
-import { UserModerationService } from '../../application/moderation/user-moderation.service.js';
+import { RateLimitService } from '../../features/ai/rate-limit.service.js';
+import { UserModerationService } from '../../features/moderation/user-moderation.service.js';
 import { AdminRepository, GroupRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
 
 const nodeRequire = createRequire(import.meta.url);
