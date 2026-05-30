@@ -40,31 +40,40 @@ describe('General Menu Navigation and Error Logging Tests', () => {
 
     it('should start menu flow at inicio when typing !menu', async () => {
       const resp = await service.handleMenuInput('user123', '!menu');
-      expect(resp).toContain('¿Cómo te puedo ayudar hoy?');
-      expect(resp).toContain('1️⃣ Fechas Útiles');
+      expect(resp).not.toBeNull();
+      expect(resp!.toLowerCase()).toContain('cómo te puedo ayudar hoy');
+      expect(resp!.toLowerCase()).toContain('fechas útiles');
       expect(service.hasActiveMenuState('user123')).toBe(true);
     });
 
-    it('should transition to fechas_utiles when typing 1 at inicio', async () => {
+    it('should transition to fechas_utiles and then to calendario_academico', async () => {
       await service.handleMenuInput('user123', '!menu');
-      const resp = await service.handleMenuInput('user123', '1');
-      expect(resp).toContain('Fechas Útiles');
-      expect(resp).toContain('Inicio de clases');
-      expect(service.hasActiveMenuState('user123')).toBe(true);
+      const respSub = await service.handleMenuInput('user123', '1');
+      expect(respSub).not.toBeNull();
+      expect(respSub!.toLowerCase()).toContain('fechas');
+      expect(service.hasActiveMenuState('user123')).toBe(true); // Submenu maintains state
+
+      const respLeaf = await service.handleMenuInput('user123', '1');
+      expect(respLeaf).not.toBeNull();
+      expect(respLeaf!.toLowerCase()).toContain('calendario');
+      expect(service.hasActiveMenuState('user123')).toBe(false); // Leaf node clears state immediately
     });
 
     it('should show invalid option and maintain state when typing invalid number', async () => {
       await service.handleMenuInput('user123', '!menu');
       const resp = await service.handleMenuInput('user123', '9');
+      expect(resp).not.toBeNull();
       expect(resp).toContain('Opcion invalida');
       expect(service.hasActiveMenuState('user123')).toBe(true);
     });
 
     it('should transition back to inicio when typing 0 or menu from a submenu', async () => {
       await service.handleMenuInput('user123', '!menu');
-      await service.handleMenuInput('user123', '1'); // go to fechas_utiles
+      await service.handleMenuInput('user123', '1'); // go to fechas_utiles (submenu, state active)
+      expect(service.hasActiveMenuState('user123')).toBe(true);
       const resp = await service.handleMenuInput('user123', '0'); // go back to inicio
-      expect(resp).toContain('¿Cómo te puedo ayudar hoy?');
+      expect(resp).not.toBeNull();
+      expect(resp!.toLowerCase()).toContain('cómo te puedo ayudar hoy');
       expect(service.hasActiveMenuState('user123')).toBe(true);
     });
 

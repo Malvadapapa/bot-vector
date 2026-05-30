@@ -48,56 +48,115 @@ type MenuNode = {
 
 const GENERAL_MENU_TREE: Record<string, MenuNode> = {
   inicio: {
-    mensaje: "¡Hola! Soy Vectorito, el asistente virtual del grupo🤖. ¿Cómo te puedo ayudar hoy?\n1️⃣ Fechas Útiles\n2️⃣ Comunicarse con ISPC\n3️⃣ Noticias de Software =)\n4️⃣ Avisos del ISPC\n5️⃣ Preguntas frecuentes",
+    mensaje: "¡Hola {{nombre_usuario}}! Soy Vectorito, el asistente virtual del grupo🤖. {{frase_ayuda_random}}\n\n¿Cómo te puedo ayudar hoy?\n1️⃣ Fechas Útiles (Calendario y Feriados)\n2️⃣ Comunicarse con ISPC\n3️⃣ Noticias de Software\n4️⃣ Avisos del ISPC\n5️⃣ Próximos Exámenes\n\n{{cta_random}}",
     opciones: {
       "1": "fechas_utiles",
-      "2": "comunicarse_ispc",
+      "2": "contacto_ispc",
       "3": "noticias",
-      "4": "avisos_ispc",
-      "5": "faq"
+      "4": "avisos",
+      "5": "examenes"
     }
   },
   fechas_utiles: {
-    mensaje: "📅 *Fechas Útiles*\n\nAcá están las fechas importantes del ciclo académico:\n\n• Inicio de clases: [fecha]\n• Receso de invierno: [fecha]\n• Fin de semestre: [fecha]\n\nSi necesitás más detalles, escribí !calendario\n\nEscribí 0 o !menu para volver al inicio.",
-    opciones: {}
-  },
-  comunicarse_ispc: {
-    mensaje: "☎️ *Comunicarse con ISPC*\n\nSi te trabas, escribi !menu y arrancamos de nuevo.\n¿Qué necesitás?\n1️⃣ Coordinación\n2️⃣ Profesores\n3️⃣ Redes Sociales\n\nEscribí 0 o !menu para volver al inicio.",
+    mensaje: "📚 *Fechas útiles del ISPC*\n{{frase_ayuda_random}}\n¿Qué querés ver?\n1️⃣ Calendario académico\n2️⃣ Feriados\n\n{{cta_random}}\n0️⃣ Volver al inicio",
     opciones: {
-      "1": "coordinacion",
-      "2": "profesores",
-      "3": "redes_sociales"
+      "1": "calendario_academico",
+      "2": "feriados",
+      "0": "inicio"
     }
   },
-  coordinacion: {
-    mensaje: "👩‍💼 *Coordinación - Tecnicatura en Desarrollo de Software*\n\n*Coordinadora General*\n📧 Tatiana Manzanelli\n✉️ coordinacion.software@ispc.edu.ar\n\n*Tutora Virtual*\n📧 Natalia Morán\n✉️ tutorias.software@ispc.edu.ar\n\nTambién podes escribir !menu para volver al inicio.",
-    opciones: {}
+  calendario_academico: {
+    mensaje: "📆 *Calendario Académico*\n\n{{calendario_academico_dinamico}}\n\nEscribí 0 para volver a fechas útiles.",
+    opciones: {
+      "0": "fechas_utiles"
+    },
+    eventos: {
+      "1er_cuatrimestre": [
+        { fecha: "2026-02-23", fecha_fin: "2026-03-31", nombre: "Mesas de Exámenes Finales (Feb - Mar)" },
+        { fecha: "2026-03-02", fecha_fin: "2026-03-31", nombre: "Ser Técnico/a de Nivel Superior - SIES" },
+        { fecha: "2026-03-16", nombre: "Inicio del 1er Cuatrimestre (2° y 3° año)" },
+        { fecha: "2026-04-06", nombre: "Inicio del 1er Cuatrimestre (1° año)" },
+        { fecha: "2026-05-11", fecha_fin: "2026-05-29", nombre: "Mesas de Exámenes Extraordinarios (Mayo)" },
+        { fecha: "2026-07-03", nombre: "Fin del 1er Cuatrimestre" },
+        { fecha: "2026-07-06", fecha_fin: "2026-07-17", nombre: "Receso de Invierno" }
+      ],
+      "2do_cuatrimestre": [
+        { fecha: "2026-07-20", fecha_fin: "2026-08-07", nombre: "Mesas de Exámenes (Jul - Ago)" },
+        { fecha: "2026-08-10", nombre: "Inicio del 2do Cuatrimestre" },
+        { fecha: "2026-09-21", fecha_fin: "2026-10-09", nombre: "Mesas de Exámenes Extraordinarios (Sep)" },
+        { fecha: "2026-11-27", nombre: "Fin del 2do Cuatrimestre" },
+        { fecha: "2026-11-30", fecha_fin: "2026-12-29", nombre: "Mesas de Exámenes (Nov - Dic)" }
+      ]
+    }
   },
-  profesores: {
-    mensaje: "👨‍🏫 *Profesores*\n\nPara contactar a los profesores:\n\n• Consultá el cronograma de horarios de atención\n• Escribí el nombre del profesor para buscar su mail\n\nEscribí !menu para volver al inicio.",
-    opciones: {}
+  feriados: {
+    mensaje: "🎉 *Feriados*\n\n{{feriados_dinamico}}\n\nEscribí 0 para volver a fechas útiles.",
+    opciones: {
+      "0": "fechas_utiles"
+    },
+    feriados_lista: [
+      { fecha: "2026-03-24", nombre: "Día Nacional de la Memoria por la Verdad y la Justicia" },
+      { fecha: "2026-04-02", nombre: "Día del Veterano y de los Caídos en la Guerra de Malvinas" },
+      { fecha: "2026-04-02", nombre: "Jueves Santo" },
+      { fecha: "2026-04-03", nombre: "Viernes Santo" },
+      { fecha: "2026-05-01", nombre: "Día Internacional de los trabajadores/as" },
+      { fecha: "2026-05-02", nombre: "Día no laborable con fines turísticos" },
+      { fecha: "2026-05-25", nombre: "Día de la Revolución de Mayo" },
+      { fecha: "2026-06-17", nombre: "Paso a la Inmortalidad de Martín Miguel de Güemes" },
+      { fecha: "2026-06-20", nombre: "Paso a la Inmortalidad de Manuel Belgrano" },
+      { fecha: "2026-07-09", nombre: "Día de la Independencia" },
+      { fecha: "2026-08-17", nombre: "Paso a la Inmortalidad de José de San Martín" },
+      { fecha: "2026-09-11", nombre: "Día de la Maestra y el Maestro" },
+      { fecha: "2026-09-21", nombre: "Día de los Estudiantes" },
+      { fecha: "2026-10-12", nombre: "Día del Respeto a la Diversidad Cultural" },
+      { fecha: "2026-11-20", nombre: "Día de la Soberanía Nacional" },
+      { fecha: "2026-12-08", nombre: "Inmaculada Concepción de María" },
+      { fecha: "2026-12-25", nombre: "Navidad" }
+    ]
   },
-  redes_sociales: {
-    mensaje: "📱 *Redes Sociales del ISPC*\n\nEsta es la info de nuestras redes:\n\n• Instagram: @ispc.official\n• Facebook: ISPC Oficial\n• Twitter: @ISPCoficial\n\nEscribí !menu para volver al inicio.",
-    opciones: {}
+  contacto_ispc: {
+    mensaje: "☎️ *Comunicarse con ISPC*\n{{frase_ayuda_random}}\n¿Qué necesitás?\n\n1️⃣ Coordinación\n2️⃣ Profesores\n3️⃣ Redes Sociales\n\n{{cta_random}}\n0️⃣ Volver al inicio",
+    opciones: {
+      "1": "coordinacion_ispc",
+      "2": "profesores_ispc",
+      "3": "redes_ispc",
+      "0": "inicio"
+    }
+  },
+  coordinacion_ispc: {
+    mensaje: "👩‍💼 *Coordinación - Tecnicatura en Desarrollo de Software*\n\n*Coordinadora General*\n📧 Tatiana Manzanelli\n✉️ coordinacion.software@ispc.edu.ar\n\n*Tutora Virtual*\n📧 Natalia Morán\n✉️ tutoriavirtual@ispc.edu.ar\n\nEscribí !menu para volver al inicio.",
+    opciones: {
+      "0": "contacto_ispc"
+    }
+  },
+  profesores_ispc: {
+    mensaje: "👨‍🏫 *Profesores*\n\n{{lista_profes_dinamica}}\n\nEscribí !menu para volver al inicio.",
+    opciones: {
+      "0": "contacto_ispc"
+    }
+  },
+  redes_ispc: {
+    mensaje: "🌐 *Redes Sociales - ISPC*\n\n📱 Instagram\nhttps://www.instagram.com/ispcordoba\n\n🎥 YouTube\nhttps://www.youtube.com/channel/UCgX9C1Ziq6BbcKValeZyo8Q\n\n👍 Facebook\nhttps://www.facebook.com/ISPCordoba/\n\n💼 LinkedIn\nhttps://www.linkedin.com/company/ispc-instituto-superior-polit-cnico-c-rdoba/\n\n🌍 Web\nhttps://www.ispc.edu.ar/\n\nEscribí !menu para volver al inicio.",
+    opciones: {
+      "0": "contacto_ispc"
+    }
   },
   noticias: {
-    mensaje: "📰 *Noticias de Software*\n\nÚltimas noticias del mundo de la programación y tecnología.\nPara ver más, escribí !noticias\n\nEscribí !menu para volver al inicio.",
+    mensaje: "📰 *Noticias de Software*\n\n{{lista_links_noticias}}\n\nEscribí !menu para volver al inicio.",
     opciones: {}
   },
-  avisos_ispc: {
-    mensaje: "📢 *Avisos del ISPC*\n\nÚltimos comunicados institucionales.\n\nPara ver todos los avisos, escribí !avisos\n\nEscribí !menu para volver al inicio.",
+  avisos: {
+    mensaje: "📢 *Avisos del ISPC*\n\n{{avisos_dinamico}}\n\nEscribí !menu para volver al inicio.",
     opciones: {}
   },
-  faq: {
-    mensaje: "❓ *Preguntas Frecuentes*\n\n• ¿Cómo accedo a las clases virtuales?\n• ¿Dónde veo mis calificaciones?\n• ¿Cómo comunico inasistencias?\n\nPara más detalles, escribí !help\n\nEscribí !menu para volver al inicio.",
+  examenes: {
+    mensaje: "📝 *Próximos Exámenes*\n\n{{examenes_dinamico}}\n\nEscribí !menu para volver al inicio.",
     opciones: {}
   }
 };
 
 export class AcademicCalendarService {
   private menuStateByUser = new Map<string, string>();
-  private menusPath: string;
   private moderationAdminService = new ModerationAdminCommandService();
   private dashboardPanelService?: DashboardPanelService;
   private adminLoggingService?: AdminLoggingCommandService;
@@ -118,8 +177,6 @@ export class AcademicCalendarService {
     private managedExamRepository?: ManagedExamRepository,
     private loggingService?: LoggingService,
   ) {
-    this.menusPath = this.resolveDataFilePath('menus.json');
-
     // Inicializar servicios
     if (this.loggingService) {
       this.adminLoggingService = new AdminLoggingCommandService(this.loggingService);
@@ -360,8 +417,28 @@ export class AcademicCalendarService {
       return null;
     }
 
-    // Si la opción es válida, realizamos la transición
-    this.menuStateByUser.set(userId, nextNode);
+    // Determinar si el siguiente nodo debe persistir el estado de FSM
+    const next = menuTree[nextNode];
+    const nextHasOptions = !!next?.opciones && Object.keys(next.opciones).length > 0;
+    const nextOptionKeys = next?.opciones ? Object.keys(next.opciones) : [];
+
+    const navigationalOnly = nextOptionKeys.length > 0 && nextOptionKeys.every((key) => {
+      const value = String(next?.opciones?.[key] || '').toLowerCase();
+      return key === '0' || /volver|menu|inicio/.test(key) || /volver|menu|inicio/.test(value);
+    });
+
+    const promptText = String(next?.mensaje || '').toLowerCase();
+    const asksForChoice = /(elegi|elegí|selecciona|seleccioná|mandame el numero|que necesitás|qué necesitás|opcion|opción)/i.test(promptText) || /\d️⃣/.test(promptText);
+
+    // Mantener estado SOLO si tiene opciones reales y nos está pidiendo activamente una elección
+    const keepState = nextHasOptions && !navigationalOnly && asksForChoice;
+
+    if (keepState) {
+      this.menuStateByUser.set(userId, nextNode);
+    } else {
+      this.menuStateByUser.delete(userId); // Nodos terminales o informativos limpian el estado automáticamente
+    }
+
     return this.renderNode(menuTree, nextNode, userId);
   }
 
@@ -546,23 +623,6 @@ export class AcademicCalendarService {
 
   private loadMenus(): Record<string, MenuNode> | null {
     return GENERAL_MENU_TREE;
-  }
-
-  private resolveDataFilePath(fileName: string): string {
-    const candidates = [
-      path.resolve(MODULE_DIR, '..', '..', '..', '..', 'data', fileName),
-      path.resolve(MODULE_DIR, '..', '..', 'data', fileName),
-      path.resolve(MODULE_DIR, '..', '..', '..', 'data', fileName),
-      path.resolve(process.cwd(), 'data', fileName),
-    ];
-
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    return candidates[0];
   }
 
   private async renderNode(menuTree: Record<string, MenuNode>, nodeName: string, userId?: string): Promise<string> {
