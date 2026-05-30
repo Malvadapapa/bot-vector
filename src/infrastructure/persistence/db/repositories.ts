@@ -536,6 +536,10 @@ export class AdminVerificationCodeRepository {
     await run(this.db, 'INSERT OR IGNORE INTO admin_verification_codes(code) VALUES (?)', [code]);
   }
 
+  async deleteIfUnconsumed(code: string): Promise<void> {
+    await run(this.db, 'DELETE FROM admin_verification_codes WHERE code = ? AND consumed_by IS NULL', [code]);
+  }
+
   async listAvailableCodes(limit = 10): Promise<string[]> {
     const rows = await all<any>(
       this.db,
@@ -1403,7 +1407,7 @@ function rowToManagedClass(row: any): ManagedClass {
   }
 */
 
-export { InstitutionalNoticeRepository, ClassNotificationRepository } from '../../../features/notifications/notifications.repository.js';
+export { InstitutionalNoticeRepository, ClassNotificationRepository, InboundEmailRejectionRepository } from '../../../features/notifications/notifications.repository.js';
 export { DailyGreetingRepository, OutboxDedupRepository } from '../../../features/messages/messages.repository.js';
 export { ReminderRepository, ManagedExamRepository, ManagedClassRepository, ManagedTeacherRepository, CommissionRepository, GroupContextRepository, ClassCommissionScheduleRepository, CohortConfigRepository } from '../../../features/academic-calendar/academic-calendar.repository.js';
 

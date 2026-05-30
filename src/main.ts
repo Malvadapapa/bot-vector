@@ -32,6 +32,7 @@ import {
   ReminderRepository,
   SchedulerRunRepository,
   UserProfileRepository,
+  InboundEmailRejectionRepository,
 } from './infrastructure/persistence/db/repositories.js';
 import { ClassNotificationRepository, InstitutionalNoticeRepository } from './features/notifications/notifications.repository.js';
 import { DailyGreetingRepository, OutboxDedupRepository } from './features/messages/messages.repository.js';
@@ -239,6 +240,7 @@ async function bootstrap() {
   const groupMembershipRepository = new GroupMembershipRepository(sqliteDb);
   const cohortConfigRepository = new CohortConfigRepository(sqliteDb);
   const classCommissionScheduleRepository = new ClassCommissionScheduleRepository(sqliteDb);
+  const inboundEmailRejectionRepository = new InboundEmailRejectionRepository(sqliteDb);
 
   // PHASE 2: Commission and Group Context repositories
   const commissionRepository = new CommissionRepository(sqliteDb);
@@ -252,15 +254,24 @@ async function bootstrap() {
     .map((s) => s.trim())
     .filter((s) => /^\d{6}$/.test(s));
 
-  if (seedCodes.length === 0) {
-    const generated = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
-    await adminCodeRepository.addCode(generated);
-    console.log(`[ADMIN] Codigo disponible para registro: ${generated}`);
-  } else {
-    for (const code of seedCodes) {
-      await adminCodeRepository.addCode(code);
+  const existingAdmins = await adminRepository.listAllAdminIds();
+  if (existingAdmins.length === 0) {
+    if (seedCodes.length === 0) {
+      const generated = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+      await adminCodeRepository.addCode(generated);
+      console.log(`[ADMIN] No registered admins. Startup code generated: ${generated}`);
+    } else {
+      for (const code of seedCodes) {
+        await adminCodeRepository.addCode(code);
+      }
+      console.log(`[ADMIN] No registered admins. Seed codes loaded: ${seedCodes.join(', ')}`);
     }
-    console.log(`[ADMIN] Codigos disponibles para registro: ${seedCodes.join(', ')}`);
+  } else {
+    // If admins already exist, clean up and delete any unconsumed seed codes from the DB to prevent reuse
+    for (const code of seedCodes) {
+      await adminCodeRepository.deleteIfUnconsumed(code);
+    }
+    console.log(`[ADMIN] System already bootstrapped with ${existingAdmins.length} admin(s). Startup seed codes disabled and cleared.`);
   }
 
   const rssParserService = new RssParserService();
@@ -400,8 +411,13 @@ async function bootstrap() {
       managedTeacherRepository,
       groupRepository,
       outboundEmailService,
+      inboundEmailRejectionRepository,
     )
     : undefined;
+
+  if (emailMonitor) {
+    emailMonitor.startListening();
+  }
 
   const scheduler = new SchedulerService(
     groupRepository,

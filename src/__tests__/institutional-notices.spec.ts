@@ -6,6 +6,50 @@ import { ManagedTeacherRepository, GroupRepository } from '../infrastructure/per
 import { InstitutionalNoticeRepository } from '../features/notifications/notifications.repository.js';
 import { InstitutionalNotice, ManagedTeacher, WhatsAppGroup } from '../domain/models.js';
 
+const { mockImapFlowConstructor } = vi.hoisted(() => {
+  return {
+    mockImapFlowConstructor: vi.fn(),
+  };
+});
+
+vi.mock('imapflow', () => {
+  return {
+    ImapFlow: class {
+      constructor(config: any) {
+        mockImapFlowConstructor(config);
+      }
+      connect() {
+        return Promise.reject(new Error('Mock connect failure'));
+      }
+      logout() {
+        return Promise.resolve();
+      }
+      getMailboxLock() {
+        return Promise.resolve({ release: () => {} });
+      }
+      search() {
+        return Promise.resolve([]);
+      }
+      fetch() {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                return { done: true, value: undefined };
+              }
+            };
+          }
+        };
+      }
+      usable = true;
+      idle() {
+        this.usable = false;
+        return Promise.resolve();
+      }
+    }
+  };
+});
+
 // ============================================================================
 // 1. OutboundEmailService Tests
 // ============================================================================
@@ -54,7 +98,7 @@ describe('OutboundEmailService', () => {
   });
 
   it('should throw error for missing recipient', async () => {
-    await expect(service.send('', 'Subject', 'Body')).rejects.toThrow('Missing recipient');
+    await expect(service.send('', 'Subject', 'Body')).rejects.toThrow('Falta el destinatario');
   });
 
   it('should handle SMTP errors gracefully', async () => {
@@ -1221,5 +1265,227 @@ frecuencia: unica`,
 
     expect(processed).toBe(1);
     expect(mockNoticeRepo.createIfNew).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ============================================================================
+// 12. Improved Institutional Email Notices & TLS Config Tests
+// ============================================================================
+
+import fs from 'fs';
+
+describe('Improved Institutional Email Notices & TLS Config', () => {
+  let mockEmailService: any;
+  let mockNoticeRepo: any;
+  let mockReminderRepo: any;
+  let mockManagedTeacherRepo: any;
+  let mockOutboundEmailService: any;
+  let mockRejectionRepo: any;
+  let originalEnv: any;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    
+    mockEmailService = {
+      fetchUnreadInstitutionEmails: vi.fn(),
+    };
+    mockNoticeRepo = {
+      getByUniqueHashWithId: vi.fn(),
+      createIfNew: vi.fn().mockResolvedValue(true),
+      markPublished: vi.fn(),
+      markConfirmed: vi.fn(),
+      deleteById: vi.fn(),
+    };
+    mockReminderRepo = {
+      create: vi.fn(),
+    };
+    mockManagedTeacherRepo = {
+      getByEmail: vi.fn(),
+    };
+    mockOutboundEmailService = {
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+
+    // Mock InboundEmailRejectionRepository
+    const storedRejections = new Set<string>();
+    mockRejectionRepo = {
+      exists: vi.fn(async (fp) => storedRejections.has(fp)),
+      markIfNew: vi.fn(async (fp, sender, subject) => {
+        if (storedRejections.has(fp)) return false;
+        storedRejections.add(fp);
+        return true;
+      }),
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.clearAllMocks();
+  });
+
+  it('should authorize superadmin and process/publish notice', async () => {
+    process.env.SUPERADMIN_EMAILS = 'superadmin@ispc.edu.ar, otheradmin@ispc.edu.ar';
+    const email = {
+      subject: '!aviso: Superadmin Notice',
+      from: { text: 'superadmin@ispc.edu.ar' },
+      text: 'nombre: Super Notice\ninicia: 15/06/2026\ntermina: 20/06/2026\ncuerpo: Content',
+    } as any;
+
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    mockNoticeRepo.getByUniqueHashWithId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 10, notice: { title: 'Super Notice' } as any });
+
+    const monitor = new InstitutionalEmailMonitor(
+      mockEmailService,
+      mockNoticeRepo,
+      mockReminderRepo,
+      vi.fn().mockResolvedValue(undefined),
+      undefined,
+      mockManagedTeacherRepo,
+      undefined,
+      mockOutboundEmailService,
+      mockRejectionRepo
+    );
+
+    const processed = await monitor.pollOnce();
+
+    expect(processed).toBe(1);
+    expect(mockManagedTeacherRepo.getByEmail).not.toHaveBeenCalled(); // Skipped because it is superadmin
+    expect(mockNoticeRepo.createIfNew).toHaveBeenCalled();
+  });
+
+  it('should authorize normal teacher and process/publish notice', async () => {
+    process.env.SUPERADMIN_EMAILS = 'superadmin@ispc.edu.ar';
+    const email = {
+      subject: '!aviso: Teacher Notice',
+      from: { text: 'teacher@ispc.edu.ar' },
+      text: 'nombre: Teacher Notice\ninicia: 15/06/2026\ntermina: 20/06/2026\ncuerpo: Content',
+    } as any;
+
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    mockNoticeRepo.getByUniqueHashWithId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 11, notice: { title: 'Teacher Notice' } as any });
+    mockManagedTeacherRepo.getByEmail.mockResolvedValueOnce({ email: 'teacher@ispc.edu.ar', name: 'Prof' });
+
+    const monitor = new InstitutionalEmailMonitor(
+      mockEmailService,
+      mockNoticeRepo,
+      mockReminderRepo,
+      vi.fn().mockResolvedValue(undefined),
+      undefined,
+      mockManagedTeacherRepo,
+      undefined,
+      mockOutboundEmailService,
+      mockRejectionRepo
+    );
+
+    const processed = await monitor.pollOnce();
+
+    expect(processed).toBe(1);
+    expect(mockManagedTeacherRepo.getByEmail).toHaveBeenCalledWith('teacher@ispc.edu.ar');
+    expect(mockNoticeRepo.createIfNew).toHaveBeenCalled();
+  });
+
+  it('should reject unauthorized sender and send rejection email only once', async () => {
+    process.env.SUPERADMIN_EMAILS = 'superadmin@ispc.edu.ar';
+    const email = {
+      messageId: '<msg-id-123@ispc.edu.ar>',
+      subject: '!aviso: Spammer Notice',
+      from: { text: 'spammer@example.com' },
+      text: 'cuerpo: Buy cheap pills',
+    } as any;
+
+    mockManagedTeacherRepo.getByEmail.mockResolvedValueOnce(null);
+
+    const monitor = new InstitutionalEmailMonitor(
+      mockEmailService,
+      mockNoticeRepo,
+      mockReminderRepo,
+      vi.fn().mockResolvedValue(undefined),
+      undefined,
+      mockManagedTeacherRepo,
+      undefined,
+      mockOutboundEmailService,
+      mockRejectionRepo
+    );
+
+    // First Poll
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    const processed1 = await monitor.pollOnce();
+    expect(processed1).toBe(0);
+    expect(mockOutboundEmailService.send).toHaveBeenCalledTimes(1);
+    expect(mockRejectionRepo.markIfNew).toHaveBeenCalledWith('<msg-id-123@ispc.edu.ar>', 'spammer@example.com', '!aviso: Spammer Notice');
+
+    // Reset mocks for second poll (simulate cron running again)
+    mockOutboundEmailService.send.mockClear();
+    mockManagedTeacherRepo.getByEmail.mockResolvedValueOnce(null);
+
+    // Second Poll
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    const processed2 = await monitor.pollOnce();
+    expect(processed2).toBe(0);
+    expect(mockOutboundEmailService.send).not.toHaveBeenCalled(); // Deduplicated!
+  });
+
+  it('should generate deduplication fingerprint by fallback hash if Message-ID is missing', async () => {
+    const email = {
+      subject: '!aviso: Fallback Spammer',
+      from: { text: 'spammer2@example.com' },
+      date: new Date('2026-05-30T12:00:00Z'),
+      text: 'cuerpo: Text content without message id',
+    } as any;
+
+    mockManagedTeacherRepo.getByEmail.mockResolvedValueOnce(null);
+
+    const monitor = new InstitutionalEmailMonitor(
+      mockEmailService,
+      mockNoticeRepo,
+      mockReminderRepo,
+      vi.fn().mockResolvedValue(undefined),
+      undefined,
+      mockManagedTeacherRepo,
+      undefined,
+      mockOutboundEmailService,
+      mockRejectionRepo
+    );
+
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    await monitor.pollOnce();
+
+    expect(mockRejectionRepo.markIfNew).toHaveBeenCalledWith(
+      expect.stringMatching(/^[a-f0-9]{64}$/), // SHA-256 fingerprint hash
+      'spammer2@example.com',
+      '!aviso: Fallback Spammer'
+    );
+  });
+
+  it('should parse TLS configuration environments and instantiate client with correct options', async () => {
+    process.env.IMAP_USER = 'test@example.com';
+    process.env.IMAP_PASSWORD = 'password';
+    process.env.IMAP_TLS_REJECT_UNAUTHORIZED = 'false';
+    process.env.IMAP_TLS_SERVERNAME = 'custom.imap.server';
+    process.env.IMAP_TLS_CA_PATH = '';
+
+    const service = new EmailService();
+    const fsSpy = vi.spyOn(fs, 'readFileSync').mockImplementationOnce(() => Buffer.from('mock-ca-cert'));
+    process.env.IMAP_TLS_CA_PATH = '/path/to/ca.pem';
+
+    mockImapFlowConstructor.mockClear();
+
+    try {
+      await service.fetchUnreadInstitutionEmails();
+      expect(fsSpy).toHaveBeenCalledWith('/path/to/ca.pem');
+      expect(mockImapFlowConstructor).toHaveBeenCalled();
+      const passedConfig = mockImapFlowConstructor.mock.calls[0][0];
+      expect(passedConfig.tls).toEqual({
+        rejectUnauthorized: false,
+        servername: 'custom.imap.server',
+        ca: expect.any(Buffer),
+      });
+    } finally {
+      fsSpy.mockRestore();
+    }
   });
 });

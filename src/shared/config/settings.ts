@@ -17,6 +17,10 @@ export interface Settings {
   geminiModel: string;
   rateLimitResetHour: number;
   rateLimitResetMinute: number;
+  superadminEmails: string;
+  imapTlsRejectUnauthorized: boolean;
+  imapTlsCaPath: string;
+  imapTlsServername: string;
 }
 
 export function getSettings(): Settings {
@@ -35,5 +39,9 @@ export function getSettings(): Settings {
     geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     rateLimitResetHour: Number(process.env.RATE_LIMIT_RESET_HOUR || 0),
     rateLimitResetMinute: Number(process.env.RATE_LIMIT_RESET_MINUTE || 0),
+    superadminEmails: process.env.SUPERADMIN_EMAILS || '',
+    imapTlsRejectUnauthorized: process.env.IMAP_TLS_REJECT_UNAUTHORIZED !== 'false',
+    imapTlsCaPath: process.env.IMAP_TLS_CA_PATH || '',
+    imapTlsServername: process.env.IMAP_TLS_SERVERNAME || '',
   };
 }

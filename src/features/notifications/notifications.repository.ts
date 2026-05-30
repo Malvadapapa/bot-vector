@@ -157,3 +157,30 @@ function rowToNotice(row: any): InstitutionalNotice {
     confirmed_at: row.confirmed_at ? new Date(String(row.confirmed_at)) : undefined,
   };
 }
+
+export class InboundEmailRejectionRepository {
+  constructor(private db: sqlite3.Database) {}
+
+  async markIfNew(fingerprint: string, sender: string, subject: string): Promise<boolean> {
+    try {
+      await run(
+        this.db,
+        `INSERT INTO inbound_email_rejections(fingerprint, sender, subject) VALUES (?, ?, ?)`,
+        [fingerprint, sender, subject || null]
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async exists(fingerprint: string): Promise<boolean> {
+    const row = await get<any>(
+      this.db,
+      'SELECT id FROM inbound_email_rejections WHERE fingerprint = ? LIMIT 1',
+      [fingerprint]
+    );
+    return !!row;
+  }
+}
+

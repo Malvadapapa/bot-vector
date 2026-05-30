@@ -305,4 +305,33 @@ npm run cleanup:data  # ⚠️ Limpia la BD y vectores
 
 ---
 
+## 📬 Configuración Avanzada de Avisos por Email
+
+El bot incluye un flujo robusto para procesar correos electrónicos y publicarlos como avisos institucionales en los grupos correspondientes de WhatsApp.
+
+### 👑 Autorización de Superadministradores por Email
+Para permitir que usuarios además de los profesores registrados envíen correos de avisos, puedes definir la variable de entorno `SUPERADMIN_EMAILS` en tu archivo `.env` con una lista de correos separados por comas:
+```env
+SUPERADMIN_EMAILS=admin@instituto.edu.ar, director@instituto.edu.ar
+```
+Los correos electrónicos recibidos desde estas direcciones serán automáticamente autorizados y publicados sin necesidad de que el remitente esté registrado en la tabla de profesores (`managed_teachers`). Todos los correos son normalizados (eliminando espacios y comparando en minúsculas) para una validación segura y robusta.
+
+### 🔒 Solución de Errores de Certificado TLS Auto-firmado (`SELF_SIGNED_CERT_IN_CHAIN`)
+Si tu servidor de correo IMAP corporativo o proxy local utiliza certificados auto-firmados, **nunca deshabilites** la seguridad global de Node (`NODE_TLS_REJECT_UNAUTHORIZED=0`). En su lugar, el bot provee variables dedicadas para configurar una conexión TLS segura y específica para IMAP:
+
+1. **Permitir certificados auto-firmados en el buzón IMAP:**
+   Si confías plenamente en la red y deseas omitir la validación de la firma en la cadena de conexión IMAP, puedes configurar:
+   ```env
+   IMAP_TLS_REJECT_UNAUTHORIZED=false
+   ```
+2. **Usar una CA corporativa/personalizada de forma segura:**
+   Si cuentas con el archivo del certificado de la Autoridad de Certificación (`.pem` / `.crt`), puedes apuntar el bot al archivo para que sea validado y aceptado en el proceso de Handshake TLS:
+   ```env
+   IMAP_TLS_CA_PATH=C:/ruta/a/mi_ca_corporativa.pem
+   IMAP_TLS_SERVERNAME=mi-servidor-imap.instituto.edu.ar
+   ```
+Esto mantendrá el resto de las conexiones externas del bot (por ejemplo, llamadas a la API de WhatsApp, Gemini o integraciones externas) con la validación de certificados estándar y protegidas.
+
+---
+
 **Hecho para estudiantes del ISPC.**

@@ -1,10 +1,13 @@
 import crypto from 'crypto';
 import { ParsedMail } from 'mailparser';
-import { InstitutionalNoticeRepository } from '../notifications.repository.js';
+import { InstitutionalNoticeRepository, InboundEmailRejectionRepository } from '../notifications.repository.js';
 import { ReminderRepository, ManagedTeacherRepository, GroupRepository } from '../../../infrastructure/persistence/db/repositories.js';
 import { EmailService, OutboundEmailService } from './email.service.js';
 
 export class InstitutionalEmailMonitor {
+  private _polling = false;
+  private _pendingPoll = false;
+
   constructor(
     private emailService: EmailService,
     private noticeRepository: InstitutionalNoticeRepository,
@@ -14,43 +17,98 @@ export class InstitutionalEmailMonitor {
     private managedTeacherRepository?: ManagedTeacherRepository,
     private groupRepository?: GroupRepository,
     private outboundEmailService?: OutboundEmailService,
+    private rejectionRepository?: InboundEmailRejectionRepository,
   ) {}
 
   public async pollOnce(): Promise<number> {
+    console.log('[EmailMonitor] Iniciando revisión de emails no leídos...');
     const emails = await this.emailService.fetchUnreadInstitutionEmails();
     let processed = 0;
+
+    console.log(`[EmailMonitor] Se obtuvieron ${emails.length} email(s) del buzón.`);
 
     // PHASE 5: Get target group ID dynamically if callback provided
     const targetGroupId = this.getTargetGroupId ? await this.getTargetGroupId() : undefined;
 
     for (const email of emails) {
+      console.log(`[EmailMonitor] Analizando email - De: ${email.from?.text || '?'} | Asunto: "${email.subject || '(sin asunto)'}"`);
       const notice = this.parseNoticeFromEmail(email);
-      if (!notice) continue;
+      if (!notice) {
+        console.log(`[EmailMonitor] >> Email descartado: el asunto no contiene "!aviso".`);
+        continue;
+      }
+      console.log(`[EmailMonitor] [OK] Email reconocido como aviso institucional: "${notice.title}"`);
 
       // Extract source address (best-effort)
       const src = notice.sourceEmail || '';
       const m = src.match(/<([^>]+)>/);
       const sourceAddr = m ? m[1].toLowerCase() : src.trim().toLowerCase();
 
-      // Validate sender if repository is provided
-      if (this.managedTeacherRepository) {
+      // Validate sender: either superadmin or registered teacher
+      const superadminEmailsEnv = process.env.SUPERADMIN_EMAILS || '';
+      const superadmins = superadminEmailsEnv
+        .split(',')
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean);
+
+      let isAuthorized = false;
+      if (superadmins.includes(sourceAddr)) {
+        isAuthorized = true;
+      } else if (this.managedTeacherRepository) {
         const teacher = await this.managedTeacherRepository.getByEmail(sourceAddr);
-        if (!teacher) {
-          // send unauthorized email if outbound service available
-          if (this.outboundEmailService) {
-            const subject = 'Correo no autorizado';
-            const body = `Hola.\n\nTu correo (${sourceAddr}) no está asociado a un profesor registrado, por lo que no puede procesarse como aviso institucional.\n\nSi considerás que esto es un error, contactá a administración.`;
-            try { await this.outboundEmailService.send(sourceAddr, subject, body); } catch (e) { /* ignore */ }
-          }
-          continue;
+        if (teacher) {
+          isAuthorized = true;
         }
+      } else {
+        isAuthorized = true;
       }
+
+      if (!isAuthorized) {
+        console.log(`[EmailMonitor] [RECHAZADO] Remitente no autorizado: ${sourceAddr}`);
+        // Anti-spam deduplication logic
+        const messageId = email.messageId;
+        let fingerprint = '';
+        if (messageId) {
+          fingerprint = messageId.trim();
+        } else {
+          const fromStr = email.from?.text || '';
+          const subjectStr = email.subject || '';
+          const dateStr = email.date ? email.date.toISOString() : '';
+          const bodyStr = email.text || '';
+          const rawInput = [fromStr, subjectStr, dateStr, bodyStr].join('|');
+          fingerprint = crypto.createHash('sha256').update(rawInput).digest('hex');
+        }
+
+        if (this.rejectionRepository) {
+          const alreadyNotified = await this.rejectionRepository.exists(fingerprint);
+          if (alreadyNotified) {
+            continue;
+          }
+          await this.rejectionRepository.markIfNew(fingerprint, sourceAddr, email.subject || '');
+        }
+
+        // send unauthorized email if outbound service available
+        if (this.outboundEmailService) {
+          const subject = 'Correo no autorizado';
+          const body = `Hola.\n\nTu correo (${sourceAddr}) no está asociado a un profesor registrado ni a un administrador autorizado, por lo que no puede procesarse como aviso institucional.\n\nSi considerás que esto es un error, contactá a administración.`;
+          try {
+            await this.outboundEmailService.send(sourceAddr, subject, body);
+          } catch (e) {
+            /* ignore */
+          }
+        }
+        continue;
+      }
+      console.log(`[EmailMonitor] [OK] Remitente autorizado: ${sourceAddr}`);
 
       // Preventive duplicate check
       const existing = await this.noticeRepository.getByUniqueHashWithId(notice.uniqueHash);
       if (existing) {
-        // If already confirmed, ignore
-        if (existing.notice.confirmed_at) continue;
+        // Si ya fue confirmado, ignorar
+        if (existing.notice.confirmed_at) {
+          console.log(`[EmailMonitor] >> Aviso duplicado y ya confirmado: "${notice.title}". Ignorando.`);
+          continue;
+        }
 
         // If inserted but not confirmed, attempt to resend confirmation only
         if (this.outboundEmailService) {
@@ -61,7 +119,7 @@ export class InstitutionalEmailMonitor {
             await this.noticeRepository.markConfirmed(existing.id);
           } catch (e) {
             // log and continue
-            console.error('[InstitutionalEmailMonitor] Reintento de confirmación falló:', e);
+            console.error('[EmailMonitor] Reintento de confirmación falló:', e);
           }
         }
         continue;
@@ -158,7 +216,7 @@ export class InstitutionalEmailMonitor {
       } catch (e) {
         // rollback insertion if publishing failed
         if (insertedId) await this.noticeRepository.deleteById(insertedId);
-        console.error('[InstitutionalEmailMonitor] Error publishing to WhatsApp groups, rolled back notice:', e);
+        console.error('[EmailMonitor] Error al publicar en grupos de WhatsApp, aviso revertido:', e);
         continue;
       }
 
@@ -183,13 +241,15 @@ export class InstitutionalEmailMonitor {
           await this.outboundEmailService.send(notice.sourceEmail || sourceAddr, subject, body);
           if (insertedId) await this.noticeRepository.markConfirmed(insertedId);
         } catch (e) {
-          console.error('[InstitutionalEmailMonitor] Error sending confirmation email:', e);
+          console.error('[EmailMonitor] Error enviando email de confirmación:', e);
         }
       }
 
+      console.log(`[EmailMonitor] [OK] Aviso procesado y publicado exitosamente: "${notice.title}"`);
       processed += 1;
     }
 
+    console.log(`[EmailMonitor] Revision completada. Avisos procesados: ${processed}/${emails.length}`);
     return processed;
   }
 
@@ -278,5 +338,48 @@ export class InstitutionalEmailMonitor {
     const endText = endDate ? ` hasta ${endDate.toISOString().slice(0, 10)}` : '';
     const timeText = eventTime ? ` a las ${eventTime}` : '';
     return `Aviso institucional: ${title}. ${body}${endText}${timeText}.`.trim();
+  }
+
+  public startListening(): void {
+    if (this.emailService && typeof this.emailService.listenForNewEmails === 'function') {
+      let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+      this.emailService.listenForNewEmails(async () => {
+        // Debounce: esperar 1.5s a que se estabilicen los eventos rapidos
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+        }
+        debounceTimer = setTimeout(async () => {
+          debounceTimer = null;
+          await this.safePollOnce();
+        }, 1500);
+      });
+    }
+  }
+
+  private async safePollOnce(): Promise<void> {
+    if (this._polling) {
+      console.log('[EmailMonitor] Ya hay un poll en curso. Se re-procesara al terminar.');
+      this._pendingPoll = true;
+      return;
+    }
+
+    this._polling = true;
+    try {
+      console.log('[EmailMonitor] Callback disparado por escucha en tiempo real de email.');
+      await this.pollOnce();
+    } catch (err) {
+      console.error('[EmailMonitor] Error inesperado en pollOnce:', err);
+    } finally {
+      this._polling = false;
+
+      // Si llego otro evento durante el poll, re-ejecutar una vez mas
+      if (this._pendingPoll) {
+        this._pendingPoll = false;
+        console.log('[EmailMonitor] Re-procesando emails pendientes...');
+        // Pequeña pausa antes de re-poll
+        setTimeout(() => this.safePollOnce(), 2000);
+      }
+    }
   }
 }

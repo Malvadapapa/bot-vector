@@ -409,6 +409,27 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE institutional_notices ADD COLUMN confirmed_at TEXT`,
     ],
   },
+  {
+    version: 25,
+    description: 'Create inbound_email_rejections table for email rejection deduplication',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS inbound_email_rejections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fingerprint TEXT NOT NULL UNIQUE,
+        sender TEXT NOT NULL,
+        subject TEXT,
+        rejected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_inbound_email_rejections_fingerprint ON inbound_email_rejections(fingerprint)`
+    ]
+  },
+  {
+    version: 26,
+    description: 'Add published_at to institutional_notices if missing',
+    sql: [
+      `ALTER TABLE institutional_notices ADD COLUMN published_at TEXT`
+    ]
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {
