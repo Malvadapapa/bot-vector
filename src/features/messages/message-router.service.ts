@@ -22,15 +22,15 @@ export class MessageRouter {
   ];
 
   private static HELLO_TOO_MANY = [
-    'Si seguís saludando así te saco del grupo... mentira 😄 ¿qué necesitás?',
-    'Un saludo más y te baneo del grupo... es chiste 😅 Decime en qué te ayudo.',
-    'Te voy a expulsar por exceso de hola... nah, broma 😄 Contame qué necesitás.',
+    'Hola. Decime en qué puedo ayudarte hoy 🙂',
+    'Acá sigo a tu disposición. ¿Qué consulta tenés? 🙂',
+    'Hola de nuevo. ¿Qué necesitás consultar? 🙂',
   ];
 
   private static EMPTY_PROMPTS = [
-    'Estoy por acá, che. Probá con !menu, !hoy, !semana, !avisos o !noticias.',
-    'Acá ando, chango. Tirame !menu, !hoy, !semana, !avisos o !noticias.',
-    'Todo bien por acá, máquina. Podés usar !menu, !hoy, !semana, !avisos o !noticias.',
+    'Hola. Probá con !menu, !hoy, !semana, !avisos o !noticias.',
+    'Hola. Decime cómo te puedo ayudar. Podés usar !menu, !hoy, !semana, !avisos o !noticias.',
+    'Hola. Estoy activo por acá. Podés usar !menu, !hoy, !semana, !avisos o !noticias.',
   ];
 
   constructor(
