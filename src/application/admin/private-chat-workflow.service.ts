@@ -84,30 +84,32 @@ interface PendingGroupContextData {
 
 export class PrivateChatWorkflowService {
   private static readonly PROFILE_STATES = new Set([
+    'await_user_profile_welcome',
     'await_user_profile_name',
     'await_user_profile_birthday',
     'await_user_profile_email',
     'await_user_commission_selection',
+    'await_user_profile_confirmation',
   ]);
   private static readonly ADMIN_MODE_HINTS = [
-    'Estoy en modo admin, chango. Mandame menu y te muestro las funciones.',
+    'Estoy en modo admin. Mandame menu y te muestro las funciones.',
     'Seguimos en modo admin. Si querés ver las opciones escribi menu.',
-    'Modo admin activo, máquina. Escribí menu para ver el panel.',
+    'Modo admin activo. Escribí menu para ver el panel.',
   ];
   private static readonly PRIVATE_ONLY_AFTER_REGISTER = [
-    'Ya quedaste registrado. Este bot responde solo en el grupo, así que te leo allá con gusto.',
+    'Ya quedaste registrado/a. Este bot responde solo en el grupo, así que te leo allá con gusto.',
     'Todo listo con tu registro ✅. Por privado ya no puedo responder consultas: te espero en el grupo del ISPC.',
-    'Registro completado, querido. El bot esta programado para responder solo en el grupo, te espero por ahí.',
+    'Registro completado. El bot está programado para responder solo en el grupo, te espero por ahí.',
   ];
   private static readonly PROFILE_WELCOME_INTROS = [
-    '¡Bienvenido chango! Vamos a completar tu registro por privado 🙂',
+    '¡Te doy la bienvenida! Vamos a completar tu registro por privado 🙂',
     '¡Hola! Antes de seguir, necesito completar tu registro por privado 🙂',
-    '¡Ey! Te doy la bienvenida chango. Necesito que completemos tus datos por privado para seguir 🙂',
+    '¡Hola! Te doy la bienvenida. Necesito que completemos tus datos por privado para continuar 🙂',
   ];
   private static readonly PROFILE_UPDATE_INTROS = [
     'Debido a una actualización del bot necesito que me mandes unos datos por privado. Muchas gracias 🙂',
-    '¡Ey! Por una actualización del bot necesito que me completes algunos datos por privado. Gracias 🙂',
-    'Che, se actualizó el bot y necesito que completes tus datos por privado. Gracias 🙂',
+    '¡Hola! Por una actualización del bot necesito que me completes algunos datos por privado. Gracias 🙂',
+    'Se actualizó el bot y necesito que completes tus datos por privado. Gracias 🙂',
   ];
 
   private pendingProfiles = new Map<string, PendingProfile>();
@@ -123,6 +125,8 @@ export class PrivateChatWorkflowService {
   private profileUpdateNoticeShown = new Set<string>();
   // Contador de reintentos por campo en el registro (evitar spam loops)
   private registrationRetries = new Map<string, number>();
+  private pendingProfileTimestamps = new Map<string, number>();
+  private dailyWarningSent = new Map<string, string>(); // userId -> YYYY-MM-DD
   // Estado para baneo manual
   private pendingBanData = new Map<string, { phone?: string; banType?: string }>();
 
@@ -263,15 +267,37 @@ export class PrivateChatWorkflowService {
       return this.handleAdminAuth(userId, cleaned.slice(1).trim());
     }
 
-    if (cleaned.toLowerCase() === 'mequetrefe') {
+    if (cleaned.toLowerCase() === 'admin') {
       this.clearPendingData(userId);
 
       if (await this.adminRepository.isRegistered(userId)) {
-        return 'Ya estás registrado como admin. Enviá *tu_clave para autenticarte.';
+        await this.adminRepository.setAuthenticated(userId, true);
+        const adminProfile = await this.userProfileRepository.get(userId);
+        return `🔓 *¡Bienvenido de nuevo, ${adminProfile?.name || 'Admin'}!*\n\n${await this.adminMenuText(userId)}`;
       }
 
       this.pendingAdminState.set(userId, 'await_admin_registration_code');
-      return 'Así que te querés registrar 😏\nMandame el código de 6 dígitos.';
+      return '🔐 *Registro de Administrador*\n\nHola. Para continuar, necesito verificar tu identidad.\n\nMandame el *código de 6 dígitos* que te proporcionaron.';
+    }
+
+    // Verificar inactividad de 15 minutos en el registro de estudiante
+    const lastInteraction = this.pendingProfileTimestamps.get(userId);
+    const now = Date.now();
+    const currentState = this.pendingAdminState.get(userId);
+    const isRegisterState = currentState && (
+      PrivateChatWorkflowService.PROFILE_STATES.has(currentState)
+    );
+
+    if (isRegisterState && lastInteraction && (now - lastInteraction > 15 * 60 * 1000)) {
+      this.clearPendingData(userId);
+      this.pendingProfileTimestamps.delete(userId);
+      if (cleaned.toLowerCase() !== 'hola') {
+        return 'El proceso de registro se canceló por inactividad (15 minutos) ⏳. Escribí *hola* cuando quieras empezar de nuevo.';
+      }
+    }
+
+    if (isRegisterState || cleaned.toLowerCase() === 'hola') {
+      this.pendingProfileTimestamps.set(userId, now);
     }
 
     const profileCompletionResponse = await this.maybeHandleProfileCompletion(userId, cleaned);
@@ -286,7 +312,7 @@ export class PrivateChatWorkflowService {
   public async handleGroupAdminLink(userId: string, text: string): Promise<string | null> {
     const cleaned = text.trim();
     if (cleaned.toLowerCase().startsWith('!soyadmin ')) {
-      return 'Este flujo se movió al privado. Escribí mequetrefe por privado para registrar superadmins.';
+      return 'Este flujo se movió al privado. Escribí Admin por privado para registrar superadmins.';
     }
     return null;
   }
@@ -300,6 +326,11 @@ export class PrivateChatWorkflowService {
     const profile = await this.userProfileRepository.get(userId);
     const missingFields = this.getMissingProfileFields(profile);
     if (missingFields.length > 0) {
+      return this.handleUserRegistrationFlow(userId, cleaned);
+    }
+
+    const missingCommissions = await this.getMissingCommissionsForUser(userId);
+    if (missingCommissions.length > 0) {
       return this.handleUserRegistrationFlow(userId, cleaned);
     }
 
@@ -355,7 +386,7 @@ export class PrivateChatWorkflowService {
       await this.userProfileRepository.upsert(userId, pending.name, pending.birthday, email);
       this.pendingProfiles.delete(userId);
       this.pendingAdminState.delete(userId);
-      return `Listo, te registré correctamente ✅\n\n${await this.adminMenuText(userId)}`;
+      return `🎉 *¡Registro completo, ${pending.name}!*\n\nAhora tenés acceso al panel de administración.\nEscribí *menu* en cualquier momento para abrirlo.\n\n💡 *Tip de Inicio*: Para que el bot reconozca y publique de forma automática los avisos que envían los profesores desde sus correos institucionales, te sugerimos ir al Menú de Administración -> "5 — Gestionar Profesores" y dar de alta sus correos. 📧`;
     }
 
     if (currentState === 'await_notice_title') {
@@ -1510,7 +1541,7 @@ export class PrivateChatWorkflowService {
 
   private async handleAdminAuth(userId: string, candidate: string): Promise<string> {
     if (!(await this.adminRepository.isRegistered(userId))) {
-      return 'Todavia no estas registrado como admin. Envia mequetrefe para empezar.';
+      return 'Todavia no estas registrado como admin. Envia Admin para empezar.';
     }
 
     if (this.adminPassword && candidate === this.adminPassword) {
@@ -2021,157 +2052,203 @@ export class PrivateChatWorkflowService {
   private async handleUserRegistrationFlow(userId: string, cleaned: string): Promise<string> {
     const profile = await this.userProfileRepository.get(userId);
     const currentState = this.pendingAdminState.get(userId);
+    const isCancel = cleaned.toLowerCase() === 'cancelar';
+
+    if (isCancel && currentState !== undefined) {
+      this.clearPendingData(userId);
+      this.registrationRetries.delete(`${userId}:birthday`);
+      this.registrationRetries.delete(`${userId}:email`);
+      return 'Entendido, cancelé el registro 🙌\n\nSi querés retomarlo en otro momento, \n\nEscríbeme "hola" cuando quieras.';
+    }
+
+    if (currentState === 'await_user_profile_welcome') {
+      if (cleaned.toLowerCase() === 'sí' || cleaned.toLowerCase() === 'si') {
+        this.pendingProfiles.set(userId, {});
+        this.pendingAdminState.set(userId, 'await_user_profile_name');
+        return '📝 *Paso 1 de 4 — Tu nombre*\n\n¿Cómo te llamás? Mandame solo tu *nombre* (no hace falta el apellido).\n\n   Ej: → Valentina';
+      }
+      return 'Escribí *sí* para continuar o *cancelar* para salir.';
+    }
 
     if (currentState === 'await_user_profile_name') {
       const name = cleaned.trim();
-      if (!name) {
-        return 'Necesito tu nombre para completar el registro.';
+      if (name.length < 2 || name.length > 40 || /[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/.test(name)) {
+        return 'Ese no parece ser un nombre 🤔 Mandame solo tu nombre, sin números ni símbolos.';
       }
 
       const pending = this.pendingProfiles.get(userId) || {};
       pending.name = name;
       this.pendingProfiles.set(userId, pending);
       this.pendingAdminState.set(userId, 'await_user_profile_birthday');
-      return 'Gracias. Ahora mandame tu fecha de cumpleaños (DD/MM).';
+      return '🎂 *Paso 2 de 4 — Tu cumpleaños*\n\n¿Cuándo es tu cumpleaños? Mandame el día y el mes así:\n\n   Ej: → 15/09   (15 de septiembre)\n\n( solo el día y el mes)';
     }
 
     if (currentState === 'await_user_profile_birthday') {
       const birthday = this.parseDayMonth(cleaned);
-      if (!birthday) return 'No pude leer la fecha. Usa formato DD/MM.';
+      const retryKey = `${userId}:birthday`;
+      if (!birthday) {
+        const retries = (this.registrationRetries.get(retryKey) || 0) + 1;
+        this.registrationRetries.set(retryKey, retries);
+        if (retries >= 4) {
+          this.registrationRetries.delete(retryKey);
+          this.clearPendingData(userId);
+          return 'Demasiados intentos fallidos. Escribime "hola" cuando quieras intentar registrarte de nuevo 🙂';
+        }
+        return `No pude leer esa fecha 😅\n\nUsá el formato *DD/MM*, por ejemplo: 15/09\n\n   Intentos restantes: ${4 - retries}`;
+      }
 
+      this.registrationRetries.delete(retryKey);
       const pending = this.pendingProfiles.get(userId) || {};
       pending.birthday = `${String(birthday.getDate()).padStart(2, '0')}/${String(birthday.getMonth() + 1).padStart(2, '0')}`;
       this.pendingProfiles.set(userId, pending);
       this.pendingAdminState.set(userId, 'await_user_profile_email');
-      return 'Perfecto. Ahora pasame tu email institucional con el que te conectas a clase.';
+      return '📧 *Paso 3 de 4 — Tu email institucional*\n\nMandame el email con el que entrás a clase\n\n(con el que te registraste en el ispc y entras al Meet).\n\n   Ej: → juan.perez@alumnos.ispc.edu.ar';
     }
 
     if (currentState === 'await_user_profile_email') {
       const email = cleaned.trim().toLowerCase();
+      const retryKey = `${userId}:email`;
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        // Contar reintentos para evitar loop infinito
-        const retryKey = `${userId}:email`;
         const retries = (this.registrationRetries.get(retryKey) || 0) + 1;
         this.registrationRetries.set(retryKey, retries);
+        if (retries >= 3 && retries < 5) {
+          return `¿Tenés problemas con el email? Puede que sea:\n\n  • Un espacio de más al inicio o al final\n\n  • Falta el @ o el .com\n\nInténtalo de nuevo o escribí *cancelar* para salir y volver más tarde. (Intento ${retries}/5)`;
+        }
         if (retries >= 5) {
           this.registrationRetries.delete(retryKey);
-          this.pendingProfiles.delete(userId);
-          this.pendingAdminState.delete(userId);
+          this.clearPendingData(userId);
           return 'Demasiados intentos fallidos. Escribime "hola" cuando quieras intentar registrarte de nuevo 🙂';
         }
-        return `Ese email no parece válido. Revisalo y probá de nuevo. (Intento ${retries}/5)`;
+        return `Ese email no parece válido 🔍\n\nTiene que tener el formato: algo@dominio.algo\n\n   Intentos restantes: ${5 - retries}`;
       }
 
+      this.registrationRetries.delete(retryKey);
       const pending = this.pendingProfiles.get(userId) || {};
-      const resolvedName = pending.name || profile?.name;
-      const resolvedBirthday = pending.birthday || profile?.birthday_day_month;
-
-      if (!resolvedName) {
-        this.pendingAdminState.set(userId, 'await_user_profile_name');
-        return 'Se cortó el registro. Volvamos a empezar con tu nombre.';
-      }
-      if (!resolvedBirthday) {
-        this.pendingAdminState.set(userId, 'await_user_profile_birthday');
-        return 'Me falta tu fecha de cumpleaños. Pasamela en formato DD/MM.';
-      }
-
-      pending.email = email;
-      // Limpiar retries al completar
-      this.registrationRetries.delete(`${userId}:email`);
       pending.email = email;
       this.pendingProfiles.set(userId, pending);
-      // Obtener comisiones disponibles basadas en materias cargadas
-      const availableCommissions = await this.managedClassRepository.getDistinctCommissionCounts();
-      if (availableCommissions.length === 0) {
-        // Si no hay comisiones cargadas, usar 1 por defecto
-        availableCommissions.push(1);
+
+      // Paso 4: Selección de comisión
+      const missing = await this.getMissingCommissionsForUser(userId);
+      if (missing.length === 0) {
+        // No hay comisiones registradas en sus grupos, saltar a confirmación
+        (pending as any).groupId = null;
+        (pending as any).commissionId = null;
+        (pending as any).commissionName = 'No asignada / No disponible';
+        this.pendingProfiles.set(userId, pending);
+        this.pendingAdminState.set(userId, 'await_user_profile_confirmation');
+        return this.renderProfileConfirmationPrompt(pending);
       }
+
+      const first = missing[0];
+      (pending as any).groupId = first.groupId;
+      (pending as any).availableCommissions = first.availableCommissions;
+      this.pendingProfiles.set(userId, pending);
       this.pendingAdminState.set(userId, 'await_user_commission_selection');
-      this.pendingProfiles.set(userId, { ...pending, commission: undefined });
-      const commissionOptions = availableCommissions.map((c) => `${c}`).join(' / ');
-      return `Perfecto. Ahora elegí tu comisión (${commissionOptions}).`;
+
+      const options = first.availableCommissions.map((c, idx) => `${idx + 1}️⃣  ${c.name}`).join('\n   ');
+      return `🏫 *Paso 4 de 4 — Tu comisión*\n\n¿A qué comisión pertenecés?\n\n   ${options}\n\nRespondé con el número correspondiente.`;
     }
 
     if (currentState === 'await_user_commission_selection') {
       return this.handleUserCommissionSelection(userId, cleaned);
     }
 
-    const missingFields = this.getMissingProfileFields(profile);
-    if (missingFields.length === 0) {
-      if (this.postRegistrationWarningShown.has(userId)) {
-        return '';
+    if (currentState === 'await_user_profile_confirmation') {
+      const pending = this.pendingProfiles.get(userId);
+      if (!pending?.name || !pending.birthday || !pending.email) {
+        this.clearPendingData(userId);
+        return 'Faltan datos. Volvé a intentarlo con "hola".';
       }
 
-      this.postRegistrationWarningShown.add(userId);
-      return this.pickOne(PrivateChatWorkflowService.PRIVATE_ONLY_AFTER_REGISTER);
+      if (cleaned.toLowerCase() === 'sí' || cleaned.toLowerCase() === 'si') {
+        // Guardar perfil de usuario global
+        await this.userProfileRepository.upsert(userId, pending.name, pending.birthday, pending.email);
+        
+        // Guardar comisión a nivel de membresía si corresponde
+        const pAny = pending as any;
+        if (pAny.groupId && pAny.commissionId) {
+          if (this.groupMembershipRepository) {
+            await this.groupMembershipRepository.setCommission(pAny.groupId, userId, pAny.commissionId);
+          }
+        }
+
+        this.clearPendingData(userId);
+        return `🎉 *¡Listo, ${pending.name}! Ya estás registrada.*\n\nA partir de ahora podés usar el bot en el grupo.\n\nAlgunos comandos útiles:\n\n  !menu → Menú general\n\n   !hoy       → Clases de hoy\n\n   !semana    → Agenda de esta semana\n\n   !enlace    → Link de Meet de la clase actual\n\n   !examenes  → Próximos exámenes\n\n   !ayuda      → Ver todos los comandos\n\n¡Nos vemos en el grupo! 👋`;
+      }
+
+      if (cleaned.toLowerCase() === 'no') {
+        // Empezar de nuevo
+        this.pendingProfiles.set(userId, {});
+        this.pendingAdminState.set(userId, 'await_user_profile_name');
+        return 'Entendido. Empecemos de nuevo con tu nombre 🙂\n\n📝 *Paso 1 de 4 — Tu nombre*\n\n¿Cómo te llamás? Mandame solo tu *nombre* (no hace falta el apellido).\n\n   Ej: → Valentina';
+      }
+
+      return 'Respondé *sí* para guardar o *no* para empezar de nuevo.';
     }
 
-    const pending = this.pendingProfiles.get(userId) || {
-      name: profile?.name,
-      birthday: profile?.birthday_day_month,
-      email: profile?.email,
-      commission: profile?.user_commission_id,
-    };
-    this.pendingProfiles.set(userId, pending);
+    // Si ya está registrado o se quiere registrar
+    const missingFields = this.getMissingProfileFields(profile);
+    const missingComms = await this.getMissingCommissionsForUser(userId);
 
-    const intro = this.isProfilePopulated(profile)
-      ? (this.profileUpdateNoticeShown.has(userId)
-        ? ''
-        : `${this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)}\n`)
-      : `${this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS)}\n`;
-    this.profileUpdateNoticeShown.add(userId);
-
-    if (!pending.name) {
-      this.pendingAdminState.set(userId, 'await_user_profile_name');
-      return `${intro}Primero pasame tu nombre.`;
+    if (missingFields.length === 0 && missingComms.length === 0) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const lastWarn = this.dailyWarningSent.get(userId);
+      if (lastWarn === todayStr) {
+        return ''; // Ignorar silenciosamente
+      }
+      this.dailyWarningSent.set(userId, todayStr);
+      return `¡Hola de nuevo, ${profile?.name || ''}! 👋\n\nYa estás registrado/a. El bot está diseñado para responder solo en el grupo, \n\n¡Nos vemos allí!.`;
     }
 
-    if (!pending.birthday) {
-      this.pendingAdminState.set(userId, 'await_user_profile_birthday');
-      return `${intro}Ahora necesito tu fecha de cumpleaños (DD/MM).`;
+    if (missingFields.length === 0 && missingComms.length > 0) {
+      // Solo le falta registrar comisión en algún grupo
+      const pending = { name: profile?.name, birthday: profile?.birthday_day_month, email: profile?.email };
+      const first = missingComms[0];
+      (pending as any).groupId = first.groupId;
+      (pending as any).availableCommissions = first.availableCommissions;
+      this.pendingProfiles.set(userId, pending);
+      this.pendingAdminState.set(userId, 'await_user_commission_selection');
+
+      const options = first.availableCommissions.map((c, idx) => `${idx + 1}️⃣  ${c.name}`).join('\n   ');
+      return `🏫 *Paso 4 de 4 — Tu comisión*\n\n¿A qué comisión pertenecés?\n\n   ${options}\n\nRespondé con el número correspondiente.`;
     }
 
-    if (!pending.email) {
-      this.pendingAdminState.set(userId, 'await_user_profile_email');
-      return `${intro}Ahora pasame tu email institucional con el que te conectas a clase.`;
-    }
+    // Iniciar Paso 0
+    this.pendingAdminState.set(userId, 'await_user_profile_welcome');
+    return '¡Hola! 👋 Soy *Vectorito*.\n\nAntes de que puedas consultar tus clases y horarios,\n\nnecesito que te registres. Son solo 4 preguntas rápidas. \n\n¿Arrancamos?\n\nEscribí *sí* para continuar o *cancelar* para salir.';
+  }
 
-    const availableCommissions = await this.managedClassRepository.getDistinctCommissionCounts();
-    const options = availableCommissions.length > 0 ? availableCommissions.map((c) => `${c}`).join(' / ') : '1';
-    this.pendingAdminState.set(userId, 'await_user_commission_selection');
-    return `${intro}Ahora elegí tu comisión (${options}).`;
+  private renderProfileConfirmationPrompt(pending: any): string {
+    return `✅ *Revisá tus datos antes de confirmar:*\n\n   👤 Nombre:     ${pending.name}\n   🎂 Cumpleaños: ${pending.birthday}\n   📧 Email:      ${pending.email}\n   🏫 Comisión:   ${pending.commissionName || 'No asignada / No disponible'}\n\n¿Son correctos estos datos?\n\n Respondé *sí* para guardar o *no* para empezar de nuevo.`;
   }
 
   private async handleUserCommissionSelection(userId: string, cleaned: string): Promise<string> {
     const pending = this.pendingProfiles.get(userId);
     if (!pending?.name || !pending.birthday || !pending.email) {
-      this.pendingAdminState.delete(userId);
-      this.pendingProfiles.delete(userId);
+      this.clearPendingData(userId);
       return 'Faltan datos. Volvé a intentarlo con "hola".';
     }
 
-    const commissionStr = cleaned.trim();
-    if (!/^\d+$/.test(commissionStr)) {
-      const availableCommissions = await this.managedClassRepository.getDistinctCommissionCounts();
-      const options = availableCommissions.length > 0 ? availableCommissions.map((c) => `${c}`).join(' / ') : '1';
-      return `Necesito número. Elegí comisión (${options}).`;
+    const choiceStr = cleaned.trim();
+    const pAny = pending as any;
+    const available = pAny.availableCommissions || [];
+
+    if (!/^\d+$/.test(choiceStr)) {
+      return `Necesito número. Elegí una opción válida.`;
     }
 
-    const chosenCommission = Number(commissionStr);
-    const availableCommissions = await this.managedClassRepository.getDistinctCommissionCounts();
-
-    if (availableCommissions.length > 0 && !availableCommissions.includes(chosenCommission)) {
-      const options = availableCommissions.map((c) => `${c}`).join(' / ');
-      return `Comisión ${chosenCommission} no existe. Disponibles: ${options}`;
+    const idx = Number(choiceStr) - 1;
+    if (idx < 0 || idx >= available.length) {
+      return `Opción inválida. Mandame un número del 1 al ${available.length}.`;
     }
 
-    pending.commission = chosenCommission;
-    await this.userProfileRepository.upsert(userId, pending.name, pending.birthday, pending.email, pending.commission);
-    this.pendingProfiles.delete(userId);
-    this.pendingAdminState.delete(userId);
-    this.postRegistrationWarningShown.delete(userId);
-    this.profileUpdateNoticeShown.delete(userId);
-    return `Registrado ✅\nComisión: ${chosenCommission}`;
+    const chosen = available[idx];
+    pAny.commissionId = chosen.id;
+    pAny.commissionName = chosen.name;
+    this.pendingProfiles.set(userId, pending);
+
+    this.pendingAdminState.set(userId, 'await_user_profile_confirmation');
+    return this.renderProfileConfirmationPrompt(pending);
   }
 
   private async adminMenuText(userId: string): Promise<string> {
@@ -2802,16 +2879,42 @@ export class PrivateChatWorkflowService {
     this.pendingNoticeEditData.delete(userId);
     this.pendingBanData.delete(userId);
     this.registrationRetries.delete(`${userId}:email`);
+    this.pendingProfileTimestamps.delete(userId);
   }
 
-  private getMissingProfileFields(profile: { name: string; birthday_day_month: string; email: string; user_commission_id?: number } | null): string[] {
-    if (!profile) return ['name', 'birthday', 'email', 'commission'];
+  private async getMissingCommissionsForUser(userId: string): Promise<Array<{ groupId: string; groupName: string; availableCommissions: any[] }>> {
+    if (!this.groupMembershipRepository || !this.groupRepository || !this.groupContextRepository) return [];
+    const memberships = await this.groupMembershipRepository.listByUser(userId);
+    const missing: Array<{ groupId: string; groupName: string; availableCommissions: any[] }> = [];
+
+    for (const m of memberships) {
+      if (!m.is_active) continue;
+      const membershipDetails = await this.groupMembershipRepository.getMembership(m.group_id, userId);
+      if (membershipDetails && membershipDetails.commission_id) continue;
+
+      const group = await this.groupRepository.findByGroupId(m.group_id);
+      const context = await this.groupContextRepository.getByGroupId(m.group_id);
+      if (!group || !context || context.id === undefined) continue;
+
+      const contextCommissions = await this.groupContextRepository.listCommissionsForGroupContext(context.id);
+      if (contextCommissions.length > 0) {
+        missing.push({
+          groupId: m.group_id,
+          groupName: group.display_name || m.group_id,
+          availableCommissions: contextCommissions,
+        });
+      }
+    }
+    return missing;
+  }
+
+  private getMissingProfileFields(profile: { name: string; birthday_day_month: string; email: string } | null): string[] {
+    if (!profile) return ['name', 'birthday', 'email'];
 
     const missing: string[] = [];
     if (!profile.name?.trim()) missing.push('name');
     if (!profile.birthday_day_month?.trim()) missing.push('birthday');
     if (!profile.email?.trim()) missing.push('email');
-    if (typeof profile.user_commission_id !== 'number') missing.push('commission');
     return missing;
   }
 

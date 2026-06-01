@@ -368,6 +368,7 @@ async function bootstrap() {
     rateLimitService,
     moderationService,
     groupRepository,
+    groupMembershipRepository,
   );
 
   // Enlazar callbacks de moderación para notificaciones privadas
