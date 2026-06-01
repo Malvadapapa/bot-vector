@@ -116,7 +116,7 @@ export class EmailService {
         String(error).includes('CERT_')
       );
       if (isTlsError) {
-        console.error(`[EmailService] Fallo de conexión TLS a ${process.env.IMAP_HOST || process.env.IMAP_SERVER || 'imap.gmail.com'}:${process.env.IMAP_PORT || '993'}. Sugerencia: configurar IMAP_TLS_CA_PATH, poner IMAP_TLS_REJECT_UNAUTHORIZED=false o revisar proxy/antivirus. Detalle:`, error);
+        console.error(`[EmailService] Fallo de conexión TLS a ${process.env.IMAP_HOST || process.env.IMAP_SERVER || 'imap.gmail.com'}:${process.env.IMAP_PORT || '993'}. Sugerencia: configurar IMAP_TLS_CA_PATH, poner IMAP_TLS_REJECT_UNAUTHORIZED=false o revisar proxy/antivirus. Detalle:`, error instanceof Error ? error.message : error);
       } else {
         console.error('[EmailService] Error al obtener emails:', error);
       }
@@ -169,7 +169,7 @@ export class EmailService {
           String(error).includes('CERT_')
         );
         if (isTlsError) {
-          console.error(`[EmailService IDLE] Fallo de conexión TLS a ${process.env.IMAP_HOST || process.env.IMAP_SERVER || 'imap.gmail.com'}:${process.env.IMAP_PORT || '993'}. Sugerencia: configurar IMAP_TLS_CA_PATH, poner IMAP_TLS_REJECT_UNAUTHORIZED=false o revisar proxy/antivirus. Detalle:`, error);
+          console.error(`[EmailService IDLE] Fallo de conexión TLS a ${process.env.IMAP_HOST || process.env.IMAP_SERVER || 'imap.gmail.com'}:${process.env.IMAP_PORT || '993'}. Sugerencia: configurar IMAP_TLS_CA_PATH, poner IMAP_TLS_REJECT_UNAUTHORIZED=false o revisar proxy/antivirus. Detalle:`, error instanceof Error ? error.message : error);
         } else {
           console.error('[EmailService IDLE] Conexión caída o fallida:', error);
         }
