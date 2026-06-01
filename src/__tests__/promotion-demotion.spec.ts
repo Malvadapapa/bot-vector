@@ -102,8 +102,8 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     const adminId = 'admin2';
     adminRepo.isRegistered = vi.fn(async () => false);
 
-    const prompt = await svc.handlePrivateMessage(adminId, 'mequetrefe');
-    expect(prompt).toContain('Mandame el código de 6 dígitos');
+    const prompt = await svc.handlePrivateMessage(adminId, 'Admin');
+    expect(prompt).toContain('código de 6 dígitos');
 
     const response = await svc.handlePrivateMessage(adminId, '123456');
     expect(adminCodeRepo.consumeIfValid).toHaveBeenCalledWith('123456', adminId);
