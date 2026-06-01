@@ -13,7 +13,7 @@ import { MessageRouter } from '../../features/messages/message-router.service.js
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 import { RateLimitService } from '../../features/ai/rate-limit.service.js';
 import { UserModerationService } from '../../features/moderation/user-moderation.service.js';
-import { AdminRepository, GroupRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { AdminRepository, GroupRepository, UserProfileRepository, GroupMembershipRepository } from '../../infrastructure/persistence/db/repositories.js';
 
 const nodeRequire = createRequire(import.meta.url);
 const qrcodeTerminal = nodeRequire('qrcode-terminal');
@@ -74,6 +74,7 @@ export class VectoritoWhatsAppGateway {
     private rateLimitService: RateLimitService,
     private moderationService: UserModerationService,
     private groupRepository: GroupRepository,
+    private groupMembershipRepository: GroupMembershipRepository,
   ) {
     this.installConsoleNoiseFilter();
   }
@@ -264,6 +265,7 @@ export class VectoritoWhatsAppGateway {
 
             // Dynamic display_name update for active groups if currently generic
             if (isGroup && isActiveGroup) {
+              await this.groupMembershipRepository.addMembership(chatId, senderJid);
               const existing = await this.groupRepository.findByGroupId(chatId);
               if (existing) {
                 if (!existing.display_name || existing.display_name.startsWith('Grupo ')) {
@@ -327,7 +329,19 @@ export class VectoritoWhatsAppGateway {
 
                 // Informar al grupo que fue registrado y que los super-admins fueron notificados
                 try {
-                  await this.sendTextMessage(chatId, 'Gracias. Este grupo fue registrado y los super-admins fueron notificados para completar la configuración. Un admin puede ejecutar !config-grupo para iniciar la configuración ahora.', undefined, false);
+                  const welcomeMsg = [
+                    '👋 ¡Hola a todos! Soy Vectorito, el asistente académico diseñado para ayudarlos en el cursado de su tecnicatura 😌.',
+                    '',
+                    'Puedo avisarles cuándo tienen clases, mostrarles los enlaces de Meet,',
+                    'recordarles exámenes y mantenerlos al día de los avisos institucionales.',
+                    '',
+                    '📌Para empezar, cada alumno tiene que registrarse una sola vez.',
+                    '   Escribime por privado un: *hola*',
+                    '',
+                    '⚙️ Si sos Admin del grupo y tenés los permisos,',
+                    ' Envía mensaje con *!config-grupo* para configurar las materias y horarios.'
+                  ].join('\n');
+                  await this.sendTextMessage(chatId, welcomeMsg, undefined, false);
                 } catch {}
 
                 continue;
@@ -798,7 +812,7 @@ export class VectoritoWhatsAppGateway {
     try {
       const action = String(update?.action || '').toLowerCase();
       const groupId = String(update?.id || '');
-      if (!groupId || action !== 'add') return;
+      if (!groupId || (action !== 'add' && action !== 'remove' && action !== 'leave')) return;
 
       const botId = String(this.whatsappSocket?.user?.id || '');
       const botPhone = this.normalizePhoneJid(botId);
@@ -808,7 +822,30 @@ export class VectoritoWhatsAppGateway {
         ? update.participants.map((p: any) => String(p))
         : [];
       const botWasAdded = participants.some((jid) => this.normalizePhoneJid(jid) === botPhone);
-      if (!botWasAdded) return;
+
+      if (!botWasAdded) {
+        // Participante estándar agregado o quitado en un grupo activo
+        const isActive = await this.groupRepository.isActive(groupId);
+        if (isActive) {
+          if (action === 'add') {
+            for (const p of participants) {
+              const userJid = p.split('@')[0] + '@s.whatsapp.net';
+              await this.groupMembershipRepository.addMembership(groupId, userJid);
+              console.log(`[Gateway] Membresía registrada para ${userJid} en grupo activo ${groupId}`);
+            }
+          } else if (action === 'remove' || action === 'leave') {
+            for (const p of participants) {
+              const userJid = p.split('@')[0] + '@s.whatsapp.net';
+              await this.groupMembershipRepository.removeMembership(groupId, userJid);
+              console.log(`[Gateway] Membresía removida para ${userJid} del grupo ${groupId}`);
+            }
+          }
+        }
+        return;
+      }
+
+      // Si el bot fue agregado al grupo
+      if (action !== 'add') return;
 
       const isActive = await this.groupRepository.isActive(groupId);
       if (isActive) {
@@ -821,7 +858,7 @@ export class VectoritoWhatsAppGateway {
       if (!actorIsAdmin) {
         await this.handleUnauthorizedGroup(groupId);
       } else {
-        // Admin agregó el bot: registrar el grupo automáticamente en SQLite.
+        // Admin agregó el bot: registrar el grupo automáticamente en SQLite y enviar bienvenida.
         let groupName = `Grupo ${groupId}`;
         try {
           if (this.whatsappSocket && typeof this.whatsappSocket.groupMetadata === 'function') {
@@ -838,6 +875,23 @@ export class VectoritoWhatsAppGateway {
           await this.groupRepository.updateDisplayName(groupId, groupName);
         }
         console.log(`✅ Bot agregado al nuevo grupo por admin: ${groupId}`);
+
+        // Enviar mensaje de bienvenida Flujo 1
+        try {
+          const welcomeMsg = [
+            '👋 ¡Hola a todos! Soy Vectorito, el asistente académico diseñado para ayudarlos en el cursado de su tecnicatura 😌.',
+            '',
+            'Puedo avisarles cuándo tienen clases, mostrarles los enlaces de Meet,',
+            'recordarles exámenes y mantenerlos al día de los avisos institucionales.',
+            '',
+            '📌Para empezar, cada alumno tiene que registrarse una sola vez.',
+            '   Escribime por privado un: *hola*',
+            '',
+            '⚙️ Si sos Admin del grupo y tenés los permisos,',
+            ' Envía mensaje con *!config-grupo* para configurar las materias y horarios.'
+          ].join('\n');
+          await this.sendTextMessage(groupId, welcomeMsg, undefined, false);
+        } catch {}
       }
     } catch (error) {
       const msg = (error as any)?.message || 'error desconocido';
