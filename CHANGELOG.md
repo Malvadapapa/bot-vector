@@ -2,6 +2,27 @@
 
 Todas las modificaciones notables de este proyecto serán documentadas en este archivo.
 
+## [2.1.0-alpha.2] - 2026-06-01
+
+### Agregado
+- **Comisiones Independientes por Grupo**: Se añadió la columna `commission_id` a la tabla `group_memberships` (migración versión 27) y se adaptaron los repositorios para guardar la comisión de los estudiantes por cada grupo de forma autónoma.
+- **Flujo Conversacional de Onboarding de Estudiantes**: Rediseño completo en fases estructuradas:
+  - *Paso 0*: Bienvenida formal con opciones explícitas (`sí`/`cancelar`).
+  - *Paso 1*: Validación estricta del nombre (2 a 40 caracteres, sin números ni caracteres especiales).
+  - *Paso 2*: Cumpleaños (`DD/MM`) con límite de **4 intentos**.
+  - *Paso 3*: Email institucional con límite de **5 intentos** y recomendación de soporte al 3er intento fallido.
+  - *Paso 4*: Selección dinámica de comisiones del grupo.
+  - *Paso 4.5*: Resumen final de confirmación (`sí`/`no`).
+- **Control de Inactividad de Onboarding**: Límite de **15 minutos** de inactividad para descartar un registro incompleto y permitir reiniciarlo.
+- **Auto-salida de Grupos sin Administradores**: El gateway de WhatsApp ahora abandona automáticamente los grupos en los que no hay ningún administrador registrado para resguardar la seguridad y operatividad.
+- **Población Automática de Membresías**: Se automatizó la creación de membresías al recibir cualquier mensaje entrante o al añadir participantes.
+- **Configuración de TLS para Email (IMAP)**: Soporte para ignorar la verificación TLS auto-firmada usando `IMAP_TLS_REJECT_UNAUTHORIZED=false` en entornos locales (Windows/Antivirus).
+
+### Modificado
+- **Acceso directo de Super-Admin**: Reemplazo de la palabra clave legacy `'mequetrefe'` por el término formal `'Admin'`. Ahora enviar `Admin` en chat privado a un administrador ya registrado despliega directamente el menú de administración sin requerir contraseña.
+- **Depuración de Tono Conversacional**: Remoción integral de modismos excesivamente informales (`chango`, `máquina`, `che`, `querido`) y bromas internas de baneo, adoptando un tono profesional y académico (polite & professional) alineado al entorno del ISPC.
+- **Simplificación de Errores de Conexión TLS**: Ajuste en `email.service.ts` para que, en caso de fallas de conexión TLS conocidas, muestre solo el mensaje simplificado de error en lugar del stack trace multilínea completo para evitar spam masivo en la consola.
+
 ## [2.1.0-alpha.1] - 2026-05-29
 
 ### Refactorización Arquitectónica: Vertical Slicing + Screaming Architecture
