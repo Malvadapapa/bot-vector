@@ -650,14 +650,23 @@ export class GroupMembershipRepository {
     return rows.map((r) => ({ group_id: String(r.group_id), role: String(r.role), is_active: Number(r.is_active) === 1 }));
   }
 
-  async getMembership(groupId: string, userId: string): Promise<{ user_id: string; role: string; is_active: boolean } | null> {
-    const row = await get<any>(this.db, 'SELECT user_id, role, is_active FROM group_memberships WHERE group_id = ? AND user_id = ? LIMIT 1', [groupId, userId]);
+  async getMembership(groupId: string, userId: string): Promise<{ user_id: string; role: string; is_active: boolean; commission_id?: number | null } | null> {
+    const row = await get<any>(this.db, 'SELECT user_id, role, is_active, commission_id FROM group_memberships WHERE group_id = ? AND user_id = ? LIMIT 1', [groupId, userId]);
     if (!row) return null;
-    return { user_id: String(row.user_id), role: String(row.role), is_active: Number(row.is_active) === 1 };
+    return {
+      user_id: String(row.user_id),
+      role: String(row.role),
+      is_active: Number(row.is_active) === 1,
+      commission_id: row.commission_id !== undefined && row.commission_id !== null ? Number(row.commission_id) : null
+    };
   }
 
   async setRole(groupId: string, userId: string, role: string): Promise<void> {
     await run(this.db, 'UPDATE group_memberships SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ? AND user_id = ?', [role, groupId, userId]);
+  }
+
+  async setCommission(groupId: string, userId: string, commissionId: number | null): Promise<void> {
+    await run(this.db, 'UPDATE group_memberships SET commission_id = ?, updated_at = CURRENT_TIMESTAMP WHERE group_id = ? AND user_id = ?', [commissionId, groupId, userId]);
   }
 
   async isMember(groupId: string, userId: string): Promise<boolean> {

@@ -429,6 +429,13 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE institutional_notices ADD COLUMN published_at TEXT`
     ]
   },
+  {
+    version: 27,
+    description: 'Add commission_id to group_memberships for per-group commission scoping',
+    sql: [
+      `ALTER TABLE group_memberships ADD COLUMN commission_id INTEGER DEFAULT NULL`
+    ]
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {
