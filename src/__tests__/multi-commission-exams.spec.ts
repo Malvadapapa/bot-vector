@@ -31,6 +31,8 @@ describe('Multi-commission config and unified exam flows', () => {
       GroupContextRepository,
       CommissionRepository,
       ClassCommissionScheduleRepository,
+      GroupRepository,
+      GroupMembershipRepository,
     } = reposModule as any;
 
     const { PrivateChatWorkflowService } = workflowModule as any;
@@ -46,6 +48,8 @@ describe('Multi-commission config and unified exam flows', () => {
     const groupContextRepo = new GroupContextRepository(db);
     const commissionRepo = new CommissionRepository(db);
     const classCommissionScheduleRepo = new ClassCommissionScheduleRepository(db);
+    const groupRepo = new GroupRepository(db);
+    const groupMembershipRepo = new GroupMembershipRepository(db);
 
     svc = new PrivateChatWorkflowService(
       userProfileRepo,
@@ -61,8 +65,8 @@ describe('Multi-commission config and unified exam flows', () => {
       groupContextRepo,
       commissionRepo,
       undefined,
-      undefined,
-      undefined,
+      groupRepo,
+      groupMembershipRepo,
       classCommissionScheduleRepo,
     );
 
@@ -171,5 +175,104 @@ describe('Multi-commission config and unified exam flows', () => {
     const created = exams.map((e: any) => e.exam).filter((ex: any) => ex.subject === 'Historia');
     expect(created.length).toBeGreaterThanOrEqual(1);
     expect(created.some((ex: any) => ex.exam_commission_id === undefined || ex.exam_commission_id === null)).toBeTruthy();
+  });
+
+  it('does not hijack active admin workflow even when admin user has missing commission', async () => {
+    const { GroupRepository, GroupMembershipRepository } = reposModule as any;
+    const groupRepo = new GroupRepository(db);
+    const groupMembershipRepo = new GroupMembershipRepository(db);
+
+    // Create group
+    await groupRepo.register('g3@g.us', 'Grupo Prueba 3');
+
+    // Create active membership for the admin user in the group without commission
+    await groupMembershipRepo.addMembership('g3@g.us', 'admin2@s.whatsapp.net', 'admin');
+
+    // Start group context configuration flow
+    const start = await svc.startGroupContextConfiguration('admin2@s.whatsapp.net', 'g3@g.us');
+    expect(start).toMatch(/Configuración del grupo/);
+
+    // Config year
+    const step2 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', '2026');
+    expect(step2).toMatch(/¿Cuántas comisiones/);
+
+    // Config commissions count
+    const step3 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', '2');
+    expect(step3).toMatch(/Registradas 2 comisiones/);
+
+    // Config subjects - should not hijack even though the admin has missing commission in g3@g.us now!
+    const step4 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Música,Arte');
+    expect(step4).toMatch(/Ingresá día y hora/);
+    expect(step4).not.toMatch(/Paso 4 de 4/);
+  });
+
+  it('correctly resolves user commission in group commands when commission is in group memberships', async () => {
+    const { GroupRepository, GroupMembershipRepository, GroupContextRepository, CommissionRepository, ManagedClassRepository, ClassCommissionScheduleRepository } = reposModule as any;
+    const groupRepo = new GroupRepository(db);
+    const groupMembershipRepo = new GroupMembershipRepository(db);
+    const groupContextRepo = new GroupContextRepository(db);
+    const commissionRepo = new CommissionRepository(db);
+    const classRepo = new ManagedClassRepository(db);
+    const scheduleRepo = new ClassCommissionScheduleRepository(db);
+
+    const groupId = 'g4@g.us';
+    const userId = 'user_test@s.whatsapp.net';
+    await groupRepo.register(groupId, 'Grupo Test 4');
+    
+    // Register commission '1' in DB and map it to group context
+    const commissionId = await commissionRepo.createOrGet('1', 2026);
+    const groupContextId = await groupContextRepo.upsert(groupId, 2026, null, '2026 - 1,2', 'admin2');
+    await groupContextRepo.setCommissionsForGroupContext(groupContextId, [commissionId]);
+
+    // Save membership with commission_id = commissionId
+    await groupMembershipRepo.addMembership(groupId, userId, 'member');
+    await groupMembershipRepo.setCommission(groupId, userId, commissionId);
+
+    // Create a class and schedule mapped to commission '1'
+    const classId = await classRepo.create({
+      subject: 'Matemática Especial',
+      schedule_day: 'Lunes',
+      schedule_time: '08:30',
+      meet_link: 'https://meet.special',
+      notifications_enabled: 1,
+      commission_count: 2,
+      group_id: groupId
+    });
+    await scheduleRepo.create({
+      managed_class_id: classId,
+      commission_id: commissionId,
+      schedule_day: 'Lunes',
+      schedule_time: '08:30',
+      meet_link: 'https://meet.special'
+    });
+
+    // Instantiate AcademicCalendarService with the repos
+    const { AcademicCalendarService } = await import('../features/academic-calendar/academic-calendar.service.js');
+    const userProfileRepo = { get: vi.fn().mockResolvedValue({ user_commission_id: null }) }; // no profile commission, must use membership!
+    const reminderRepo = { listByDateRange: vi.fn().mockResolvedValue([]) };
+
+    const calendarSvc = new AcademicCalendarService(
+      {
+        getValidNotices: vi.fn().mockResolvedValue([]),
+        getUpcomingExams: vi.fn().mockResolvedValue([]),
+      } as any, // dynamicMessageService
+      reminderRepo as any,
+      classRepo,
+      {} as any, // teacherRepo
+      userProfileRepo as any,
+      scheduleRepo,
+      commissionRepo,
+      groupContextRepo,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      groupMembershipRepo
+    );
+
+    // Run formatWeekEvents via !semana handling
+    const result = await calendarSvc.handleCommand(userId, '!semana', undefined, false, groupId, false, false);
+    expect(result).toContain('Matemática Especial');
   });
 });

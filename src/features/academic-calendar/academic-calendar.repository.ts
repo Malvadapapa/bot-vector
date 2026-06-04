@@ -241,6 +241,11 @@ export class ManagedExamRepository {
       values
     );
   }
+
+  async deleteAllByGroupId(groupId: string): Promise<number> {
+    const result = await run(this.db, 'DELETE FROM managed_exams WHERE group_id = ?', [groupId]);
+    return result.changes;
+  }
 }
 
 export class ManagedClassRepository {
@@ -342,6 +347,11 @@ export class ManagedClassRepository {
     return result.changes > 0;
   }
 
+  async deleteAllByGroupId(groupId: string): Promise<number> {
+    const result = await run(this.db, 'DELETE FROM managed_classes WHERE group_id = ?', [groupId]);
+    return result.changes;
+  }
+
   async getDistinctCommissionCounts(): Promise<number[]> {
     const rows = await all<any>(
       this.db,
@@ -396,6 +406,11 @@ export class ManagedTeacherRepository {
 
   async delete(teacherId: number): Promise<void> {
     await run(this.db, `DELETE FROM managed_teachers WHERE id = ?`, [teacherId]);
+  }
+
+  async deleteAllByGroupId(groupId: string): Promise<number> {
+    const result = await run(this.db, 'DELETE FROM managed_teachers WHERE group_id = ?', [groupId]);
+    return result.changes;
   }
 
   async getById(teacherId: number): Promise<ManagedTeacher | null> {

@@ -32,6 +32,7 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     };
 
     groupRepo = {
+      findAll: vi.fn(async () => [{ group_id: 'group1', display_name: 'G', entry_year: 2024, is_active: true }]),
       findByGroupId: vi.fn(async (gid: string) => ({ group_id: gid, display_name: 'G', entry_year: 2024, is_active: true })),
       updateEntryYear: vi.fn(async () => null),
       setActive: vi.fn(async () => null),
@@ -62,12 +63,12 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     const adminId = 'admin1';
     // open admin-grupos
     await svc.handlePrivateMessage(adminId, '!admin-grupos');
-    // enter super admin menu option 2 (select group)
-    await svc.handlePrivateMessage(adminId, '2');
-    // provide group id
-    const menu = await svc.handlePrivateMessage(adminId, 'group1');
+    // list groups
+    await svc.handlePrivateMessage(adminId, '1');
+    // select first group by list number
+    const menu = await svc.handlePrivateMessage(adminId, '1');
     expect(menu).toContain('G');
-    expect(menu).toContain('Cohorte: 2024');
+    expect(menu).toContain('• *Cohorte:* 2024');
     expect(menu).toContain('group1');
 
     // choose promote option
@@ -83,10 +84,10 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
   it('demotes an existing group admin', async () => {
     const adminId = 'admin1';
     await svc.handlePrivateMessage(adminId, '!admin-grupos');
-    await svc.handlePrivateMessage(adminId, '2');
-    const menu = await svc.handlePrivateMessage(adminId, 'group1');
+    await svc.handlePrivateMessage(adminId, '1'); // list groups
+    const menu = await svc.handlePrivateMessage(adminId, '1'); // select first group
     expect(menu).toContain('G');
-    expect(menu).toContain('Cohorte: 2024');
+    expect(menu).toContain('• *Cohorte:* 2024');
     expect(menu).toContain('group1');
 
     // choose demote option

@@ -72,7 +72,7 @@ describe('Super-admin selection by number', () => {
     // select first group by number
     const manageRes = await svc.handlePrivateMessage('sa1', '1');
     expect(manageRes).toContain('Grupo Uno');
-    expect(manageRes).toContain('Cohorte: 2024');
+    expect(manageRes).toContain('• *Cohorte:* 2024');
     expect(manageRes).toContain('g1@g.us');
   });
 

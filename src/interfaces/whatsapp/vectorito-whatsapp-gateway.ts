@@ -378,7 +378,26 @@ export class VectoritoWhatsAppGateway {
             const parts = privateReply.split('|||SPLIT|||');
             for (const part of parts) {
               if (part.trim()) {
-                await this.sendTextMessage(chatId, part, senderJid, true);
+                let textToSend = part;
+                const match = textToSend.match(/\[BOT_LEAVE_GROUP::([^\]]+)\]/);
+                let groupIdToLeave: string | null = null;
+                if (match) {
+                  groupIdToLeave = match[1];
+                  textToSend = textToSend.replace(/\[BOT_LEAVE_GROUP::[^\]]+\]/, '').trim();
+                }
+
+                if (textToSend) {
+                  await this.sendTextMessage(chatId, textToSend, senderJid, true);
+                }
+
+                if (groupIdToLeave) {
+                  console.log(`[Gateway] Saliendo del grupo por comando de eliminación: ${groupIdToLeave}`);
+                  if (this.whatsappSocket?.groupLeave) {
+                    this.whatsappSocket.groupLeave(groupIdToLeave).catch((err: any) => {
+                      console.error(`Error al intentar salir del grupo ${groupIdToLeave}:`, err);
+                    });
+                  }
+                }
               }
             }
             continue;
@@ -403,11 +422,9 @@ export class VectoritoWhatsAppGateway {
           const isRegisteredUser = this.isProfilePopulated(senderProfile);
           const isNewUser = !this.isProfilePopulated(senderProfile);
 
-          const cleanForApproval = this.stripBotMentions(normalizedGroupText.trim())
-            .replace(/^!/, '')
-            .trim();
+          const cleanForApproval = this.stripBotMentions(normalizedGroupText.trim()).trim();
 
-          if (isAdmin && /^(si|sí|aprobado)$/i.test(cleanForApproval)) {
+          if (isAdmin && /^\!(si|sí|aprobado)$/i.test(cleanForApproval)) {
             const approval = await this.rateLimitService.approveNextPendingRequest(new Date());
             if (!approval) {
               await this.sendTextMessage(chatId, this.pickOne(NO_PENDING_APPROVAL_MESSAGES), senderJid, false);

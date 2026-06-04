@@ -52,7 +52,7 @@ describe('PrivateChatWorkflowService - cohort emails', () => {
   it('creates a cohort and adds an email, then lists it', async () => {
     const adminId = 'admin1';
     await svc.handlePrivateMessage(adminId, '!admin-grupos');
-    await svc.handlePrivateMessage(adminId, '5'); // cohort menu
+    await svc.handlePrivateMessage(adminId, '2'); // cohort menu (was 5)
     await svc.handlePrivateMessage(adminId, '2'); // create/edit cohort
     const resYear = await svc.handlePrivateMessage(adminId, '2024');
     expect(resYear).toContain('Cohorte 2024 seleccionada');

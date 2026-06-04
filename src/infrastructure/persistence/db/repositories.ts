@@ -510,6 +510,11 @@ export class AdminRepository {
     await run(this.db, 'DELETE FROM group_admins WHERE user_id = ? AND group_id = ?', [userId, groupId]);
   }
 
+  async removeAllGroupAdmins(groupId: string): Promise<number> {
+    const result = await run(this.db, 'DELETE FROM group_admins WHERE group_id = ?', [groupId]);
+    return result.changes;
+  }
+
   async isGroupAdmin(userId: string, groupId: string): Promise<boolean> {
     const row = await get<any>(this.db, 'SELECT 1 FROM group_admins WHERE user_id = ? AND group_id = ? LIMIT 1', [userId, groupId]);
     if (row) return true;
@@ -645,9 +650,14 @@ export class GroupMembershipRepository {
     return result.changes > 0;
   }
 
-  async listByGroup(groupId: string): Promise<Array<{ user_id: string; role: string; is_active: boolean }>> {
-    const rows = await all<any>(this.db, 'SELECT user_id, role, is_active FROM group_memberships WHERE group_id = ? ORDER BY created_at ASC', [groupId]);
-    return rows.map((r) => ({ user_id: String(r.user_id), role: String(r.role), is_active: Number(r.is_active) === 1 }));
+  async listByGroup(groupId: string): Promise<Array<{ user_id: string; role: string; is_active: boolean; commission_id?: number | null }>> {
+    const rows = await all<any>(this.db, 'SELECT user_id, role, is_active, commission_id FROM group_memberships WHERE group_id = ? ORDER BY created_at ASC', [groupId]);
+    return rows.map((r) => ({
+      user_id: String(r.user_id),
+      role: String(r.role),
+      is_active: Number(r.is_active) === 1,
+      commission_id: r.commission_id !== undefined && r.commission_id !== null ? Number(r.commission_id) : null
+    }));
   }
 
   async listByUser(userId: string): Promise<Array<{ group_id: string; role: string; is_active: boolean }>> {
@@ -677,6 +687,11 @@ export class GroupMembershipRepository {
   async isMember(groupId: string, userId: string): Promise<boolean> {
     const row = await get<any>(this.db, 'SELECT 1 FROM group_memberships WHERE group_id = ? AND user_id = ? AND is_active = 1 LIMIT 1', [groupId, userId]);
     return !!row;
+  }
+
+  async deleteAllByGroupId(groupId: string): Promise<number> {
+    const result = await run(this.db, 'DELETE FROM group_memberships WHERE group_id = ?', [groupId]);
+    return result.changes;
   }
 }
 

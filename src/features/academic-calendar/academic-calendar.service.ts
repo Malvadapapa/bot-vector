@@ -19,7 +19,7 @@ import {
   CommissionRepository,
   GroupContextRepository,
 } from './academic-calendar.repository.js';
-import { UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { UserProfileRepository, GroupMembershipRepository } from '../../infrastructure/persistence/db/repositories.js';
 import { LoggingService } from '../../shared/logging/logging.service.js';
 
 const DAY_NAMES = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
@@ -188,6 +188,7 @@ export class AcademicCalendarService {
     private removeNotificationMenuService?: RemoveNotificationMenuService,
     private managedExamRepository?: ManagedExamRepository,
     private loggingService?: LoggingService,
+    private groupMembershipRepository?: GroupMembershipRepository,
   ) {
     // Inicializar servicios
     if (this.loggingService) {
@@ -554,10 +555,8 @@ export class AcademicCalendarService {
   }
 
   private async formatWeekEvents(userId: string, currentDt: Date, offsetDays: number, groupId?: string): Promise<string> {
-    const allClasses = await this.managedClassRepository.listAll();
     const notices = await this.dynamicMessageService.getValidNotices(100);
     const userCommissionId = await this.getUserCommissionId(userId, groupId);
-    const filteredClasses = this.filterClassesByCommission(allClasses, userCommissionId, Boolean(groupId));
     const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(100, groupId), userCommissionId, Boolean(groupId));
     const start = new Date(currentDt);
     start.setDate(start.getDate() + offsetDays);
@@ -584,9 +583,7 @@ export class AcademicCalendarService {
       dayDt.setDate(monday.getDate() + i);
       const dayName = DAY_NAMES[dayDt.getDay()] || 'dia';
 
-      const dayClasses = filteredClasses
-        .filter((c) => this.normalizeDayName(c.schedule_day) === this.normalizeDayName(dayName))
-        .sort((a, b) => (a.schedule_time || '').localeCompare(b.schedule_time || ''));
+      const dayClasses = await this.getClassesForWeekday(dayName, userId, groupId);
 
       const dayNotices = notices.filter((n) => this.isNoticeActiveOn(n, dayDt));
       const dayExams = exams.filter((e) => this.isSameCalendarDay(e.exam_date, dayDt));
@@ -595,7 +592,7 @@ export class AcademicCalendarService {
       // Construir lista estructurada para ordenar por hora cuando exista
       const structured: Array<{ time: string | null; text: string }> = [];
 
-      dayClasses.forEach((c) => structured.push({ time: c.schedule_time || null, text: `Clase ${c.schedule_time} ${c.subject}` }));
+      dayClasses.forEach((c) => structured.push({ time: c.hora || null, text: `Clase ${c.hora} ${c.materia}` }));
 
       dayExams.forEach((e) => {
         const time = (e.horaInicio || e.exam_time || '') as string;
@@ -871,7 +868,7 @@ export class AcademicCalendarService {
         }
       }
 
-      // En contexto grupal estricto, no debemos usar fallback global.
+      // 2) Si estamos en contexto grupal, listar schedules de todas las comisiones del grupo
       if (groupId) {
         const groupContext = this.groupContextRepository ? await this.groupContextRepository.getByGroupId(groupId) : null;
         if (groupContext && typeof groupContext.id === 'number' && this.groupContextRepository && this.classCommissionScheduleRepository) {
@@ -897,26 +894,25 @@ export class AcademicCalendarService {
             }
           }
         }
-        return [];
-      }
-
-      // No encontramos schedules específicos o no hay contexto: intentar listar schedules globales por dia
-      const globalSchedules = await this.classCommissionScheduleRepository.listByDay(dayName);
-      if (globalSchedules.length) {
-        const mapped = await Promise.all(globalSchedules.map(async (s) => {
-          const mc = await this.managedClassRepository.getById(s.managed_class_id);
-          return {
-            hora: s.schedule_time,
-            materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
-            meetLink: s.meet_link || (mc ? mc.meet_link : ''),
-          };
-        }));
-        return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+      } else {
+        // 3) Solo si NO estamos en un contexto grupal, intentamos buscar schedules globales por dia
+        const globalSchedules = await this.classCommissionScheduleRepository.listByDay(dayName);
+        if (globalSchedules.length) {
+          const mapped = await Promise.all(globalSchedules.map(async (s) => {
+            const mc = await this.managedClassRepository.getById(s.managed_class_id);
+            return {
+              hora: s.schedule_time,
+              materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
+              meetLink: s.meet_link || (mc ? mc.meet_link : ''),
+            };
+          }));
+          return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+        }
       }
     }
 
     // Fallback: comportamiento legacy con managed_classes + filter por comision si aplica
-    const all = await this.managedClassRepository.listAll();
+    const all = await this.managedClassRepository.listAll(groupId);
     const filtered = this.filterClassesByCommission(all, userCommissionId, Boolean(groupId));
     return filtered
       .filter((c) => this.normalizeDayName(c.schedule_day) === this.normalizeDayName(dayName))
@@ -925,7 +921,19 @@ export class AcademicCalendarService {
   }
 
   private async getUserCommissionId(userId: string, groupId?: string): Promise<number | null> {
-    // PHASE 3: Try to get commission from group context first (multi-tenant aware)
+    // 1) Try to get commission from group membership first (specific to this user in this group)
+    if (groupId && this.groupMembershipRepository) {
+      try {
+        const membership = await this.groupMembershipRepository.getMembership(groupId, userId);
+        if (membership?.commission_id) {
+          return membership.commission_id;
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    // 2) Try to get commission from group context first (multi-tenant aware)
     if (groupId && this.groupContextRepository) {
       try {
         const groupContext = await this.groupContextRepository.getByGroupId(groupId);
@@ -939,14 +947,12 @@ export class AcademicCalendarService {
             return commissions[0].id;
           }
         }
-
-        return null;
       } catch (err) {
-        return null;
+        // ignore
       }
     }
 
-    // Fall back to user profile commission
+    // 3) Fall back to user profile commission
     const profile = await this.userProfileRepository.get(userId);
     if (typeof profile?.user_commission_id !== 'number') {
       return null;
@@ -957,7 +963,7 @@ export class AcademicCalendarService {
   private filterClassesByCommission(classes: ManagedClass[], userCommissionId: number | null, strictScope = false): ManagedClass[] {
     // Sin comisión de usuario, mostrar todo para evitar bloquear comandos.
     if (userCommissionId === null) {
-      return strictScope ? [] : classes;
+      return classes;
     }
 
     return classes.filter((c) => c.commission_count === 1 || c.commission_count === userCommissionId);
@@ -966,10 +972,10 @@ export class AcademicCalendarService {
   private filterExamsByCommission(exams: ManagedExam[], userCommissionId: number | null, strictScope = false): ManagedExam[] {
     // Sin comisión o examen global, no filtrar.
     if (userCommissionId === null) {
-      return strictScope ? [] : exams;
+      return exams;
     }
 
-    return exams.filter((e) => e.exam_commission_id === undefined || e.exam_commission_id === userCommissionId);
+    return exams.filter((e) => e.exam_commission_id === undefined || e.exam_commission_id === null || e.exam_commission_id === userCommissionId);
   }
 
   private async getValidNoticesForDay(day: Date): Promise<Array<{ title: string; body: string }>> {

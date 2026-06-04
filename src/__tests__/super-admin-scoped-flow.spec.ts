@@ -75,8 +75,8 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
     // When superadmin types menu, they get Super-Admin menu
     const saMenu = await svc.handlePrivateMessage('sa1', 'menu');
     expect(saMenu).toContain('Menú Super-Admin:');
-    expect(saMenu).toContain('1 - Listar grupos registrados');
-    expect(saMenu).toContain('2 - Seleccionar grupo para administrar');
+    expect(saMenu).toContain('1 - Listar y seleccionar grupo');
+    expect(saMenu).toContain('2 - Gestionar cohortes (por entry_year)');
     expect(saMenu).not.toContain('Panel admin (');
   });
 
@@ -100,12 +100,10 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
     const listRes = await svc.handlePrivateMessage('sa1', '1');
     expect(listRes).toContain('Grupo Activo A');
     expect(listRes).toContain('Grupo Activo B');
-    // 3. Select option 'seleccionar' to select a group to manage by JID
-    await svc.handlePrivateMessage('sa1', 'seleccionar');
-    // 4. Enter the JID of the group
-    const manageRes = await svc.handlePrivateMessage('sa1', 'g1@g.us');
+    // 3. Select first group by list number
+    const manageRes = await svc.handlePrivateMessage('sa1', '1');
     expect(manageRes).toContain('Grupo Seleccionado');
-    expect(manageRes).toContain('Cohorte: 2024');
+    expect(manageRes).toContain('• *Cohorte:* 2024');
     expect(manageRes).toContain('g1@g.us');
     expect(manageRes).toContain('7 - Ir al menú de Admin de este Grupo');
 
@@ -127,7 +125,7 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
     // 8. Exit scoped admin menu by typing 0 -> should return to group management menu
     const backToMgmt = await svc.handlePrivateMessage('sa1', '0');
     expect(backToMgmt).toContain('Grupo Seleccionado');
-    expect(backToMgmt).toContain('Cohorte: 2024');
+    expect(backToMgmt).toContain('• *Cohorte:* 2024');
     expect(backToMgmt).toContain('g1@g.us');
 
     // 9. Exit group management menu by typing 0 -> should return to superadmin main menu

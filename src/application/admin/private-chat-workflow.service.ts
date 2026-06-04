@@ -82,6 +82,10 @@ interface PendingGroupContextData {
   lastGroupList?: string[];
   currentSubject?: string;
   currentCommissionId?: number;
+  expectedDeleteConfirm?: string;
+  lastUserList?: any[];
+  targetUserId?: string;
+  lastCommissionList?: any[];
 }
 
 export class PrivateChatWorkflowService {
@@ -322,8 +326,11 @@ export class PrivateChatWorkflowService {
 
   private async maybeHandleProfileCompletion(userId: string, cleaned: string): Promise<string | null> {
     const currentState = this.pendingAdminState.get(userId);
-    if (currentState && PrivateChatWorkflowService.PROFILE_STATES.has(currentState)) {
-      return this.handleUserRegistrationFlow(userId, cleaned);
+    if (currentState) {
+      if (PrivateChatWorkflowService.PROFILE_STATES.has(currentState)) {
+        return this.handleUserRegistrationFlow(userId, cleaned);
+      }
+      return null;
     }
 
     const profile = await this.userProfileRepository.get(userId);
@@ -646,23 +653,16 @@ export class PrivateChatWorkflowService {
       }
 
       if (lowered === '2') {
-        this.pendingAdminState.set(userId, 'super_admin_await_select_group');
-        return 'Ingresá el group_id (JID) del grupo que querés administrar:';
+        this.pendingAdminState.set(userId, 'super_admin_cohort_main');
+        return this.superAdminCohortMenuText(userId);
       }
 
       if (lowered === '3') {
-        this.pendingAdminState.set(userId, 'super_admin_await_reonboard_group');
-        return 'Ingresá el group_id (JID) del grupo que querés forzar re-onboarding:';
-      }
-
-      if (lowered === '4') {
-        this.pendingAdminState.set(userId, 'super_admin_await_memberships_group');
-        return 'Ingresá el group_id (JID) para ver sus membresías:';
-      }
-
-      if (lowered === '5') {
-        this.pendingAdminState.set(userId, 'super_admin_cohort_main');
-        return this.superAdminCohortMenuText(userId);
+        if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+        const groups = await this.groupRepository.findAll();
+        const without = groups.filter((g) => g.entry_year == null);
+        if (!without.length) return 'No hay grupos sin cohorte. ✅';
+        return ['Grupos sin cohorte:', ...without.map((g) => `- ${g.display_name || g.group_id} (${g.group_id})`)].join('\n');
       }
 
       if (lowered === '0' || lowered === 'menu') {
@@ -919,6 +919,40 @@ export class PrivateChatWorkflowService {
         return 'Ingresá el nuevo nombre de apoyo (referencia interna) para este grupo:';
       }
 
+      if (lowered === '9') {
+        if (!this.groupRepository) return 'Repositorio de grupos no disponible.';
+        const group = await this.groupRepository.findByGroupId(gid);
+        if (!group) return 'No se encontró el grupo.';
+        const displayName = group.display_name || gid;
+        this.pendingSuperAdminData.set(userId, { ...data, groupId: gid, expectedDeleteConfirm: displayName });
+        this.pendingAdminState.set(userId, 'super_admin_confirm_delete_group');
+        return `⚠️ *ATENCIÓN*: Esto eliminará TODA la información del grupo (materias, exámenes, profesores, membresías, admins de grupo, contexto de comisiones) y el bot abandonará el grupo.\n\nPara confirmar, escribí el nombre del grupo exacto: "${displayName}"\nO escribí "cancelar" para volver.`;
+      }
+
+      if (lowered === '10') {
+        if (!this.groupMembershipRepository) return 'Repositorio de membresías no disponible.';
+        const list = await this.groupMembershipRepository.listByGroup(gid);
+        if (!list || list.length === 0) return 'No hay miembros registrados en este grupo.';
+        
+        this.pendingSuperAdminData.set(userId, { ...data, groupId: gid, lastUserList: list });
+        this.pendingAdminState.set(userId, 'super_admin_change_commission_select_user');
+        
+        const parts: string[] = ['Seleccioná el número del usuario a cambiar de comisión:'];
+        for (let i = 0; i < list.length; i++) {
+          const u = list[i];
+          let commissionLabel = 'Sin asignar';
+          if (u.commission_id && this.commissionRepository) {
+            const comm = await this.commissionRepository.getById(u.commission_id);
+            if (comm) {
+              commissionLabel = comm.name;
+            }
+          }
+          parts.push(`${i + 1} - ${u.user_id} (${u.role}) - Comisión actual: ${commissionLabel}`);
+        }
+        parts.push('', 'Escribí el número o "cancelar" para volver.');
+        return parts.join('\n');
+      }
+
       if (lowered === '0' || lowered === 'menu' || lowered === 'volver') {
         this.pendingAdminState.set(userId, 'super_admin_main');
         return await this.superAdminMenuText(userId);
@@ -961,19 +995,135 @@ export class PrivateChatWorkflowService {
       return `Nombre de apoyo para el grupo ${gid} actualizado a "${newName}".\n\n${menuText}`;
     }
 
-    if (currentState === 'super_admin_await_memberships_group') {
-      const gid = cleaned.trim();
-      if (lowered === 'menu' || lowered === '0' || lowered === 'volver') {
+    if (currentState === 'super_admin_confirm_delete_group') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay grupo seleccionado.';
+      }
+      const val = cleaned.trim().toLowerCase();
+      if (val === 'cancelar' || val === '0' || val === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        return await this.superAdminManageGroupMenuText(gid);
+      }
+      const expected = (data?.expectedDeleteConfirm || '').trim().toLowerCase();
+      if (val === expected) {
+        if (this.managedClassRepository) {
+          await this.managedClassRepository.deleteAllByGroupId(gid);
+        }
+        if (this.examsRepository) {
+          await this.examsRepository.deleteAllByGroupId(gid);
+        }
+        if (this.managedTeacherRepository) {
+          await this.managedTeacherRepository.deleteAllByGroupId(gid);
+        }
+        if (this.groupMembershipRepository) {
+          await this.groupMembershipRepository.deleteAllByGroupId(gid);
+        }
+        if (this.adminRepository) {
+          await this.adminRepository.removeAllGroupAdmins(gid);
+        }
+        if (this.groupContextRepository) {
+          const ctx = await this.groupContextRepository.getByGroupId(gid);
+          if (ctx && ctx.id) {
+            await this.groupContextRepository.removeCommissionsForGroupContext(ctx.id);
+            await this.groupContextRepository.delete(gid);
+          }
+        }
+        if (this.groupRepository) {
+          await this.groupRepository.delete(gid);
+        }
+
         this.pendingAdminState.set(userId, 'super_admin_main');
-        return this.superAdminMenuText(userId);
+        const saMenu = await this.superAdminMenuText(userId);
+        return `✅ Grupo eliminado exitosamente. Se borraron todos los datos asociados.\n[BOT_LEAVE_GROUP::${gid}]\n\n${saMenu}`;
+      } else {
+        return `⚠️ Nombre incorrecto. Escribí exactamente "${data?.expectedDeleteConfirm}" para confirmar la eliminación, o "cancelar" para volver.`;
       }
-      if (!this.groupMembershipRepository) return 'Repositorio de membresías no disponible.';
-      const list = await this.groupMembershipRepository.listByGroup(gid);
-      if (!list || list.length === 0) {
-        return 'No hay miembros registrados en este grupo o el JID es inválido. Ingresá otro JID, o escribí "menu" para volver:';
+    }
+
+    if (currentState === 'super_admin_change_commission_select_user') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay grupo seleccionado.';
       }
-      this.pendingAdminState.set(userId, 'super_admin_main');
-      return list.map((m) => `- ${m.user_id} | ${m.role} | active=${m.is_active ? 'sí' : 'no'}`).join('\n');
+      const choice = cleaned.trim().toLowerCase();
+      if (choice === 'cancelar' || choice === '0' || choice === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        return await this.superAdminManageGroupMenuText(gid);
+      }
+      if (!/^\d+$/.test(choice)) {
+        return 'Número inválido. Elegí un número de la lista, o "cancelar" para volver.';
+      }
+      const list = data?.lastUserList || [];
+      const idx = Number(choice) - 1;
+      if (idx < 0 || idx >= list.length) {
+        return `Número inválido. Elegí un número entre 1 y ${list.length}.`;
+      }
+      const targetUser = list[idx];
+
+      if (!this.groupContextRepository || !this.commissionRepository) {
+        return 'Repositorio no disponible.';
+      }
+      const context = await this.groupContextRepository.getByGroupId(gid);
+      if (!context || !context.id) {
+        return 'Este grupo no tiene configurado un contexto/comisiones. Hacé re-onboarding primero.';
+      }
+      const commissions = await this.groupContextRepository.listCommissionsForGroupContext(context.id);
+      if (!commissions || commissions.length === 0) {
+        return 'No hay comisiones asignadas a este grupo.';
+      }
+
+      this.pendingSuperAdminData.set(userId, {
+        ...data,
+        targetUserId: targetUser.user_id,
+        lastCommissionList: commissions
+      });
+      this.pendingAdminState.set(userId, 'super_admin_change_commission_select_commission');
+
+      const parts = [`Seleccioná la nueva comisión para ${targetUser.user_id}:`];
+      for (let i = 0; i < commissions.length; i++) {
+        parts.push(`${i + 1} - ${commissions[i].name}`);
+      }
+      parts.push('', 'Escribí el número de comisión, o "cancelar" para volver.');
+      return parts.join('\n');
+    }
+
+    if (currentState === 'super_admin_change_commission_select_commission') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      const targetUserId = data?.targetUserId;
+      if (!gid || !targetUserId) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay grupo o usuario seleccionado.';
+      }
+      const choice = cleaned.trim().toLowerCase();
+      if (choice === 'cancelar' || choice === '0' || choice === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        return await this.superAdminManageGroupMenuText(gid);
+      }
+      if (!/^\d+$/.test(choice)) {
+        return 'Número inválido. Elegí un número de la lista, o "cancelar" para volver.';
+      }
+      const list = data?.lastCommissionList || [];
+      const idx = Number(choice) - 1;
+      if (idx < 0 || idx >= list.length) {
+        return `Número inválido. Elegí un número entre 1 y ${list.length}.`;
+      }
+      const selectedCommission = list[idx];
+
+      if (!this.groupMembershipRepository) {
+        return 'Repositorio de membresías no disponible.';
+      }
+
+      await this.groupMembershipRepository.setCommission(gid, targetUserId, selectedCommission.id);
+
+      this.pendingAdminState.set(userId, 'super_admin_manage_group');
+      const menuText = await this.superAdminManageGroupMenuText(gid);
+      return `✅ Comisión de ${targetUserId} cambiada exitosamente a: ${selectedCommission.name}.\n\n${menuText}`;
     }
 
     // Cohort management menu
@@ -1508,23 +1658,23 @@ export class PrivateChatWorkflowService {
     return [
       'Menú Super-Admin:',
       '',
-      '1 - Listar grupos registrados',
-      '2 - Seleccionar grupo para administrar',
-      '3 - Forzar re-onboarding de un grupo',
-      '4 - Ver membresías de un grupo',
-      '5 - Gestionar cohortes (por entry_year)',
+      '1 - Listar y seleccionar grupo',
+      '2 - Gestionar cohortes (por entry_year)',
+      '3 - Auditar grupos sin cohorte',
       '',
       '0/menu - Volver al menú admin normal',
     ].join('\n');
   }
 
   private async superAdminManageGroupMenuText(gid: string): Promise<string> {
-    let groupInfo = `Administrando grupo: ${gid}`;
+    let groupName = gid;
+    let groupCohort = 'Sin definir';
     try {
       if (this.groupRepository) {
         const g = await this.groupRepository.findByGroupId(gid);
         if (g) {
-          groupInfo = `Grupo: ${g.display_name || gid} — Cohorte: ${g.entry_year ?? 'General'}\nID: ${gid}`;
+          groupName = g.display_name || gid;
+          groupCohort = g.entry_year != null ? String(g.entry_year) : 'General';
         }
       }
     } catch (e) {
@@ -1532,7 +1682,12 @@ export class PrivateChatWorkflowService {
     }
 
     return [
-      groupInfo,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '📋 *Administrando grupo:*',
+      `• *Nombre:* ${groupName}`,
+      `• *Cohorte:* ${groupCohort}`,
+      `• *ID:* ${gid}`,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
       '',
       '1 - Editar entry_year',
       '2 - Activar/Desactivar grupo',
@@ -1542,6 +1697,9 @@ export class PrivateChatWorkflowService {
       '6 - Quitar Admin de Grupo',
       '7 - Ir al menú de Admin de este Grupo',
       '8 - Editar nombre de apoyo (display_name)',
+      '9 - ❌ Eliminar grupo (borra datos y sale del grupo)',
+      '10 - Cambiar comisión de un usuario',
+      '',
       '0 - Volver al menú Super-Admin',
     ].join('\n');
   }
@@ -1599,7 +1757,9 @@ export class PrivateChatWorkflowService {
       const intro = this.isProfilePopulated(profile)
         ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
         : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
-        return `Registrado con éxito como superadmin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
+      const groupLabel = await this.getAdminGroupsLabel(userId);
+      const groupMsg = groupLabel ? ` (para el grupo *${groupLabel}*)` : '';
+      return `Registrado con éxito como superadmin ✅.\n\n${intro}${groupMsg}\n${this.getAdminProfilePrompt(nextState)}`;
     }
 
     this.pendingAdminState.set(userId, 'super_admin_main');
@@ -1627,7 +1787,9 @@ export class PrivateChatWorkflowService {
         const intro = this.isProfilePopulated(profile)
           ? this.pickOne(PrivateChatWorkflowService.PROFILE_UPDATE_INTROS)
           : this.pickOne(PrivateChatWorkflowService.PROFILE_WELCOME_INTROS);
-        return `Hola, admin ✅.\n\n${intro}\n${this.getAdminProfilePrompt(nextState)}`;
+        const groupLabel = await this.getAdminGroupsLabel(userId);
+        const groupMsg = groupLabel ? ` (para el grupo *${groupLabel}*)` : '';
+        return `Hola, admin ✅.\n\n${intro}${groupMsg}\n${this.getAdminProfilePrompt(nextState)}`;
       }
 
       const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
@@ -2218,7 +2380,7 @@ export class PrivateChatWorkflowService {
       this.pendingAdminState.set(userId, 'await_user_commission_selection');
 
       const options = first.availableCommissions.map((c, idx) => `${idx + 1}️⃣  ${c.name}`).join('\n   ');
-      return `🏫 *Paso 4 de 4 — Tu comisión*\n\n¿A qué comisión pertenecés?\n\n   ${options}\n\nRespondé con el número correspondiente.`;
+      return `🏫 *Paso 4 de 4 — Tu comisión para el grupo "${first.groupName}"*\n\n¿A qué comisión pertenecés?\n\n   ${options}\n\nRespondé con el número correspondiente.`;
     }
 
     if (currentState === 'await_user_commission_selection') {
@@ -2282,7 +2444,7 @@ export class PrivateChatWorkflowService {
       this.pendingAdminState.set(userId, 'await_user_commission_selection');
 
       const options = first.availableCommissions.map((c, idx) => `${idx + 1}️⃣  ${c.name}`).join('\n   ');
-      return `🏫 *Paso 4 de 4 — Tu comisión*\n\n¿A qué comisión pertenecés?\n\n   ${options}\n\nRespondé con el número correspondiente.`;
+      return `🏫 *Paso 4 de 4 — Tu comisión para el grupo "${first.groupName}"*\n\n¿A qué comisión pertenecés?\n\n   ${options}\n\nRespondé con el número correspondiente.`;
     }
 
     // Iniciar Paso 0
@@ -3051,6 +3213,31 @@ export class PrivateChatWorkflowService {
     if (missing.includes('name')) return 'await_admin_profile_name';
     if (missing.includes('birthday')) return 'await_admin_profile_birthday';
     return 'await_admin_profile_email';
+  }
+
+  private async getAdminGroupsLabel(userId: string): Promise<string> {
+    const data = this.pendingSuperAdminData.get(userId);
+    const gid = data?.groupId;
+    if (gid && this.groupRepository) {
+      const g = await this.groupRepository.findByGroupId(gid);
+      if (g) return g.display_name || gid;
+    }
+    if (this.adminRepository && this.groupRepository) {
+      const adminGroups = await this.adminRepository.listAdminGroups(userId);
+      if (adminGroups.length > 0) {
+        const names: string[] = [];
+        for (const gId of adminGroups) {
+          const g = await this.groupRepository.findByGroupId(gId);
+          if (g) {
+            names.push(g.display_name || gId);
+          } else {
+            names.push(gId);
+          }
+        }
+        return names.join(', ');
+      }
+    }
+    return '';
   }
 
   private getAdminProfilePrompt(state: string): string {

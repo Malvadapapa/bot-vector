@@ -135,14 +135,14 @@ export class KnowledgeContextService {
 
   private filterClassesByCommission<T extends { commission_count: number }>(classes: T[], commissionId: number | null, strictScope: boolean): T[] {
     if (commissionId === null) {
-      return strictScope ? [] : classes;
+      return classes;
     }
     return classes.filter((entry) => entry.commission_count === 1 || entry.commission_count === commissionId);
   }
 
   private filterExamsByCommission<T extends { exam_commission_id?: number | null }>(exams: T[], commissionId: number | null, strictScope: boolean): T[] {
     if (commissionId === null) {
-      return strictScope ? [] : exams;
+      return exams;
     }
     return exams.filter((entry) => entry.exam_commission_id === undefined || entry.exam_commission_id === null || entry.exam_commission_id === commissionId);
   }
