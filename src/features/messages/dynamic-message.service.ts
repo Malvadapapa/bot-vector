@@ -49,8 +49,8 @@ export class DynamicMessageService {
     });
   }
 
-  public async getUpcomingExams(limit = 10): Promise<ManagedExam[]> {
-    return this.examRepository.listUpcoming(new Date(), limit);
+  public async getUpcomingExams(limit = 10, groupId?: string): Promise<ManagedExam[]> {
+    return this.examRepository.listUpcoming(new Date(), limit, groupId);
   }
 
   public async getUserExamList(userId: string, limit = 10): Promise<Reminder[]> {

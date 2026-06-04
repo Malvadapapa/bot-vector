@@ -69,7 +69,7 @@ export class MessageRouter {
 
     // Si el mensaje llega por arroba, forzamos IA (excepto comandos explícitos).
     if (forceAI && !isCommand) {
-      return this.aiQueryService.answer(userId, routedText, now, isAdmin);
+      return this.aiQueryService.answer(userId, routedText, now, isAdmin, groupId);
     }
 
     if (normalized === '!hola') {
@@ -93,7 +93,7 @@ export class MessageRouter {
     }
 
     if (!allowAI) return null;
-    return this.aiQueryService.answer(userId, routedText, now, isAdmin);
+    return this.aiQueryService.answer(userId, routedText, now, isAdmin, groupId);
   }
 
   private normalizeInvocation(text: string): string {

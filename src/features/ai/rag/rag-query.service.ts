@@ -15,40 +15,61 @@ export class RagQueryService {
   private vectorStorage: VectorStorage;
   private loaded = false;
   private lastModifiedMs = 0;
+  private generalStoragePath: string;
 
   constructor(
     private storageFilePath: string,
     private embeddingProvider: EmbeddingProvider,
     private readonly minScore = 0.35
   ) {
-    this.vectorStorage = new VectorStorage(storageFilePath);
+    this.generalStoragePath = path.join(path.dirname(storageFilePath), 'general', 'vector_store.json');
+    this.vectorStorage = new VectorStorage(this.generalStoragePath);
   }
 
-  public async search(query: string, topK = 3): Promise<RagSearchResult[]> {
+  public async search(query: string, topK = 3, groupId?: string): Promise<RagSearchResult[]> {
     try {
       await this.ensureLoaded();
 
-      if (this.vectorStorage.getRecordCount() === 0) {
-        return [];
+      const queryVector = await this.embeddingProvider.generateEmbedding(query);
+
+      // 1. Búsqueda en General
+      let generalRaw: Array<{ record: any; score: number }> = [];
+      if (this.vectorStorage.getRecordCount() > 0) {
+        generalRaw = await this.vectorStorage.searchSimilar(queryVector, topK);
       }
 
-      const queryVector = await this.embeddingProvider.generateEmbedding(query);
-      const raw = await this.vectorStorage.searchSimilar(queryVector, topK);
+      // 2. Búsqueda en Grupo si corresponde
+      let groupRaw: Array<{ record: any; score: number }> = [];
+      if (groupId) {
+        const cleanGid = groupId.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const groupStoragePath = path.join(path.dirname(this.storageFilePath), 'groups', cleanGid, 'vector_store.json');
+        const groupStorage = new VectorStorage(groupStoragePath);
+        try {
+          await groupStorage.load();
+          if (groupStorage.getRecordCount() > 0) {
+            groupRaw = await groupStorage.searchSimilar(queryVector, topK);
+          }
+        } catch (e) {
+          // Ignorar si no existe
+        }
+      }
 
-      // Separar los que pasan el umbral de los que no
-      const strongMatches = raw.filter((r) => r.score >= this.minScore);
-      
+      // 3. Fusionar y clasificar (prioridad a grupo)
+      const groupStrong = groupRaw.filter((r) => r.score >= this.minScore).map((r) => ({ ...r, weak: false }));
+      const generalStrong = generalRaw.filter((r) => r.score >= this.minScore).map((r) => ({ ...r, weak: false }));
+
       let finalResults: Array<{ record: any; score: number; weak: boolean }> = [];
 
-      if (strongMatches.length > 0) {
-        finalResults = strongMatches.map(r => ({ ...r, weak: false }));
+      if (groupStrong.length > 0 || generalStrong.length > 0) {
+        finalResults = [...groupStrong, ...generalStrong];
       } else {
-        // Si nadie pasa el umbral, incluimos los topK (que superen al menos 0.15) como resultados "débiles"
-        const weakMatches = raw.filter((r) => r.score >= 0.15);
-        finalResults = weakMatches.map(r => ({ ...r, weak: true }));
+        const groupWeak = groupRaw.filter((r) => r.score >= 0.15).map((r) => ({ ...r, weak: true }));
+        const generalWeak = generalRaw.filter((r) => r.score >= 0.15).map((r) => ({ ...r, weak: true }));
+        finalResults = [...groupWeak, ...generalWeak];
       }
 
-      const filtered = finalResults.map((r) => ({
+      // Limitar a topK
+      const filtered = finalResults.slice(0, topK).map((r) => ({
         text: r.record.text,
         sourceFile: r.record.metadata.sourceFile,
         pageNumber: r.record.metadata.pageNumber,
@@ -58,13 +79,12 @@ export class RagQueryService {
 
       if (filtered.length > 0) {
         console.log(
-          `[RAG] Búsqueda exitosa: ${filtered.length} chunks (scores: ${filtered.map((r) => r.score.toFixed(3)).join(', ')}${filtered[0].weak ? ' - DÉBIL' : ''})`,
+          `[RAG] Búsqueda exitosa (${groupId ? `grupo: ${groupId}` : 'solo general'}): ${filtered.length} chunks (scores: ${filtered.map((r) => r.score.toFixed(3)).join(', ')}${filtered[0].weak ? ' - DÉBIL' : ''})`,
         );
       }
 
       return filtered;
     } catch (error) {
-      // Fallo silencioso: el bot sigue funcionando con el contexto interno disponible
       console.error(`[RAG] Error en búsqueda (se continúa sin contexto RAG):`, (error as any)?.message || error);
       return [];
     }
@@ -106,7 +126,7 @@ export class RagQueryService {
    */
   private async ensureLoaded(): Promise<void> {
     try {
-      const stat = await fs.stat(this.storageFilePath);
+      const stat = await fs.stat(this.generalStoragePath);
       const currentMtime = Math.round(stat.mtimeMs);
 
       if (!this.loaded || currentMtime !== this.lastModifiedMs) {

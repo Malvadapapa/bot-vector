@@ -109,5 +109,53 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
       expect(response).not.toBeNull();
       expect(response).toBeTruthy();
     });
+
+    it('debería pasar groupId al flujo de IA cuando el mensaje no es comando', async () => {
+      const mockIntentParser = {
+        parseMessage: vi.fn().mockReturnValue({ intent: 'none', normalized_text: 'consulta normal' }),
+      } as any;
+
+      const mockCalendarService = {
+        hasActiveMenuState: vi.fn().mockReturnValue(false),
+        handleMenuInput: vi.fn().mockResolvedValue(null),
+      } as any;
+
+      const mockConversationService = {
+        processMessage: vi.fn().mockResolvedValue({ action_type: 'none', response_text: '' }),
+      } as any;
+
+      const mockAIQueryService = {
+        answer: vi.fn().mockResolvedValue('respuesta ia'),
+      } as any;
+
+      const router = new MessageRouter(
+        mockIntentParser,
+        mockCalendarService,
+        mockConversationService,
+        mockAIQueryService,
+        dailyGreetingRepo
+      );
+
+      const result = await router.route(
+        'userA',
+        'consulta normal',
+        new Date('2026-06-04T12:00:00Z'),
+        true,
+        false,
+        false,
+        false,
+        'groupA@g.us',
+        false,
+      );
+
+      expect(result).toBe('respuesta ia');
+      expect(mockAIQueryService.answer).toHaveBeenCalledWith(
+        'userA',
+        'consulta normal',
+        expect.any(Date),
+        false,
+        'groupA@g.us',
+      );
+    });
   });
 });

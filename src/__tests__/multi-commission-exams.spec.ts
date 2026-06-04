@@ -87,18 +87,33 @@ describe('Multi-commission config and unified exam flows', () => {
     const step4 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Matemáticas,Física');
     expect(step4).toMatch(/Ingresá día y hora/);
 
-    // subj1 comm1
+    // subj1 comm1 schedule
     const r1 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Lunes 08:30|https://a1');
-    expect(r1).toMatch(/comisión/);
-    // subj1 comm2
+    expect(r1).toMatch(/profesor/);
+    // subj1 comm1 teacher
+    const r1_t = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'skip');
+    expect(r1_t).toMatch(/comisión/);
+    // subj1 comm2 schedule
     const r2 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Lunes 09:30|https://a2');
-    expect(r2).toMatch(/Ahora ingresá/);
-    // subj2 comm1
+    expect(r2).toMatch(/profesor/);
+    // subj1 comm2 teacher
+    const r2_t = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'skip');
+    expect(r2_t).toMatch(/Ahora ingresá/);
+    // subj2 comm1 schedule
     const r3 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Martes 08:30|https://b1');
-    expect(r3).toMatch(/comisión/);
-    // subj2 comm2
+    expect(r3).toMatch(/profesor/);
+    // subj2 comm1 teacher
+    const r3_t = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'skip');
+    expect(r3_t).toMatch(/comisión/);
+    // subj2 comm2 schedule
     const r4 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Martes 09:30|https://b2');
-    expect(r4).toMatch(/Materias y horarios registrados/);
+    expect(r4).toMatch(/profesor/);
+    // subj2 comm2 teacher
+    const r4_t = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'skip');
+    expect(r4_t).toMatch(/Emails de la cohorte/);
+    // cohort emails
+    const r5 = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'skip');
+    expect(r5).toMatch(/Configuración completada/);
 
     // verify schedules: list by day
     const { ClassCommissionScheduleRepository } = reposModule as any;
@@ -119,7 +134,13 @@ describe('Multi-commission config and unified exam flows', () => {
     await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Química Analítica');
 
     const result = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'Miércoles 10:15 https://meet.example.com/quimica');
-    expect(result).toMatch(/Materias y horarios registrados|Ahora ingresá/);
+    expect(result).toMatch(/profesor/);
+
+    const result_t = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'skip');
+    expect(result_t).toMatch(/Emails de la cohorte/);
+
+    const result_e = await svc.handlePrivateMessage('admin2@s.whatsapp.net', 'skip');
+    expect(result_e).toMatch(/Configuración completada/);
 
     const { ManagedClassRepository, ClassCommissionScheduleRepository } = reposModule as any;
     const classRepo = new ManagedClassRepository(db);

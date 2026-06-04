@@ -436,6 +436,54 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE group_memberships ADD COLUMN commission_id INTEGER DEFAULT NULL`
     ]
   },
+  {
+    version: 28,
+    description: 'Add group_id to exams, classes and teachers for logical scoping and backfill',
+    sql: [
+      `ALTER TABLE managed_exams ADD COLUMN group_id TEXT`,
+      `ALTER TABLE managed_classes ADD COLUMN group_id TEXT`,
+      `ALTER TABLE managed_teachers ADD COLUMN group_id TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_managed_exams_group_id ON managed_exams(group_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_managed_classes_group_id ON managed_classes(group_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_managed_teachers_group_id ON managed_teachers(group_id)`,
+      `UPDATE managed_classes
+       SET group_id = (
+         SELECT gc.group_id
+         FROM class_commission_schedule ccs
+         JOIN group_context_commissions gcc ON ccs.commission_id = gcc.commission_id
+         JOIN group_context gc ON gcc.group_context_id = gc.id
+         WHERE ccs.managed_class_id = managed_classes.id
+         LIMIT 1
+       )
+       WHERE group_id IS NULL`,
+      `UPDATE managed_classes
+       SET group_id = (SELECT group_id FROM group_context LIMIT 1)
+       WHERE group_id IS NULL`,
+      `UPDATE managed_exams
+       SET group_id = (
+         SELECT gc.group_id
+         FROM group_context_commissions gcc
+         JOIN group_context gc ON gcc.group_context_id = gc.id
+         WHERE gcc.commission_id = managed_exams.exam_commission_id
+         LIMIT 1
+       )
+       WHERE group_id IS NULL`,
+      `UPDATE managed_exams
+       SET group_id = (SELECT group_id FROM group_context LIMIT 1)
+       WHERE group_id IS NULL`,
+      `UPDATE managed_teachers
+       SET group_id = (
+         SELECT c.group_id
+         FROM managed_classes c
+         WHERE c.subject = managed_teachers.subject AND c.group_id IS NOT NULL
+         LIMIT 1
+       )
+       WHERE group_id IS NULL`,
+      `UPDATE managed_teachers
+       SET group_id = (SELECT group_id FROM group_context LIMIT 1)
+       WHERE group_id IS NULL`
+    ]
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {

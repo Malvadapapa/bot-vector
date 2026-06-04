@@ -38,6 +38,7 @@ export interface ManagedExam {
   exam_commission_id?: number;
   mismaHoraTodasComisiones?: boolean;
   ultimoAvisoEnviado?: Date;
+  group_id?: string;
 }
 
 export interface ManagedClass {
@@ -50,6 +51,7 @@ export interface ManagedClass {
   commission_count: number;
   created_at?: Date;
   updated_at?: Date;
+  group_id?: string;
 }
 
 export interface ManagedClassCreateInput {
@@ -59,6 +61,7 @@ export interface ManagedClassCreateInput {
   meet_link: string;
   notifications_enabled?: boolean;
   commission_count?: number;
+  group_id?: string;
 }
 
 export interface ManagedTeacher {
@@ -68,12 +71,14 @@ export interface ManagedTeacher {
   subject?: string;
   created_at?: Date;
   updated_at?: Date;
+  group_id?: string;
 }
 
 export interface ManagedTeacherCreateInput {
   name: string;
   email: string;
   subject?: string;
+  group_id?: string;
 }
 
 export interface Commission {

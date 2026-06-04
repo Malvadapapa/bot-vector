@@ -509,6 +509,81 @@ export class VectoritoWhatsAppGateway {
 
           const safeReply = String(groupReply).trim() || 'No pude generar una respuesta en este momento.';
 
+          // ABSENT DATA HANDLING
+          const absentDataMatch = safeReply.match(/^\s*\[ABSENT_DATA::([^\]]+)\]/i);
+          if (absentDataMatch) {
+            const tipoDato = absentDataMatch[1].trim().toLowerCase();
+            
+            // 1. Obtener información de usuario y grupo
+            const profile = await this.userProfileRepository.get(senderJid);
+            const userName = profile?.name ? `${profile.name} (${senderJid.split('@')[0]})` : senderJid.split('@')[0];
+            const group = await this.groupRepository.findByGroupId(chatId);
+            const groupName = group?.display_name || chatId;
+
+            // 2. Notificar a los administradores del grupo (o superadmins de fallback)
+            let admins = await this.adminRepository.listGroupAdmins(chatId);
+            let adminIds = admins.map((a) => a.user_id);
+            if (adminIds.length === 0) {
+              adminIds = await this.adminRepository.listSuperAdminIds();
+            }
+
+            const adminNotifyText = [
+              `⚠️ *Notificación de Información Ausente*`,
+              `• *Grupo:* ${groupName}`,
+              `• *Usuario:* ${userName}`,
+              `• *Consulta:* "${normalizedGroupText}"`,
+              `• *Información solicitada:* ${tipoDato.toUpperCase()}`,
+              ``,
+              `Por favor, cargá esta información en el sistema ingresando a la configuración usando el comando *!config-grupo* desde el grupo correspondiente.`,
+            ].join('\n');
+
+            for (const adminId of adminIds) {
+              try {
+                await this.sendTextMessage(adminId, adminNotifyText, undefined, true);
+              } catch (e) {
+                console.error(`Error al notificar al admin ${adminId}:`, e);
+              }
+            }
+
+            // 3. Responder en el grupo
+            const groupReplyText = `⚠️ Hola. No tengo la información de *${tipoDato}* cargada para este grupo en este momento.\n\nPor favor, pedile a un administrador del grupo que cargue los horarios, exámenes o profesores correspondientes usando el comando *!config-grupo*.`;
+            await this.sendTextMessage(chatId, groupReplyText, senderJid, false);
+            continue;
+          }
+
+          // CONFIG WARNING HANDLING FOR FAST COMMANDS
+          if (safeReply.includes('Este grupo todavía no tiene configuración académica completa')) {
+            // 1. Obtener información de usuario y grupo
+            const profile = await this.userProfileRepository.get(senderJid);
+            const userName = profile?.name ? `${profile.name} (${senderJid.split('@')[0]})` : senderJid.split('@')[0];
+            const group = await this.groupRepository.findByGroupId(chatId);
+            const groupName = group?.display_name || chatId;
+
+            // 2. Notificar a los administradores del grupo (o superadmins de fallback)
+            let admins = await this.adminRepository.listGroupAdmins(chatId);
+            let adminIds = admins.map((a) => a.user_id);
+            if (adminIds.length === 0) {
+              adminIds = await this.adminRepository.listSuperAdminIds();
+            }
+
+            const adminNotifyText = [
+              `⚠️ *Notificación de Configuración Faltante*`,
+              `• *Grupo:* ${groupName}`,
+              `• *Usuario:* ${userName}`,
+              `• *Comando ejecutado:* "${normalizedGroupText}"`,
+              ``,
+              `El usuario intentó usar un comando de calendario/agenda pero el grupo no está configurado. Por favor, inicializá el grupo con *!config-grupo*.`,
+            ].join('\n');
+
+            for (const adminId of adminIds) {
+              try {
+                await this.sendTextMessage(adminId, adminNotifyText, undefined, true);
+              } catch (e) {
+                console.error(`Error al notificar al admin ${adminId}:`, e);
+              }
+            }
+          }
+
           // 🔍 Detección dinámica de intención de respuesta IA
           const intentMatch = safeReply.match(/^\s*\[([^\]]+)\]\s*/);
           if (intentMatch) {

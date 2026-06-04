@@ -180,15 +180,20 @@ Los grupos se gestionan automáticamente en la base de datos SQLite. Ya no se co
 
 ### Agregar un grupo nuevo
 
-1. Un admin global agrega el bot al grupo de WhatsApp
-2. El bot se registra automáticamente y envía un mensaje privado al admin con instrucciones de configuración
-3. El admin asigna el contexto académico con el comando:
-!config-grupo [groupId] año:[N] turno:[mañana|tarde|noche]
+1. Un admin global agrega el bot al grupo de WhatsApp.
+2. El bot se registra automáticamente y envía un mensaje privado al admin con instrucciones de configuración.
+3. El admin asigna el contexto académico inicial por privado con el comando:
+   `!config-grupo [groupId] año:[N] turno:[mañana|tarde|noche]`
+   
+   *Ejemplo:*
+   `!config-grupo 120123456789-1234567890@g.us año:2 turno:tarde`
 
-Ejemplo:
-!config-grupo 120123456789-1234567890@g.us año:2 turno:tarde
+4. El bot iniciará un asistente interactivo en el chat privado del administrador:
+   - **Camada y comisiones**: Se creará el año y número de comisiones académicas.
+   - **Materias y Profesores**: Por cada materia ingresada, se solicitará su día/hora y enlace de Meet, seguido del nombre y email de su profesor (`Nombre|email@ispc.edu.ar`). Estos pasos se pueden omitir ingresando `skip`.
+   - **Emails de la cohorte**: Al finalizar las materias, se solicitará ingresar la lista de emails de clase de la cohorte separados por comas (`etiqueta|email, etiqueta|email`, ej: `Tutoría|tutor@ispc.edu.ar, Bedelía|bedelia@ispc.edu.ar`). Se puede omitir ingresando `skip` o `mas tarde`.
 
-4. El bot confirma la configuración dentro del grupo
+5. El bot confirma la configuración definitiva dentro del grupo.
 
 ### Migración desde versión anterior
 

@@ -80,6 +80,8 @@ interface PendingGroupContextData {
   commissionIndex?: number;
   inScopedAdminMenu?: boolean;
   lastGroupList?: string[];
+  currentSubject?: string;
+  currentCommissionId?: number;
 }
 
 export class PrivateChatWorkflowService {
@@ -168,7 +170,8 @@ export class PrivateChatWorkflowService {
   private async handleClassEditSelection(userId: string, cleaned: string): Promise<string> {
     const idxStr = cleaned.trim();
     if (!/^\d+$/.test(idxStr)) return 'Pasame un número válido de la lista.';
-    const classes = await this.managedClassRepository.listAll();
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const classes = await this.managedClassRepository.listAll(groupId);
     const idx = Number(idxStr) - 1;
     if (idx < 0 || idx >= classes.length) return `Número inválido. Elegí entre 1 y ${classes.length}.`;
     const cls = classes[idx];
@@ -273,7 +276,7 @@ export class PrivateChatWorkflowService {
       if (await this.adminRepository.isRegistered(userId)) {
         await this.adminRepository.setAuthenticated(userId, true);
         const adminProfile = await this.userProfileRepository.get(userId);
-        return `🔓 *¡Bienvenido de nuevo, ${adminProfile?.name || 'Admin'}!*\n\n${await this.adminMenuText(userId)}`;
+        return `🔓 *¡Bienvenido de nuevo, ${adminProfile?.name || 'Admin'}!*\n\n${await this.enterAdminWorkflow(userId)}`;
       }
 
       this.pendingAdminState.set(userId, 'await_admin_registration_code');
@@ -387,6 +390,31 @@ export class PrivateChatWorkflowService {
       this.pendingProfiles.delete(userId);
       this.pendingAdminState.delete(userId);
       return `🎉 *¡Registro completo, ${pending.name}!*\n\nAhora tenés acceso al panel de administración.\nEscribí *menu* en cualquier momento para abrirlo.\n\n💡 *Tip de Inicio*: Para que el bot reconozca y publique de forma automática los avisos que envían los profesores desde sus correos institucionales, te sugerimos ir al Menú de Administración -> "5 — Gestionar Profesores" y dar de alta sus correos. 📧`;
+    }
+
+    if (currentState === 'await_admin_select_group') {
+      const choice = cleaned.trim();
+      const data = this.pendingSuperAdminData.get(userId);
+      const list = data?.lastGroupList || [];
+
+      if (choice.toLowerCase() === 'menu' || choice === '0' || choice.toLowerCase() === 'salir') {
+        this.clearPendingData(userId);
+        return 'Modo admin finalizado.';
+      }
+
+      if (!/^\d+$/.test(choice)) {
+        return 'Opción inválida. Mandá el número del grupo que querés administrar.';
+      }
+
+      const idx = Number(choice) - 1;
+      if (idx < 0 || idx >= list.length) {
+        return `Número inválido. Elegí un número entre 1 y ${list.length}.`;
+      }
+
+      const gid = list[idx];
+      this.pendingSuperAdminData.set(userId, { groupId: gid, inScopedAdminMenu: true });
+      this.pendingAdminState.set(userId, 'super_admin_scoped_admin_main');
+      return await this.adminMenuText(userId);
     }
 
     if (currentState === 'await_notice_title') {
@@ -577,6 +605,14 @@ export class PrivateChatWorkflowService {
       return await this.handleGroupContextSubjectSchedule(userId, cleaned);
     }
 
+    if (currentState === 'await_group_context_subject_teacher') {
+      return await this.handleGroupContextSubjectTeacher(userId, cleaned);
+    }
+
+    if (currentState === 'await_group_context_emails') {
+      return await this.handleGroupContextEmails(userId, cleaned);
+    }
+
     // Super Admin menu handlers
     if (currentState === 'super_admin_main') {
       if (lowered === '1') {
@@ -646,10 +682,41 @@ export class PrivateChatWorkflowService {
       }
 
       if (lowered === '0' || lowered === 'menu') {
-        data.inScopedAdminMenu = false;
-        this.pendingSuperAdminData.set(userId, data);
-        this.pendingAdminState.set(userId, 'super_admin_manage_group');
-        return await this.superAdminManageGroupMenuText(gid);
+        const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+          ? await (this.adminRepository as any).isSuperAdmin(userId)
+          : !!(await this.adminRepository.get(userId))?.is_super_admin;
+
+        if (isSuperAdmin) {
+          data.inScopedAdminMenu = false;
+          this.pendingSuperAdminData.set(userId, data);
+          this.pendingAdminState.set(userId, 'super_admin_manage_group');
+          return await this.superAdminManageGroupMenuText(gid);
+        } else {
+          // Normal admin
+          const adminGroups = await this.adminRepository.listAdminGroups(userId);
+          if (adminGroups.length <= 1) {
+            this.clearPendingData(userId);
+            return 'Modo admin finalizado.';
+          } else {
+            // Ir al menú de selección de grupo
+            this.pendingSuperAdminData.set(userId, { lastGroupList: adminGroups } as any);
+            this.pendingAdminState.set(userId, 'await_admin_select_group');
+            
+            const parts: string[] = ['🔐 *Selección de Grupo* \n\nElegí el número del grupo que querés administrar:'];
+            for (let i = 0; i < adminGroups.length; i++) {
+              const gid = adminGroups[i];
+              let label = gid;
+              if (this.groupRepository) {
+                const g = await this.groupRepository.findByGroupId(gid);
+                if (g) {
+                  label = g.display_name || gid;
+                }
+              }
+              parts.push(`${i + 1} - ${label}`);
+            }
+            return parts.join('\n');
+          }
+        }
       }
 
       if (lowered === '1') {
@@ -1572,7 +1639,7 @@ export class PrivateChatWorkflowService {
         return `Hola, superadmin ✅\n${await this.superAdminMenuText(userId)}`;
       }
 
-      return `Hola, admin ✅\n${await this.adminMenuText(userId)}`;
+      return `Hola, admin ✅\n${await this.enterAdminWorkflow(userId)}`;
     }
 
     return 'No te pude autenticar, proba de nuevo.';
@@ -1651,7 +1718,8 @@ export class PrivateChatWorkflowService {
     this.pendingExamData.set(userId, pending);
     this.pendingAdminState.set(userId, 'await_exam_subject_source');
 
-    const classes = await this.managedClassRepository.listAll();
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const classes = await this.managedClassRepository.listAll(groupId);
     const classPreview = classes.length
       ? ['Materias cargadas en curso:', ...classes.map((c, idx) => `${idx + 1} - ${c.subject} (${c.schedule_day} ${c.schedule_time}) | Comisiones: ${this.formatCommissionCount(c.commission_count)}`)].join('\n')
       : 'No hay materias cargadas en curso.';
@@ -1670,7 +1738,8 @@ export class PrivateChatWorkflowService {
     const pending = this.pendingExamData.get(userId) || {};
 
     if (normalized === '1' || normalized === 'en-curso' || normalized === 'en curso') {
-      const classes = await this.managedClassRepository.listAll();
+      const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+      const classes = await this.managedClassRepository.listAll(groupId);
       if (!classes.length) {
         return 'No hay materias cargadas en curso. Elegí otra materia.';
       }
@@ -1701,7 +1770,8 @@ export class PrivateChatWorkflowService {
       return 'Pasame un número válido de la lista.';
     }
 
-    const classes = await this.managedClassRepository.listAll();
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const classes = await this.managedClassRepository.listAll(groupId);
     const index = Number(indexStr) - 1;
     if (index < 0 || index >= classes.length) {
       return `Número inválido. Elegí entre 1 y ${classes.length}.`;
@@ -1884,6 +1954,7 @@ export class PrivateChatWorkflowService {
 
     const resolvedExamTime = pending.exam_time || pending.horaInicio;
 
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
     const exam: ManagedExam = {
       subject: pending.subject,
       exam_date: pending.exam_date,
@@ -1896,6 +1967,7 @@ export class PrivateChatWorkflowService {
       horaFin: pending.horaFin,
       frecuenciaAvisos: '7d,3d,1d,20m',
       exam_commission_id: pending.exam_commission_id,
+      group_id: groupId,
     };
 
     await this.examsRepository.create(exam);
@@ -2306,6 +2378,47 @@ export class PrivateChatWorkflowService {
     ].join('\n');
   }
 
+  private async enterAdminWorkflow(userId: string): Promise<string> {
+    const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+      ? await (this.adminRepository as any).isSuperAdmin(userId)
+      : !!(await this.adminRepository.get(userId))?.is_super_admin;
+
+    if (isSuperAdmin) {
+      this.pendingAdminState.set(userId, 'super_admin_main');
+      return this.superAdminMenuText(userId);
+    }
+
+    const adminGroups = await this.adminRepository.listAdminGroups(userId);
+    if (adminGroups.length === 0) {
+      this.pendingAdminState.delete(userId);
+      return '❌ No tenés ningún grupo asignado para administrar. Contactá a un superadmin.';
+    }
+
+    if (adminGroups.length === 1) {
+      const gid = adminGroups[0];
+      this.pendingSuperAdminData.set(userId, { groupId: gid, inScopedAdminMenu: true });
+      this.pendingAdminState.set(userId, 'super_admin_scoped_admin_main');
+      return await this.adminMenuText(userId);
+    }
+
+    this.pendingSuperAdminData.set(userId, { lastGroupList: adminGroups } as any);
+    this.pendingAdminState.set(userId, 'await_admin_select_group');
+
+    const parts: string[] = ['🔐 *Selección de Grupo* \n\nElegí el número del grupo que querés administrar:'];
+    for (let i = 0; i < adminGroups.length; i++) {
+      const gid = adminGroups[i];
+      let label = gid;
+      if (this.groupRepository) {
+        const g = await this.groupRepository.findByGroupId(gid);
+        if (g) {
+          label = g.display_name || gid;
+        }
+      }
+      parts.push(`${i + 1} - ${label}`);
+    }
+    return parts.join('\n');
+  }
+
   private classNoticesSubmenuText(): string {
     return [
       '⚙️ Configurar avisos de clase',
@@ -2374,8 +2487,10 @@ export class PrivateChatWorkflowService {
       return this.adminMenuText(userId);
     }
 
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+
     if (lowered === '1') {
-      const classes = await this.managedClassRepository.listAll();
+      const classes = await this.managedClassRepository.listAll(groupId);
       if (!classes.length) return 'No hay materias cargadas.';
       return [
         'Materias programadas:',
@@ -2390,14 +2505,14 @@ export class PrivateChatWorkflowService {
 
     if (lowered === '3') {
       this.pendingAdminState.set(userId, 'await_class_id_to_delete');
-      const classes = await this.managedClassRepository.listAll();
+      const classes = await this.managedClassRepository.listAll(groupId);
       if (!classes.length) return 'No hay materias cargadas.';
       return ['Materias a eliminar:', ...classes.map((c, idx) => `${idx + 1} - ${c.subject} (${c.schedule_day} ${c.schedule_time})`)].join('\n');
     }
 
     if (lowered === '4') {
       this.pendingAdminState.set(userId, 'await_class_id_to_toggle');
-      const classes = await this.managedClassRepository.listAll();
+      const classes = await this.managedClassRepository.listAll(groupId);
       if (!classes.length) return 'No hay materias cargadas.';
       return ['Materias - Habilitar/deshabilitar notificaciones:', ...classes.map((c, idx) => `${idx + 1} - ${c.subject} (${c.notifications_enabled ? 'ON' : 'OFF'})`)].join('\n');
     }
@@ -2405,13 +2520,13 @@ export class PrivateChatWorkflowService {
     if (lowered === '5') {
       // Edit class flow: list classes and ask which to edit
       this.pendingAdminState.set(userId, 'await_class_id_to_edit');
-      const classes = await this.managedClassRepository.listAll();
+      const classes = await this.managedClassRepository.listAll(groupId);
       if (!classes.length) return 'No hay materias cargadas.';
       return ['Elegí la materia a editar:', ...classes.map((c, idx) => `${idx + 1} - ${c.subject} (${c.schedule_day} ${c.schedule_time}) | Enlace: ${c.meet_link || '(sin enlace)'}`)].join('\n');
     }
 
     if (lowered === '6') {
-      return this.buildClassNotificationPreview();
+      return this.buildClassNotificationPreview(userId);
     }
 
     return 'Opción inválida. Elegí un número del submenú o 0 para volver.';
@@ -2424,6 +2539,8 @@ export class PrivateChatWorkflowService {
       return this.adminMenuText(userId);
     }
 
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+
     if (lowered === '1') {
       this.pendingExamData.delete(userId);
       this.pendingAdminState.set(userId, 'await_exam_subject');
@@ -2431,13 +2548,13 @@ export class PrivateChatWorkflowService {
     }
 
     if (lowered === '2') {
-      const exams = await this.examsRepository.listWithIds(50);
+      const exams = await this.examsRepository.listWithIds(50, groupId);
       if (!exams.length) return 'No hay exámenes cargados.';
       return ['Exámenes actuales:', ...exams.map((e) => `${e.id} - ${e.exam.subject} (${e.exam.exam_date.toISOString().slice(0, 10)})`)].join('\n');
     }
 
     if (lowered === '3') {
-      return this.buildExamNotificationPreview();
+      return this.buildExamNotificationPreview(userId);
     }
 
     return 'Opción inválida. Elegí un número del submenú o 0 para volver.';
@@ -2498,8 +2615,10 @@ export class PrivateChatWorkflowService {
       return this.adminMenuText(userId);
     }
 
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+
     if (lowered === '1') {
-      const teachers = await this.managedTeacherRepository.listWithIds(50);
+      const teachers = await this.managedTeacherRepository.listWithIds(50, groupId);
       if (!teachers.length) return 'No hay profesores cargados. ¡Pidele al admin que cargue los emails!';
       return [
         'Profesores actuales:',
@@ -2517,7 +2636,7 @@ export class PrivateChatWorkflowService {
 
     if (lowered === '3') {
       this.pendingAdminState.set(userId, 'await_teacher_id_to_delete');
-      const teachers = await this.managedTeacherRepository.listWithIds(50);
+      const teachers = await this.managedTeacherRepository.listWithIds(50, groupId);
       if (!teachers.length) return 'No hay profesores cargados. ¡Pidele al admin que cargue los emails!';
       return ['Profesores a eliminar (ID):', ...teachers.map((t) => `${t.id} - ${t.teacher.name} <${t.teacher.email}>`)].join('\n');
     }
@@ -2577,8 +2696,9 @@ export class PrivateChatWorkflowService {
     return 'Usuario desbloqueado correctamente ✅';
   }
 
-  private async buildClassNotificationPreview(): Promise<string> {
-    const classes = await this.managedClassRepository.listAll();
+  private async buildClassNotificationPreview(userId: string): Promise<string> {
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const classes = await this.managedClassRepository.listAll(groupId);
     const enabled = classes.filter((c) => c.notifications_enabled);
     if (!enabled.length) {
       return 'No hay materias con avisos habilitados para probar. Activa una y vuelve a intentar.';
@@ -2596,8 +2716,9 @@ export class PrivateChatWorkflowService {
     ].join('\n');
   }
 
-  private async buildExamNotificationPreview(): Promise<string> {
-    const exams = await this.dynamicMessageService.getUpcomingExams(1);
+  private async buildExamNotificationPreview(userId: string): Promise<string> {
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const exams = await this.dynamicMessageService.getUpcomingExams(1, groupId);
     if (!exams.length) {
       return 'No hay exámenes próximos para generar una prueba.';
     }
@@ -2693,6 +2814,7 @@ export class PrivateChatWorkflowService {
       return 'Error: faltan datos. Volvemos a empezar.';
     }
 
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
     const classData: ManagedClassCreateInput = {
       subject: pendingData.subject,
       commission_count: pendingData.commission_count ?? 1,
@@ -2700,6 +2822,7 @@ export class PrivateChatWorkflowService {
       schedule_time: pendingData.schedule_time,
       meet_link: pendingData.meet_link,
       notifications_enabled: true,
+      group_id: groupId,
     };
 
     await this.managedClassRepository.create(classData);
@@ -2741,7 +2864,8 @@ export class PrivateChatWorkflowService {
   }
 
   private async handleClassDelete(userId: string, cleaned: string): Promise<string> {
-    const classes = await this.managedClassRepository.listAll();
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const classes = await this.managedClassRepository.listAll(groupId);
     if (!classes.length) {
       this.pendingAdminState.delete(userId);
       return 'No hay materias cargadas.';
@@ -2769,7 +2893,8 @@ export class PrivateChatWorkflowService {
   }
 
   private async handleClassToggleNotifications(userId: string, cleaned: string): Promise<string> {
-    const classes = await this.managedClassRepository.listAll();
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const classes = await this.managedClassRepository.listAll(groupId);
     if (!classes.length) {
       this.pendingAdminState.delete(userId);
       return 'No hay materias cargadas.';
@@ -2834,10 +2959,12 @@ export class PrivateChatWorkflowService {
     const subjectRaw = cleaned.trim();
     const subject = subjectRaw === '-' ? undefined : subjectRaw;
 
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
     const teacherData: ManagedTeacherCreateInput = {
       name: pendingData.name,
       email: pendingData.email,
       subject,
+      group_id: groupId,
     };
 
     await this.managedTeacherRepository.create(teacherData);
@@ -2847,7 +2974,8 @@ export class PrivateChatWorkflowService {
   }
 
   private async handleTeacherDelete(userId: string, cleaned: string): Promise<string> {
-    const teachers = await this.managedTeacherRepository.listWithIds(50);
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const teachers = await this.managedTeacherRepository.listWithIds(50, groupId);
     if (!teachers.length) {
       this.pendingAdminState.delete(userId);
       return 'No hay profesores cargados. ¡Pidele al admin que cargue los emails!';
@@ -3247,11 +3375,16 @@ export class PrivateChatWorkflowService {
     }
 
     const text = cleaned.trim();
-    if (!text || text.toLowerCase() === 'mas tarde' || text.toLowerCase() === 'más tarde') {
-      // finish
-      this.pendingGroupContextData.delete(userId);
-      this.pendingAdminState.delete(userId);
-      return '✅ Configuración de comisiones completada. Podés agregar materias y horarios más tarde con el comando correspondiente.';
+    if (!text || text.toLowerCase() === 'mas tarde' || text.toLowerCase() === 'más tarde' || text.toLowerCase() === 'skip') {
+      this.pendingAdminState.set(userId, 'await_group_context_emails');
+      return [
+        '✅ Configuración de materias y horarios omitida.',
+        '',
+        `Ahora, podés configurar los Emails de la cohorte ${pending.year}.`,
+        'Formato: etiqueta|email, etiqueta|email... (ej: Bedelía|bedelia@school.com, Tutor|tutor@school.com)',
+        '',
+        "Si preferís omitir o cargarlos más tarde, escribí 'mas tarde' o 'skip':"
+      ].join('\n');
     }
 
     const subjects = text.split(',').map((s) => s.trim()).filter(Boolean);
@@ -3313,6 +3446,7 @@ export class PrivateChatWorkflowService {
             meet_link: meetLink ?? '',
             notifications_enabled: true,
             commission_count: pending.commission_count ?? 1,
+            group_id: pending.groupId,
           });
 
           // create commission-specific schedule
@@ -3331,12 +3465,59 @@ export class PrivateChatWorkflowService {
       }
     }
 
-    // advance indices
+    // Transition to teacher configuration for this subject and commission
+    pending.currentSubject = subject;
+    pending.currentCommissionId = commissionId;
+    this.pendingGroupContextData.set(userId, pending);
+    this.pendingAdminState.set(userId, 'await_group_context_subject_teacher');
+
+    const commissionName = pending.commission_names ? pending.commission_names[commIdx] : String(commIdx + 1);
+    return [
+      `Ahora, ingresá el nombre y el email del profesor para la materia "${subject}" y la comisión ${commissionName}.`,
+      `Formato: Nombre Profesor|email@ispc.edu.ar (o escribí 'skip' para dejar vacío)`
+    ].join('\n');
+  }
+
+  private async handleGroupContextSubjectTeacher(userId: string, cleaned: string): Promise<string> {
+    const pending = this.pendingGroupContextData.get(userId);
+    if (!pending?.groupId || !pending.year || !pending.subjects || !pending.commission_ids) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Faltan datos. Reintentá con !config-grupo.';
+    }
+
+    const txt = cleaned.trim();
+    if (txt.toLowerCase() !== 'skip' && txt) {
+      const parts = txt.split('|').map((s) => s.trim());
+      if (parts.length !== 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parts[1])) {
+        return `❌ Formato inválido. Usá el formato: Nombre Profesor|email@ispc.edu.ar (ej: Juan Perez|juan@ispc.edu.ar) o escribí 'skip'.`;
+      }
+      
+      const name = parts[0];
+      const email = parts[1];
+
+      try {
+        if (this.managedTeacherRepository) {
+          await this.managedTeacherRepository.create({
+            name,
+            email,
+            subject: pending.currentSubject,
+            group_id: pending.groupId,
+          });
+        }
+      } catch (e) {
+        // ignore and continue
+      }
+    }
+
+    // Advance indices
+    // advance indices (commissions)
     if ((pending.commissionIndex ?? 0) + 1 < (pending.commission_ids?.length ?? 0)) {
       pending.commissionIndex = (pending.commissionIndex ?? 0) + 1;
       this.pendingGroupContextData.set(userId, pending);
       const commissionName = pending.commission_names ? pending.commission_names[pending.commissionIndex] : String((pending.commissionIndex ?? 0) + 1);
-      return `Ingresá día y hora y opcional enlace para la materia "${subject}" y la comisión ${commissionName}. Formato: Lunes 08:30|https://... o 'skip'`;
+      this.pendingAdminState.set(userId, 'await_group_context_subject_schedule');
+      return `Ingresá día y hora y opcional enlace para la materia "${pending.currentSubject}" y la comisión ${commissionName}. Formato: Lunes 08:30|https://... o 'skip'`;
     }
 
     // move to next subject
@@ -3346,13 +3527,71 @@ export class PrivateChatWorkflowService {
       this.pendingGroupContextData.set(userId, pending);
       const nextSubj = pending.subjects[pending.subjectIndex];
       const commissionName = pending.commission_names ? pending.commission_names[0] : '1';
+      this.pendingAdminState.set(userId, 'await_group_context_subject_schedule');
       return `Ahora ingresá día y hora para la materia "${nextSubj}" y la comisión ${commissionName}. Formato: Lunes 08:30|https://... o 'skip'`;
     }
 
-    // finished all
+    // finished all subjects and schedules -> go to emails step
+    this.pendingAdminState.set(userId, 'await_group_context_emails');
+    return [
+      '✅ Materias, horarios y profesores registrados exitosamente.',
+      '',
+      `Ahora, podés configurar los Emails de la cohorte ${pending.year}.`,
+      'Formato: etiqueta|email, etiqueta|email... (ej: Bedelía|bedelia@school.com, Tutor|tutor@school.com)',
+      '',
+      "Si preferís omitir o cargarlos más tarde, escribí 'mas tarde' o 'skip':"
+    ].join('\n');
+  }
+
+  private async handleGroupContextEmails(userId: string, cleaned: string): Promise<string> {
+    const pending = this.pendingGroupContextData.get(userId);
+    if (!pending?.groupId || !pending.year) {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '❌ Faltan datos. Reintentá con !config-grupo.';
+    }
+
+    const txt = cleaned.trim();
+    if (!txt || txt.toLowerCase() === 'mas tarde' || txt.toLowerCase() === 'más tarde' || txt.toLowerCase() === 'skip') {
+      this.pendingGroupContextData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return '✅ Configuración completada sin registrar emails de clase. Podés gestionarlos más tarde.';
+    }
+
+    const tokens = txt.split(',').map((s) => s.trim()).filter(Boolean);
+    const parsedEmails: Array<{ label: string; email: string }> = [];
+
+    for (const token of tokens) {
+      const parts = token.split('|').map((s) => s.trim());
+      if (parts.length !== 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parts[1])) {
+        return `❌ Formato inválido. Usá el formato: etiqueta|email, etiqueta|email... (ej: Bedelía|bedelia@school.com, Tutor|tutor@school.com) o escribí 'skip'.`;
+      }
+      parsedEmails.push({ label: parts[0], email: parts[1] });
+    }
+
+    try {
+      if (this.cohortConfigRepository) {
+        const year = pending.year;
+        const cfg = await this.cohortConfigRepository.getByYear(year);
+        const parsed = cfg ? JSON.parse(cfg.configs_json || '{}') : { emails: [], settings: {} };
+        parsed.emails = parsed.emails || [];
+        
+        // Append avoiding duplicate email addresses
+        for (const item of parsedEmails) {
+          if (!parsed.emails.some((e: any) => String(e.email).toLowerCase() === item.email.toLowerCase())) {
+            parsed.emails.push(item);
+          }
+        }
+
+        await this.cohortConfigRepository.upsertByYear(year, JSON.stringify(parsed));
+      }
+    } catch (e) {
+      // ignore
+    }
+
     this.pendingGroupContextData.delete(userId);
     this.pendingAdminState.delete(userId);
-    return '✅ Materias y horarios registrados (o dejados en blanco). Podés editar enlaces/horarios más tarde si hace falta.';
+    return '✅ Emails de clase registrados exitosamente. ¡Configuración de onboarding completada!';
   }
 
   private pickOne(options: string[]): string {

@@ -2,6 +2,17 @@
 
 Todas las modificaciones notables de este proyecto serán documentadas en este archivo.
 
+## [2.1.0-alpha.3] - Unreleased
+
+### Agregado
+- **Detección Dinámica de Datos Ausentes**: Monitoreo de consultas (vía IA) sobre clases, exámenes o profesores cuando no hay registros en la base de datos para el grupo. El Gateway de WhatsApp ahora intercepta estas consultas, notifica de manera privada a los administradores del grupo (o superadmins como fallback) e informa públicamente en el grupo solicitando su carga.
+- **Alertas de Configuración Faltante**: El Gateway de WhatsApp ahora notifica de forma proactiva y privada a los administradores del grupo cuando un usuario intenta usar comandos rápidos (`!hoy`, `!examenes`, etc.) en un grupo sin configuración académica.
+- **Onboarding de Grupo Extendido (Profesores y Emails)**:
+  - En la configuración de materias (`!config-grupo`), el bot ahora solicita secuencialmente el nombre y correo del profesor asignado para cada materia/comisión (permitiendo saltear con `skip`).
+  - Al terminar las materias, solicita registrar la lista de emails de clase de la cohorte en formato `etiqueta|email` separados por comas (salteable con `skip` o `mas tarde`).
+- **Enrutamiento de Avisos de Profesor Multi-Grupo**: Un profesor puede estar registrado para dictar en múltiples grupos/camadas con un único correo. El monitor IMAP valida y restringe la publicación del aviso estrictamente a los grupos autorizados para el remitente, permitiendo enviar a todos sus grupos por defecto o filtrar según selector de camada.
+- **Conexión de Profesores y Avisos en Contexto IA**: En `buildContext`, se vinculan los avisos institucionales con el profesor emisor basándose en su correo para inyectar la relación a la IA, permitiendo responder a preguntas como *"¿el profesor de programación dejó algún aviso?"* de forma natural.
+
 ## [2.1.0-alpha.2] - 2026-06-01
 
 ### Agregado

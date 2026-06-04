@@ -314,6 +314,7 @@ async function bootstrap() {
     managedClassRepository,
     reminderRepository,
     managedTeacherRepository,
+    groupContextRepository,
   );
 
   // --- RAG: búsqueda semántica en PDFs indexados ---
@@ -326,11 +327,17 @@ async function bootstrap() {
 
   // Indexación inicial en background (no bloquea el arranque)
   const ragPipeline = new RagPipelineService(ragKnowledgeDir, ragStatePath, ragStoragePath, geminiEmbeddingProvider);
-  ragPipeline.runSync(false).then(() => {
-    console.log(`[RAG] Sincronización inicial completada. Vectores disponibles: ${ragQueryService.getVectorCount() || 'pendiente de carga'}`);
-  }).catch((err) => {
-    console.error(`[RAG] Error en sincronización inicial (se mantiene el flujo IA con contexto interno):`, err?.message);
-  });
+  groupContextRepository.findAll()
+    .then((groups) => {
+      const activeGroupIds = (groups || []).map((g) => g.group_id);
+      return ragPipeline.syncAll(activeGroupIds, false);
+    })
+    .then(() => {
+      console.log(`[RAG] Sincronización inicial completada. Vectores disponibles: ${ragQueryService.getVectorCount() || 'pendiente de carga'}`);
+    })
+    .catch((err) => {
+      console.error(`[RAG] Error en sincronización inicial (se mantiene el flujo IA con contexto interno):`, err?.message);
+    });
 
   const aiQueryService = new AIQueryService(fallbackAiService, rateLimitService, knowledgeContextService, moderationService, ragQueryService);
   const conversationStateService = new ConversationStateService(reminderRepository, confirmationRepository);

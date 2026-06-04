@@ -360,11 +360,14 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
 
   describe('RemoveNotificationMenuService', () => {
     it('debería guiar el flujo de eliminación de avisos genéricos', async () => {
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + 7);
+
       await reminderRepo.create({
         user_id: 'user123',
         event_type: 'recordatorio',
         description: 'Mi recordatorio genérico',
-        event_date: new Date(2026, 5, 1),
+        event_date: futureDate,
       });
 
       const service = new RemoveNotificationMenuService(reminderRepo, examRepo);
@@ -423,6 +426,71 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
 
       const todayResponse = await calendarService.handleCommand('user123', '!hoy');
       expect(todayResponse).toContain('no hay clases programadas');
+    });
+
+    it('debería bloquear comandos académicos en grupos sin configuración', async () => {
+      const response = await calendarService.handleCommand(
+        'admin123',
+        '!hoy',
+        new Date('2026-06-04T10:00:00.000Z'),
+        false,
+        'group-not-configured@g.us',
+      );
+
+      expect(response).toContain('todavía no tiene configuración académica completa');
+      expect(response).toContain('!config-grupo');
+    });
+
+    it('debería mantener agenda separada por groupId en !hoy', async () => {
+      const commissionA = await commissionRepo.createOrGet('1', 2026, 'Noche');
+      const commissionB = await commissionRepo.createOrGet('2', 2026, 'Noche');
+
+      await contextRepo.upsert('groupA@g.us', 2026, commissionA, 'Grupo A', 'adminA');
+      await contextRepo.upsert('groupB@g.us', 2026, commissionB, 'Grupo B', 'adminB');
+
+      const classA = await classRepo.create({
+        subject: 'Ingeniería de software',
+        schedule_day: 'jueves',
+        schedule_time: '18:20',
+        meet_link: 'https://meet/a',
+        notifications_enabled: true,
+        commission_count: 1,
+      });
+
+      const classB = await classRepo.create({
+        subject: 'Gestión de proyectos',
+        schedule_day: 'jueves',
+        schedule_time: '19:40',
+        meet_link: 'https://meet/b',
+        notifications_enabled: true,
+        commission_count: 2,
+      });
+
+      await scheduleRepo.create({
+        managed_class_id: classA,
+        commission_id: commissionA,
+        schedule_day: 'jueves',
+        schedule_time: '18:20',
+        meet_link: 'https://meet/a',
+      });
+
+      await scheduleRepo.create({
+        managed_class_id: classB,
+        commission_id: commissionB,
+        schedule_day: 'jueves',
+        schedule_time: '19:40',
+        meet_link: 'https://meet/b',
+      });
+
+      const when = new Date('2026-06-04T12:00:00.000Z');
+      const groupAResponse = await calendarService.handleCommand('userA', '!hoy', when, false, 'groupA@g.us');
+      const groupBResponse = await calendarService.handleCommand('userB', '!hoy', when, false, 'groupB@g.us');
+
+      expect(groupAResponse).toContain('Ingeniería de software');
+      expect(groupAResponse).not.toContain('Gestión de proyectos');
+
+      expect(groupBResponse).toContain('Gestión de proyectos');
+      expect(groupBResponse).not.toContain('Ingeniería de software');
     });
 
     it('debería procesar entrada del menú interactivo general', async () => {

@@ -497,6 +497,11 @@ export class AdminRepository {
     return rows.map((r) => ({ user_id: String(r.user_id) }));
   }
 
+  async listAdminGroups(userId: string): Promise<string[]> {
+    const rows = await all<any>(this.db, 'SELECT group_id FROM group_admins WHERE user_id = ? ORDER BY created_at ASC', [userId]);
+    return rows.map((r) => String(r.group_id));
+  }
+
   async assignGroupAdmin(userId: string, groupId: string): Promise<void> {
     await run(this.db, 'INSERT OR IGNORE INTO group_admins(user_id, group_id) VALUES (?, ?)', [userId, groupId]);
   }

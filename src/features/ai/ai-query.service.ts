@@ -35,7 +35,7 @@ export class AIQueryService {
     private ragQueryService?: RagQueryService,
   ) {}
 
-  public async answer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin = false): Promise<string> {
+  public async answer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin = false, groupId?: string): Promise<string> {
     const nowResolved = now || new Date();
 
     // 0) Compruebo bloqueo a través del servicio de moderación (envía notificación privada si corresponde)
@@ -45,14 +45,14 @@ export class AIQueryService {
     }
 
     if (isAdmin) {
-      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin);
+      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin, groupId);
     }
 
     // 1) Clasificar (heurística simple)
     const cls = await this.classifyPromptQualityAndTopic(prompt);
 
     if (cls.status === 'ok') {
-      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin);
+      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin, groupId);
     }
 
     if (cls.status === 'unclear') {
@@ -68,16 +68,16 @@ export class AIQueryService {
     return 'No pude procesar tu pedido.';
   }
 
-  private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean): Promise<string> {
+  private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string): Promise<string> {
     // 1. Contexto dinámico de BD (exámenes, avisos, clases, perfil)
-    const dbContext = await this.knowledgeContextService.buildContext(userId);
+    const dbContext = await this.knowledgeContextService.buildContext(userId, groupId);
 
     // 2. Contexto RAG — búsqueda semántica en los PDFs indexados
     let ragContext: string | null = null;
     let isWeakRag = false;
 
     if (this.ragQueryService) {
-      const ragResults = await this.ragQueryService.search(prompt, 3);
+      const ragResults = await this.ragQueryService.search(prompt, 3, groupId);
       ragContext = this.ragQueryService.formatContext(ragResults);
 
       if (ragContext) {
@@ -102,9 +102,18 @@ export class AIQueryService {
       warningContext = '[Sistema] Los resultados de búsqueda documental (RAG) tienen baja relevancia. Úsalos solo si aportan algo útil; en caso contrario, indicá que no encontraste información precisa en la documentación.';
     }
 
+    const systemInstructions = [
+      '[INSTRUCCIÓN DE CONTROL DEL SISTEMA - OBLIGATORIA]',
+      'Si la consulta del usuario requiere buscar información específica sobre materias, horarios de clase, agenda, exámenes o profesores, y el "Contexto relevante" provisto de la base de datos indica de forma explícita que dicha información NO está cargada (por ejemplo, "No hay materias ni horarios cargados", "No hay exámenes próximos cargados...", o "No hay profesores cargados..."),',
+      'debés iniciar obligatoriamente tu respuesta con la etiqueta literal: `[ABSENT_DATA::<tipo>]` (donde <tipo> es uno de los siguientes: clases, examenes o profesores) y luego explicar de forma sintética qué información se intentó buscar pero no está disponible.',
+      'Ejemplo: `[ABSENT_DATA::clases]` para agenda/horarios, `[ABSENT_DATA::examenes]` para exámenes, `[ABSENT_DATA::profesores]` para profesores.',
+      'Si la información solicitada sí está cargada y presente en el contexto, respondé normalmente sin anteponer ninguna etiqueta.'
+    ].join('\n');
+
     const mergedPrompt = [
       dateContext,
       warningContext,
+      systemInstructions,
       ragContext || '',
       dbContext ? `Contexto relevante:\n${dbContext}` : '',
       prompt,

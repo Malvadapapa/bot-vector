@@ -51,12 +51,18 @@ export class InstitutionalEmailMonitor {
         .map((email) => email.trim().toLowerCase())
         .filter(Boolean);
 
+      let teacherRecords: any[] = [];
       let isAuthorized = false;
       if (superadmins.includes(sourceAddr)) {
         isAuthorized = true;
       } else if (this.managedTeacherRepository) {
-        const teacher = await this.managedTeacherRepository.getByEmail(sourceAddr);
-        if (teacher) {
+        if (typeof (this.managedTeacherRepository as any).listByEmail === 'function') {
+          teacherRecords = await (this.managedTeacherRepository as any).listByEmail(sourceAddr);
+        } else {
+          const t = await this.managedTeacherRepository.getByEmail(sourceAddr);
+          teacherRecords = t ? [t] : [];
+        }
+        if (teacherRecords.length > 0) {
           isAuthorized = true;
         }
       } else {
@@ -149,10 +155,19 @@ export class InstitutionalEmailMonitor {
       const selector = (notice.grupo_selector || 'todos').trim().toLowerCase();
       if (this.groupRepository) {
         const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
+        const allowedGroupIdsForTeacher = teacherRecords.map((t) => t.group_id).filter(Boolean);
+        const isSenderTeacher = teacherRecords.length > 0;
+        const hasGroupRestriction = isSenderTeacher && allowedGroupIdsForTeacher.length > 0;
+
         if (selector === 'todos') {
-          resolvedGroupIds = groups.map((g) => g.group_id);
+          resolvedGroupIds = hasGroupRestriction
+            ? allowedGroupIdsForTeacher
+            : groups.map((g) => g.group_id);
         } else if (selector === 'general') {
           resolvedGroupIds = groups.filter((g) => g.entry_year === null).map((g) => g.group_id);
+          if (hasGroupRestriction) {
+            resolvedGroupIds = resolvedGroupIds.filter((gid) => allowedGroupIdsForTeacher.includes(gid));
+          }
         } else {
           const m = selector.match(/^camada\s*:\s*(\d{4}(?:\s*,\s*\d{4})*)$/i);
           if (m) {
@@ -162,7 +177,7 @@ export class InstitutionalEmailMonitor {
               const found = groups.filter((g) => g.entry_year === y);
               if (!found.length) missing.push(y);
             }
-            if (missing.length) {
+            if (missing.length && !isSenderTeacher) {
               if (this.outboundEmailService) {
                 const subject = 'Error al procesar tu aviso institucional';
                 const body = `Hola.\n\nNo pudimos procesar tu aviso institucional.\n\nError: Las camadas solicitadas no tienen grupos activos: ${missing.join(', ')}`;
@@ -171,6 +186,9 @@ export class InstitutionalEmailMonitor {
               continue;
             }
             resolvedGroupIds = groups.filter((g) => years.includes(g.entry_year as number)).map((g) => g.group_id);
+            if (hasGroupRestriction) {
+              resolvedGroupIds = resolvedGroupIds.filter((gid) => allowedGroupIdsForTeacher.includes(gid));
+            }
           } else {
             // unknown selector
             if (this.outboundEmailService) {
@@ -180,6 +198,15 @@ export class InstitutionalEmailMonitor {
             }
             continue;
           }
+        }
+
+        if (hasGroupRestriction && resolvedGroupIds.length === 0) {
+          if (this.outboundEmailService) {
+            const subject = 'Error al procesar tu aviso institucional';
+            const body = `Hola.\n\nNo pudimos procesar tu aviso institucional.\n\nError: No estás autorizado/a a publicar avisos en los grupos o camadas seleccionados (${notice.grupo_selector || 'todos'}).`;
+            try { await this.outboundEmailService.send(notice.sourceEmail || sourceAddr, subject, body); } catch (e) { /* ignore */ }
+          }
+          continue;
         }
       }
 

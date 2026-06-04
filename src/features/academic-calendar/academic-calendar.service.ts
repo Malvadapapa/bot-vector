@@ -156,6 +156,18 @@ const GENERAL_MENU_TREE: Record<string, MenuNode> = {
 };
 
 export class AcademicCalendarService {
+  private static readonly GROUP_SCOPED_ACADEMIC_COMMANDS = new Set([
+    '!hoy',
+    '!clases',
+    '!semana',
+    '!semana-que-viene',
+    '!enlace',
+    '!examenes',
+  ]);
+
+  private static readonly GROUP_CONFIG_REQUIRED_MESSAGE =
+    '⚠️ Este grupo todavía no tiene configuración académica completa. Un administrador del grupo debe ejecutar !config-grupo para habilitar agenda, materias y exámenes.';
+
   private menuStateByUser = new Map<string, string>();
   private moderationAdminService = new ModerationAdminCommandService();
   private dashboardPanelService?: DashboardPanelService;
@@ -228,11 +240,19 @@ export class AcademicCalendarService {
     const resolvedCommand = ALIASES[normalized] ?? normalized;
 
     if (resolvedCommand === '!menu') {
-      return this.handleMenuInput(userId, resolvedCommand);
+      return this.handleMenuInput(userId, resolvedCommand, groupId);
+    }
+
+    if (
+      groupId
+      && AcademicCalendarService.GROUP_SCOPED_ACADEMIC_COMMANDS.has(resolvedCommand)
+      && !(await this.isGroupAcademicallyConfigured(groupId))
+    ) {
+      return AcademicCalendarService.GROUP_CONFIG_REQUIRED_MESSAGE;
     }
 
     if (resolvedCommand === '!hoy' || resolvedCommand === '!clases') {
-      return this.formatDay(currentNow, groupId);
+      return this.formatDay(userId, currentNow, groupId);
     }
 
     if (resolvedCommand === '!examenes') {
@@ -255,11 +275,11 @@ export class AcademicCalendarService {
     }
 
     if (resolvedCommand === '!semana') {
-      return this.formatWeekEvents(userId, currentNow, 0);
+      return this.formatWeekEvents(userId, currentNow, 0, groupId);
     }
 
     if (resolvedCommand === '!semana-que-viene') {
-      return this.formatWeekEvents(userId, currentNow, 7);
+      return this.formatWeekEvents(userId, currentNow, 7, groupId);
     }
 
     if (resolvedCommand === '!enlace') {
@@ -386,7 +406,7 @@ export class AcademicCalendarService {
 
     if (isMenuCommand) {
       this.menuStateByUser.set(userId, 'inicio');
-      return this.renderNode(menuTree, 'inicio', userId);
+      return this.renderNode(menuTree, 'inicio', userId, groupId);
     }
 
     const currentNode = this.menuStateByUser.get(userId);
@@ -395,7 +415,7 @@ export class AcademicCalendarService {
     // Si el usuario escribe "0", "menu", "volver" o "regresar", regresamos a inicio
     if (normalized === '0' || normalized === 'menu' || normalized === 'volver' || normalized === 'regresar') {
       this.menuStateByUser.set(userId, 'inicio');
-      return this.renderNode(menuTree, 'inicio', userId);
+      return this.renderNode(menuTree, 'inicio', userId, groupId);
     }
 
     const node = menuTree[currentNode];
@@ -439,15 +459,15 @@ export class AcademicCalendarService {
       this.menuStateByUser.delete(userId); // Nodos terminales o informativos limpian el estado automáticamente
     }
 
-    return this.renderNode(menuTree, nextNode, userId);
+    return this.renderNode(menuTree, nextNode, userId, groupId);
   }
 
-  private async formatDay(currentDt: Date, groupId?: string): Promise<string> {
+  private async formatDay(userId: string, currentDt: Date, groupId?: string): Promise<string> {
     const dayName = DAY_NAMES[currentDt.getDay()] || 'dia';
     const dateStr = `${currentDt.getDate()} de ${MONTH_NAMES[currentDt.getMonth()]}`;
-    const classes = await this.getClassesForWeekday(dayName);
+    const classes = await this.getClassesForWeekday(dayName, userId, groupId);
     const notices = await this.getValidNoticesForDay(currentDt);
-    const exams = await this.getExamsForDay(currentDt);
+    const exams = await this.getExamsForDay(currentDt, userId, groupId);
 
     const chunks: string[] = [];
     if (classes.length) {
@@ -504,7 +524,7 @@ export class AcademicCalendarService {
 
   private async formatManagedExams(userId?: string, groupId?: string): Promise<string> {
     const userCommissionId = userId ? await this.getUserCommissionId(userId, groupId) : null;
-    const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(10), userCommissionId);
+    const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(10, groupId), userCommissionId, Boolean(groupId));
     if (!exams.length) return '📝 Próximos exámenes:\n- No hay exámenes cargados por ahora.';
 
     const icons = ['📝', '📘', '📗', '📙', '📕'];
@@ -533,12 +553,12 @@ export class AcademicCalendarService {
     return ['📢 Avisos vigentes:', ...items].join('|||SPLIT|||');
   }
 
-  private async formatWeekEvents(userId: string, currentDt: Date, offsetDays: number): Promise<string> {
+  private async formatWeekEvents(userId: string, currentDt: Date, offsetDays: number, groupId?: string): Promise<string> {
     const allClasses = await this.managedClassRepository.listAll();
     const notices = await this.dynamicMessageService.getValidNotices(100);
-    const userCommissionId = await this.getUserCommissionId(userId);
-    const filteredClasses = this.filterClassesByCommission(allClasses, userCommissionId);
-    const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(100), userCommissionId);
+    const userCommissionId = await this.getUserCommissionId(userId, groupId);
+    const filteredClasses = this.filterClassesByCommission(allClasses, userCommissionId, Boolean(groupId));
+    const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(100, groupId), userCommissionId, Boolean(groupId));
     const start = new Date(currentDt);
     start.setDate(start.getDate() + offsetDays);
     const monday = new Date(start);
@@ -625,10 +645,10 @@ export class AcademicCalendarService {
     return GENERAL_MENU_TREE;
   }
 
-  private async renderNode(menuTree: Record<string, MenuNode>, nodeName: string, userId?: string): Promise<string> {
+  private async renderNode(menuTree: Record<string, MenuNode>, nodeName: string, userId?: string, groupId?: string): Promise<string> {
     const node = menuTree[nodeName];
     if (!node) return 'No hay contenido para este menu.';
-    return this.resolveTemplate(String(node.mensaje || 'No hay contenido para este menu.'), node, userId);
+    return this.resolveTemplate(String(node.mensaje || 'No hay contenido para este menu.'), node, userId, groupId);
   }
 
   private async renderFallbackMenu(userId: string): Promise<string> {
@@ -653,7 +673,7 @@ export class AcademicCalendarService {
     ].join('\n');
   }
 
-  private async resolveTemplate(template: string, node: MenuNode, userId?: string): Promise<string> {
+  private async resolveTemplate(template: string, node: MenuNode, userId?: string, groupId?: string): Promise<string> {
     let rendered = template;
 
     // Nombre del usuario personalizado
@@ -700,7 +720,7 @@ export class AcademicCalendarService {
     }
 
     if (/\{\{\s*examenes_dinamico\s*\}\}/i.test(rendered)) {
-      const examsText = await this.formatManagedExams();
+      const examsText = await this.formatManagedExams(userId, groupId);
       rendered = rendered.replace(/\{\{\s*examenes_dinamico\s*\}\}/gi, examsText);
     }
 
@@ -709,7 +729,7 @@ export class AcademicCalendarService {
     }
 
     if (/\{\{\s*lista_profes_dinamica\s*\}\}/i.test(rendered)) {
-      rendered = rendered.replace(/\{\{\s*lista_profes_dinamica\s*\}\}/gi, await this.formatTeachers());
+      rendered = rendered.replace(/\{\{\s*lista_profes_dinamica\s*\}\}/gi, await this.formatTeachers(groupId));
     }
 
     if (/\{\{\s*feriados_dinamico\s*\}\}/i.test(rendered)) {
@@ -763,8 +783,8 @@ export class AcademicCalendarService {
     return lines.join('\n');
   }
 
-  private async formatTeachers(): Promise<string> {
-    const teachers = await this.managedTeacherRepository.listWithIds(50);
+  private async formatTeachers(groupId?: string): Promise<string> {
+    const teachers = await this.managedTeacherRepository.listWithIds(50, groupId);
     if (!teachers.length) {
       return 'No hay profesores cargados. ¡Pidele al admin que cargue los emails!';
     }
@@ -851,6 +871,35 @@ export class AcademicCalendarService {
         }
       }
 
+      // En contexto grupal estricto, no debemos usar fallback global.
+      if (groupId) {
+        const groupContext = this.groupContextRepository ? await this.groupContextRepository.getByGroupId(groupId) : null;
+        if (groupContext && typeof groupContext.id === 'number' && this.groupContextRepository && this.classCommissionScheduleRepository) {
+          const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+          if (commissions.length > 0) {
+            const allSchedules = await Promise.all(
+              commissions
+                .filter((c) => typeof c.id === 'number')
+                .map((c) => this.classCommissionScheduleRepository!.listByCommissionAndDay(c.id as number, dayName)),
+            );
+
+            const flattened = allSchedules.flat();
+            if (flattened.length) {
+              const mapped = await Promise.all(flattened.map(async (s) => {
+                const mc = await this.managedClassRepository.getById(s.managed_class_id);
+                return {
+                  hora: s.schedule_time,
+                  materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
+                  meetLink: s.meet_link || (mc ? mc.meet_link : ''),
+                };
+              }));
+              return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+            }
+          }
+        }
+        return [];
+      }
+
       // No encontramos schedules específicos o no hay contexto: intentar listar schedules globales por dia
       const globalSchedules = await this.classCommissionScheduleRepository.listByDay(dayName);
       if (globalSchedules.length) {
@@ -868,7 +917,7 @@ export class AcademicCalendarService {
 
     // Fallback: comportamiento legacy con managed_classes + filter por comision si aplica
     const all = await this.managedClassRepository.listAll();
-    const filtered = this.filterClassesByCommission(all, userCommissionId);
+    const filtered = this.filterClassesByCommission(all, userCommissionId, Boolean(groupId));
     return filtered
       .filter((c) => this.normalizeDayName(c.schedule_day) === this.normalizeDayName(dayName))
       .sort((a, b) => a.schedule_time.localeCompare(b.schedule_time))
@@ -883,8 +932,17 @@ export class AcademicCalendarService {
         if (groupContext?.commission_id) {
           return groupContext.commission_id;
         }
+
+        if (groupContext && typeof groupContext.id === 'number') {
+          const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+          if (commissions.length === 1 && typeof commissions[0].id === 'number') {
+            return commissions[0].id;
+          }
+        }
+
+        return null;
       } catch (err) {
-        // Fall back to user profile
+        return null;
       }
     }
 
@@ -896,19 +954,19 @@ export class AcademicCalendarService {
     return profile.user_commission_id;
   }
 
-  private filterClassesByCommission(classes: ManagedClass[], userCommissionId: number | null): ManagedClass[] {
+  private filterClassesByCommission(classes: ManagedClass[], userCommissionId: number | null, strictScope = false): ManagedClass[] {
     // Sin comisión de usuario, mostrar todo para evitar bloquear comandos.
     if (userCommissionId === null) {
-      return classes;
+      return strictScope ? [] : classes;
     }
 
     return classes.filter((c) => c.commission_count === 1 || c.commission_count === userCommissionId);
   }
 
-  private filterExamsByCommission(exams: ManagedExam[], userCommissionId: number | null): ManagedExam[] {
+  private filterExamsByCommission(exams: ManagedExam[], userCommissionId: number | null, strictScope = false): ManagedExam[] {
     // Sin comisión o examen global, no filtrar.
     if (userCommissionId === null) {
-      return exams;
+      return strictScope ? [] : exams;
     }
 
     return exams.filter((e) => e.exam_commission_id === undefined || e.exam_commission_id === userCommissionId);
@@ -921,11 +979,29 @@ export class AcademicCalendarService {
       .map((n) => ({ title: n.title, body: n.body }));
   }
 
-  private async getExamsForDay(day: Date): Promise<Array<{ subject: string; exam_time: string; exam_type: string }>> {
-    const exams = await this.dynamicMessageService.getUpcomingExams(100);
+  private async getExamsForDay(day: Date, userId?: string, groupId?: string): Promise<Array<{ subject: string; exam_time: string; exam_type: string }>> {
+    const userCommissionId = userId ? await this.getUserCommissionId(userId, groupId) : null;
+    const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(100, groupId), userCommissionId, Boolean(groupId));
     return exams
       .filter((e) => this.isSameCalendarDay(e.exam_date, day))
       .map((e) => ({ subject: e.subject, exam_time: e.exam_time, exam_type: e.exam_type }));
+  }
+
+  private async isGroupAcademicallyConfigured(groupId: string): Promise<boolean> {
+    if (!this.groupContextRepository) return true;
+
+    try {
+      const groupContext = await this.groupContextRepository.getByGroupId(groupId);
+      if (!groupContext || typeof groupContext.year !== 'number') return false;
+
+      if (typeof groupContext.commission_id === 'number') return true;
+      if (typeof groupContext.id !== 'number') return false;
+
+      const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+      return commissions.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   private isSameCalendarDay(left: Date, right: Date): boolean {

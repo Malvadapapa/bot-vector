@@ -30,15 +30,62 @@ export class RagPipelineService {
   }
 
   public async runSync(forceAll = false): Promise<void> {
-    console.log(`[RAG] Iniciando sincronización de base de conocimiento...`);
-    await this.vectorStorage.load();
-    const state = await this.syncState.loadState();
+    const generalDir = path.join(this.knowledgeDir, 'general');
+    const generalStatePath = path.join(path.dirname(this.stateFilePath), 'general', 'sync_state.json');
+    const generalStoragePath = path.join(path.dirname(this.storageFilePath), 'general', 'vector_store.json');
+    await this.syncScope(generalDir, generalStatePath, generalStoragePath, 'general', undefined, forceAll);
+  }
+
+  public async syncAll(activeGroupIds: string[], forceAll = false): Promise<void> {
     this.failedFiles = [];
     
-    // Ensure dir exists
-    await fs.mkdir(this.knowledgeDir, { recursive: true });
+    // 1. Sincronizar general
+    const generalDir = path.join(this.knowledgeDir, 'general');
+    const generalStatePath = path.join(path.dirname(this.stateFilePath), 'general', 'sync_state.json');
+    const generalStoragePath = path.join(path.dirname(this.storageFilePath), 'general', 'vector_store.json');
+    await this.syncScope(generalDir, generalStatePath, generalStoragePath, 'general', undefined, forceAll);
+
+    // 2. Sincronizar cada grupo activo
+    for (const gid of activeGroupIds) {
+      const cleanGid = gid.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const groupDir = path.join(this.knowledgeDir, 'groups', cleanGid);
+      const groupStatePath = path.join(path.dirname(this.stateFilePath), 'groups', cleanGid, 'sync_state.json');
+      const groupStoragePath = path.join(path.dirname(this.storageFilePath), 'groups', cleanGid, 'vector_store.json');
+      
+      try {
+        await this.syncScope(groupDir, groupStatePath, groupStoragePath, 'group', gid, forceAll);
+      } catch (e) {
+        console.error(`[RAG] Error sincronizando grupo ${gid}:`, e);
+      }
+    }
+  }
+
+  public async syncScope(
+    scopeDir: string,
+    statePath: string,
+    storagePath: string,
+    scope: 'general' | 'group',
+    groupId?: string,
+    forceAll = false
+  ): Promise<void> {
+    console.log(`[RAG] Iniciando sincronización para ${scopeDir}...`);
+    const tempSyncState = new SyncState(statePath);
+    const tempVectorStorage = new VectorStorage(storagePath);
     
-    const files = await fs.readdir(this.knowledgeDir);
+    try {
+      await tempVectorStorage.load();
+    } catch (e) {
+      // Ignorar error de carga si no existe
+    }
+    
+    const state: Record<string, string> = await tempSyncState.loadState().catch(() => ({}));
+    
+    // Asegurar que exista la carpeta
+    await fs.mkdir(scopeDir, { recursive: true });
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.mkdir(path.dirname(storagePath), { recursive: true });
+    
+    const files = await fs.readdir(scopeDir);
     const pdfFiles = files.filter(f => f.toLowerCase().endsWith('.pdf'));
 
     const currentFilesSet = new Set(pdfFiles);
@@ -51,7 +98,7 @@ export class RagPipelineService {
     for (const stateFile of stateFilesSet) {
       if (!currentFilesSet.has(stateFile)) {
         console.log(`[RAG] Archivo eliminado detectado: ${stateFile}`);
-        this.vectorStorage.removeBySourceFile(stateFile);
+        tempVectorStorage.removeBySourceFile(stateFile);
         delete state[stateFile];
         deletedCount++;
       }
@@ -59,15 +106,15 @@ export class RagPipelineService {
 
     // 2. Manejar archivos nuevos o modificados
     for (const file of pdfFiles) {
-      const filePath = path.join(this.knowledgeDir, file);
-      const currentHash = await this.syncState.getFileHash(filePath);
+      const filePath = path.join(scopeDir, file);
+      const currentHash = await tempSyncState.getFileHash(filePath);
 
       if (forceAll || state[file] !== currentHash) {
         console.log(`[RAG] Indexando archivo: ${file}...`);
         
         // Si ya existía, borrar sus vectores viejos
         if (state[file]) {
-          this.vectorStorage.removeBySourceFile(file);
+          tempVectorStorage.removeBySourceFile(file);
         }
 
         try {
@@ -84,10 +131,14 @@ export class RagPipelineService {
             id: chunk.metadata.id,
             text: chunk.text,
             vector: vectors[i],
-            metadata: chunk.metadata
+            metadata: {
+              ...chunk.metadata,
+              scope,
+              groupId
+            }
           }));
 
-          this.vectorStorage.addRecords(records);
+          tempVectorStorage.addRecords(records);
           state[file] = currentHash;
           processedCount++;
           console.log(`[RAG] -> ${file} indexado correctamente.`);
@@ -101,15 +152,11 @@ export class RagPipelineService {
     // 3. Guardar estado y vectores si hubo cambios
     if (processedCount > 0 || deletedCount > 0 || forceAll) {
       console.log(`[RAG] Guardando cambios en el storage...`);
-      await this.vectorStorage.save();
-      await this.syncState.saveState(state);
-      console.log(`[RAG] Sincronización completa. Vectores totales: ${this.vectorStorage.getRecordCount()}`);
+      await tempVectorStorage.save();
+      await tempSyncState.saveState(state);
+      console.log(`[RAG] Sincronización completa para ${scopeDir}. Vectores totales: ${tempVectorStorage.getRecordCount()}`);
     } else {
-      console.log(`[RAG] Sincronización completa. No se detectaron cambios.`);
-    }
-
-    if (this.failedFiles.length > 0) {
-      console.warn(`[RAG] Advertencia: ${this.failedFiles.length} archivos fallaron al indexar: ${this.failedFiles.join(', ')}`);
+      console.log(`[RAG] Sincronización completa para ${scopeDir}. No se detectaron cambios.`);
     }
   }
 

@@ -1,4 +1,5 @@
 import { InstitutionalNoticeRepository, ManagedClassRepository, ManagedExamRepository, ManagedTeacherRepository, ReminderRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { GroupContextRepository } from '../academic-calendar/academic-calendar.repository.js';
 
 function compact(text: string, limit = 180): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
@@ -14,17 +15,23 @@ export class KnowledgeContextService {
     private classRepository: ManagedClassRepository,
     private reminderRepository: ReminderRepository,
     private teacherRepository: ManagedTeacherRepository,
+    private groupContextRepository?: GroupContextRepository,
   ) {}
 
-  public async buildContext(userId: string): Promise<string> {
+  public async buildContext(userId: string, groupId?: string): Promise<string> {
     const [profile, exams, notices, classes, personalReminders, teachers] = await Promise.all([
       this.userProfileRepository.get(userId),
-      this.examRepository.listUpcoming(new Date(), 5),
+      this.examRepository.listUpcoming(new Date(), 5, groupId),
       this.noticeRepository.listRecent(5),
-      this.classRepository.listAll(),
+      this.classRepository.listAll(groupId),
       this.reminderRepository.listRegisteredExams(userId),
-      this.teacherRepository.listWithIds(50),
+      this.teacherRepository.listWithIds(50, groupId),
     ]);
+
+    const commissionId = await this.resolveCommissionId(userId, profile?.user_commission_id ?? null, groupId);
+    const strictGroupScope = Boolean(groupId);
+    const scopedClasses = this.filterClassesByCommission(classes, commissionId, strictGroupScope);
+    const scopedExams = this.filterExamsByCommission(exams, commissionId, strictGroupScope);
 
     const parts: string[] = [];
 
@@ -38,9 +45,9 @@ export class KnowledgeContextService {
     }
 
     // 2. PRÓXIMOS EXÁMENES
-    if (exams.length) {
+    if (scopedExams.length) {
       parts.push('\n─ PRÓXIMOS EXÁMENES ─');
-      exams.slice(0, 5).forEach((exam) => {
+      scopedExams.slice(0, 5).forEach((exam) => {
         parts.push(`• ${exam.subject} - ${exam.exam_date.toISOString().slice(0, 10)} ${exam.exam_time} | ${compact(exam.observations)}`);
       });
     } else {
@@ -50,17 +57,28 @@ export class KnowledgeContextService {
     // 3. AVISOS INSTITUCIONALES
     if (notices.length) {
       parts.push('\n─ AVISOS INSTITUCIONALES RECIENTES ─');
-      notices.slice(0, 5).forEach((notice) => {
-        parts.push(`• ${notice.title}: ${compact(notice.body)}`);
-      });
+      for (const notice of notices.slice(0, 5)) {
+        let senderInfo = notice.source_email || 'Institucional';
+        if (notice.source_email) {
+          try {
+            const teacher = await this.teacherRepository.getByEmail(notice.source_email);
+            if (teacher) {
+              senderInfo = `Profesor: ${teacher.name} (${teacher.subject})`;
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+        parts.push(`• [Aviso de ${senderInfo}] ${notice.title}: ${compact(notice.body)}`);
+      }
     } else {
       parts.push('\n─ AVISOS INSTITUCIONALES RECIENTES ─\nNo hay avisos vigentes en este momento.');
     }
 
     // 4. MATERIAS ACTIVAS
-    if (classes.length) {
+    if (scopedClasses.length) {
       parts.push('\n─ MATERIAS ACTIVAS (HORARIOS DE CURSADA) ─');
-      classes.slice(0, 8).forEach((entry) => {
+      scopedClasses.slice(0, 8).forEach((entry) => {
         parts.push(`• ${entry.subject} - ${entry.schedule_day} ${entry.schedule_time}`);
       });
     } else {
@@ -87,5 +105,45 @@ export class KnowledgeContextService {
     }
 
     return parts.join('\n');
+  }
+
+  private async resolveCommissionId(userId: string, fallbackCommissionId: number | null, groupId?: string): Promise<number | null> {
+    if (groupId && this.groupContextRepository) {
+      try {
+        const groupContext = await this.groupContextRepository.getByGroupId(groupId);
+        if (!groupContext) return null;
+
+        if (typeof groupContext.commission_id === 'number') {
+          return groupContext.commission_id;
+        }
+
+        if (typeof groupContext.id === 'number') {
+          const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+          if (commissions.length === 1 && typeof commissions[0].id === 'number') {
+            return commissions[0].id;
+          }
+        }
+
+        return null;
+      } catch {
+        return null;
+      }
+    }
+
+    return typeof fallbackCommissionId === 'number' ? fallbackCommissionId : null;
+  }
+
+  private filterClassesByCommission<T extends { commission_count: number }>(classes: T[], commissionId: number | null, strictScope: boolean): T[] {
+    if (commissionId === null) {
+      return strictScope ? [] : classes;
+    }
+    return classes.filter((entry) => entry.commission_count === 1 || entry.commission_count === commissionId);
+  }
+
+  private filterExamsByCommission<T extends { exam_commission_id?: number | null }>(exams: T[], commissionId: number | null, strictScope: boolean): T[] {
+    if (commissionId === null) {
+      return strictScope ? [] : exams;
+    }
+    return exams.filter((entry) => entry.exam_commission_id === undefined || entry.exam_commission_id === null || entry.exam_commission_id === commissionId);
   }
 }

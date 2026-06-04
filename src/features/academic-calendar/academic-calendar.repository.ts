@@ -111,8 +111,8 @@ export class ManagedExamRepository {
       this.db,
       `INSERT INTO managed_exams(
          subject, exam_date, exam_time, exam_type, observations, created_by,
-         tipo_disponibilidad, hora_inicio, hora_fin, frecuencia_avisos, ultimo_aviso_enviado, exam_commission_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         tipo_disponibilidad, hora_inicio, hora_fin, frecuencia_avisos, ultimo_aviso_enviado, exam_commission_id, group_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         exam.subject,
         formatLocalDateOnly(exam.exam_date),
@@ -126,25 +126,42 @@ export class ManagedExamRepository {
         exam.frecuenciaAvisos ?? '7d,3d,1d,20m',
         exam.ultimoAvisoEnviado ? exam.ultimoAvisoEnviado.toISOString() : null,
         exam.exam_commission_id ?? null,
+        exam.group_id ?? null,
       ]
     );
     return result.lastID;
   }
 
-  async listUpcoming(fromDate: Date, limit = 50): Promise<ManagedExam[]> {
+  async listUpcoming(fromDate: Date, limit = 50, groupId?: string): Promise<ManagedExam[]> {
+    const params: unknown[] = [formatLocalDateOnly(fromDate)];
+    let filter = '';
+    if (groupId) {
+      filter = 'AND group_id = ?';
+      params.push(groupId);
+    }
+    params.push(limit);
+
     const rows = await all<any>(
       this.db,
-      `SELECT * FROM managed_exams WHERE exam_date >= ? ORDER BY exam_date ASC LIMIT ?`,
-      [formatLocalDateOnly(fromDate), limit]
+      `SELECT * FROM managed_exams WHERE exam_date >= ? ${filter} ORDER BY exam_date ASC LIMIT ?`,
+      params
     );
     return rows.map(rowToExam).filter((exam) => getExamDateTime(exam).getTime() >= fromDate.getTime());
   }
 
-  async listWithIds(limit = 50): Promise<Array<{ id: number; exam: ManagedExam }>> {
+  async listWithIds(limit = 50, groupId?: string): Promise<Array<{ id: number; exam: ManagedExam }>> {
+    const params: unknown[] = [];
+    let filter = '';
+    if (groupId) {
+      filter = 'WHERE group_id = ?';
+      params.push(groupId);
+    }
+    params.push(limit);
+
     const rows = await all<any>(
       this.db,
-      `SELECT * FROM managed_exams ORDER BY exam_date ASC, id ASC LIMIT ?`,
-      [limit]
+      `SELECT * FROM managed_exams ${filter} ORDER BY exam_date ASC, id ASC LIMIT ?`,
+      params
     );
     return rows.map((row) => ({ id: Number(row.id), exam: rowToExam(row) }));
   }
@@ -232,8 +249,8 @@ export class ManagedClassRepository {
   async create(classData: ManagedClassCreateInput): Promise<number> {
     const result = await run(
       this.db,
-      `INSERT INTO managed_classes(subject, schedule_day, schedule_time, meet_link, notifications_enabled, commission_count)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO managed_classes(subject, schedule_day, schedule_time, meet_link, notifications_enabled, commission_count, group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         classData.subject,
         classData.schedule_day,
@@ -241,18 +258,31 @@ export class ManagedClassRepository {
         classData.meet_link,
         classData.notifications_enabled ? 1 : 0,
         classData.commission_count ?? 1,
+        classData.group_id ?? null,
       ]
     );
     return result.lastID;
   }
 
-  async listAll(): Promise<ManagedClass[]> {
-    const rows = await all<any>(this.db, `SELECT * FROM managed_classes ORDER BY schedule_day, schedule_time`);
+  async listAll(groupId?: string): Promise<ManagedClass[]> {
+    const params: unknown[] = [];
+    let filter = '';
+    if (groupId) {
+      filter = 'WHERE group_id = ?';
+      params.push(groupId);
+    }
+    const rows = await all<any>(this.db, `SELECT * FROM managed_classes ${filter} ORDER BY schedule_day, schedule_time`, params);
     return rows.map(rowToManagedClass);
   }
 
-  async listWithIds(): Promise<Array<{ id: number; managedClass: ManagedClass }>> {
-    const rows = await all<any>(this.db, `SELECT * FROM managed_classes ORDER BY schedule_day, schedule_time`);
+  async listWithIds(groupId?: string): Promise<Array<{ id: number; managedClass: ManagedClass }>> {
+    const params: unknown[] = [];
+    let filter = '';
+    if (groupId) {
+      filter = 'WHERE group_id = ?';
+      params.push(groupId);
+    }
+    const rows = await all<any>(this.db, `SELECT * FROM managed_classes ${filter} ORDER BY schedule_day, schedule_time`, params);
     return rows.map((row) => ({ id: Number(row.id), managedClass: rowToManagedClass(row) }));
   }
 
@@ -261,11 +291,17 @@ export class ManagedClassRepository {
     return row ? rowToManagedClass(row) : null;
   }
 
-  async listByDay(day: string): Promise<ManagedClass[]> {
+  async listByDay(day: string, groupId?: string): Promise<ManagedClass[]> {
+    const params: unknown[] = [day];
+    let filter = '';
+    if (groupId) {
+      filter = 'AND group_id = ?';
+      params.push(groupId);
+    }
     const rows = await all<any>(
       this.db,
-      `SELECT * FROM managed_classes WHERE lower(schedule_day) = lower(?) AND notifications_enabled = 1 ORDER BY schedule_time`,
-      [day]
+      `SELECT * FROM managed_classes WHERE lower(schedule_day) = lower(?) AND notifications_enabled = 1 ${filter} ORDER BY schedule_time`,
+      params
     );
     return rows.map(rowToManagedClass);
   }
@@ -321,25 +357,39 @@ export class ManagedTeacherRepository {
   async create(teacher: ManagedTeacherCreateInput): Promise<number> {
     const result = await run(
       this.db,
-      `INSERT INTO managed_teachers(name, email, subject) VALUES (?, ?, ?)`,
-      [teacher.name, teacher.email, teacher.subject ?? null]
+      `INSERT INTO managed_teachers(name, email, subject, group_id) VALUES (?, ?, ?, ?)`,
+      [teacher.name, teacher.email, teacher.subject ?? null, teacher.group_id ?? null]
     );
     return result.lastID;
   }
 
-  async listAll(): Promise<ManagedTeacher[]> {
+  async listAll(groupId?: string): Promise<ManagedTeacher[]> {
+    const params: unknown[] = [];
+    let filter = '';
+    if (groupId) {
+      filter = 'WHERE group_id = ?';
+      params.push(groupId);
+    }
     const rows = await all<any>(
       this.db,
-      `SELECT * FROM managed_teachers ORDER BY subject ASC, name ASC`
+      `SELECT * FROM managed_teachers ${filter} ORDER BY subject ASC, name ASC`,
+      params
     );
     return rows.map(rowToTeacher);
   }
 
-  async listWithIds(limit: number = 50): Promise<Array<{ id: number; teacher: ManagedTeacher }>> {
+  async listWithIds(limit: number = 50, groupId?: string): Promise<Array<{ id: number; teacher: ManagedTeacher }>> {
+    const params: unknown[] = [];
+    let filter = '';
+    if (groupId) {
+      filter = 'WHERE group_id = ?';
+      params.push(groupId);
+    }
+    params.push(limit);
     const rows = await all<any>(
       this.db,
-      `SELECT * FROM managed_teachers ORDER BY subject ASC, name ASC LIMIT ?`,
-      [limit]
+      `SELECT * FROM managed_teachers ${filter} ORDER BY subject ASC, name ASC LIMIT ?`,
+      params
     );
     return rows.map((row) => ({ id: Number(row.id), teacher: rowToTeacher(row) }));
   }
@@ -356,6 +406,11 @@ export class ManagedTeacherRepository {
   async getByEmail(email: string): Promise<ManagedTeacher | null> {
     const row = await get<any>(this.db, `SELECT * FROM managed_teachers WHERE LOWER(email) = LOWER(?) LIMIT 1`, [email]);
     return row ? rowToTeacher(row) : null;
+  }
+
+  async listByEmail(email: string): Promise<ManagedTeacher[]> {
+    const rows = await all<any>(this.db, `SELECT * FROM managed_teachers WHERE LOWER(email) = LOWER(?)`, [email]);
+    return rows.map(rowToTeacher);
   }
 
   async update(teacherId: number, teacher: Partial<ManagedTeacherCreateInput>): Promise<void> {
@@ -656,6 +711,7 @@ function rowToExam(row: any): ManagedExam {
     frecuenciaAvisos: row.frecuencia_avisos ? String(row.frecuencia_avisos) : '7d,3d,1d,20m',
     exam_commission_id: row.exam_commission_id ? Number(row.exam_commission_id) : undefined,
     ultimoAvisoEnviado,
+    group_id: row.group_id ? String(row.group_id) : undefined,
   };
 }
 
@@ -670,6 +726,7 @@ function rowToManagedClass(row: any): ManagedClass {
     commission_count: Number(row.commission_count ?? 1),
     created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
     updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
+    group_id: row.group_id ? String(row.group_id) : undefined,
   };
 }
 
@@ -681,6 +738,7 @@ function rowToTeacher(row: any): ManagedTeacher {
     subject: row.subject ? String(row.subject) : undefined,
     created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
     updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
+    group_id: row.group_id ? String(row.group_id) : undefined,
   };
 }
 

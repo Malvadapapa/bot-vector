@@ -6,6 +6,8 @@ export interface RagChunkMetadata {
   totalChunks: number;
   pageNumber?: number; // Optional page number reference
   indexedAt: Date;
+  scope?: 'general' | 'group';
+  groupId?: string;
 }
 
 export interface RagChunk {
