@@ -148,9 +148,48 @@ describe('Slice de Notificaciones - Pruebas Unitarias', () => {
       expect(classesToNotify[0].subject).toBe('Matemática I');
 
       // Generar mensaje
-      const message = service.buildNotificationMessage(classesToNotify[0]);
+      const message = await service.buildNotificationMessage(classesToNotify[0]);
       expect(message).toContain('Matemática I');
       expect(message).toContain('http://meet.com/math1');
+    });
+
+    it('debería mapear comisiones correctamente en buildNotificationMessage', async () => {
+      const mockClassRepo = {} as any;
+      const mockScheduleRepo = {
+        listByManagedClass: vi.fn().mockResolvedValue([
+          { commission_id: 10 }
+        ])
+      } as any;
+      const mockCommissionRepo = {
+        getById: vi.fn().mockResolvedValue({ id: 10, name: '1' })
+      } as any;
+
+      const service = new ClassNotificationService(
+        mockClassRepo,
+        classNotifRepo,
+        mockScheduleRepo,
+        mockCommissionRepo
+      );
+
+      // Caso 1: 2 comisiones, comisión "1" -> mapea a "A"
+      const class2Comms = {
+        id: 1,
+        subject: 'Bases de Datos',
+        meet_link: 'http://db',
+        commission_count: 2,
+      } as any;
+      const msg1 = await service.buildNotificationMessage(class2Comms);
+      expect(msg1).toContain('Comisión: A');
+
+      // Caso 2: 1 comisión -> mapea a "Unica"
+      const class1Comm = {
+        id: 1,
+        subject: 'Bases de Datos',
+        meet_link: 'http://db',
+        commission_count: 1,
+      } as any;
+      const msg2 = await service.buildNotificationMessage(class1Comm);
+      expect(msg2).toContain('Comisión: Unica');
     });
   });
 

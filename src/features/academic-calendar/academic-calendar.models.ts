@@ -72,6 +72,7 @@ export interface ManagedTeacher {
   created_at?: Date;
   updated_at?: Date;
   group_id?: string;
+  commission_id?: number;
 }
 
 export interface ManagedTeacherCreateInput {
@@ -79,6 +80,7 @@ export interface ManagedTeacherCreateInput {
   email: string;
   subject?: string;
   group_id?: string;
+  commission_id?: number;
 }
 
 export interface Commission {

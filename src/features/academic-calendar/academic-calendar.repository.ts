@@ -343,11 +343,13 @@ export class ManagedClassRepository {
   }
 
   async delete(id: number): Promise<boolean> {
+    await run(this.db, 'DELETE FROM class_commission_schedule WHERE managed_class_id = ?', [id]);
     const result = await run(this.db, `DELETE FROM managed_classes WHERE id = ?`, [id]);
     return result.changes > 0;
   }
 
   async deleteAllByGroupId(groupId: string): Promise<number> {
+    await run(this.db, 'DELETE FROM class_commission_schedule WHERE managed_class_id IN (SELECT id FROM managed_classes WHERE group_id = ?)', [groupId]);
     const result = await run(this.db, 'DELETE FROM managed_classes WHERE group_id = ?', [groupId]);
     return result.changes;
   }
@@ -367,8 +369,8 @@ export class ManagedTeacherRepository {
   async create(teacher: ManagedTeacherCreateInput): Promise<number> {
     const result = await run(
       this.db,
-      `INSERT INTO managed_teachers(name, email, subject, group_id) VALUES (?, ?, ?, ?)`,
-      [teacher.name, teacher.email, teacher.subject ?? null, teacher.group_id ?? null]
+      `INSERT INTO managed_teachers(name, email, subject, group_id, commission_id) VALUES (?, ?, ?, ?, ?)`,
+      [teacher.name, teacher.email, teacher.subject ?? null, teacher.group_id ?? null, teacher.commission_id ?? null]
     );
     return result.lastID;
   }
@@ -646,6 +648,15 @@ export class ClassCommissionScheduleRepository {
     const result = await run(this.db, 'DELETE FROM class_commission_schedule WHERE id = ?', [id]);
     return result.changes > 0;
   }
+
+  async updateMeetLink(id: number, meetLink: string | null): Promise<boolean> {
+    const result = await run(
+      this.db,
+      'UPDATE class_commission_schedule SET meet_link = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [meetLink, id]
+    );
+    return result.changes > 0;
+  }
 }
 
 export class CohortConfigRepository {
@@ -751,6 +762,7 @@ function rowToTeacher(row: any): ManagedTeacher {
     name: String(row.name),
     email: String(row.email),
     subject: row.subject ? String(row.subject) : undefined,
+    commission_id: row.commission_id ? Number(row.commission_id) : undefined,
     created_at: row.created_at ? new Date(String(row.created_at)) : undefined,
     updated_at: row.updated_at ? new Date(String(row.updated_at)) : undefined,
     group_id: row.group_id ? String(row.group_id) : undefined,

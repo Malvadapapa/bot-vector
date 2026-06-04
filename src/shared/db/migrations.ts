@@ -484,6 +484,14 @@ const MIGRATIONS: Migration[] = [
        WHERE group_id IS NULL`
     ]
   },
+  {
+    version: 29,
+    description: 'Add commission_id to managed_teachers',
+    sql: [
+      `ALTER TABLE managed_teachers ADD COLUMN commission_id INTEGER REFERENCES commissions(id) ON DELETE SET NULL`,
+      `CREATE INDEX IF NOT EXISTS idx_managed_teachers_commission_id ON managed_teachers(commission_id)`
+    ]
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {
@@ -516,6 +524,7 @@ function all<T = any>(db: sqlite3.Database, sql: string, params: unknown[] = [])
 }
 
 export async function applyMigrations(db: sqlite3.Database): Promise<void> {
+  await run(db, 'PRAGMA foreign_keys = ON;');
   await run(
     db,
     `CREATE TABLE IF NOT EXISTS schema_migrations (

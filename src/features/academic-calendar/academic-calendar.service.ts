@@ -9,6 +9,7 @@ import { MenuPersistenceService } from './menu-persistence.service.js';
 import { ExamMenuService } from './exam-menu.service.js';
 import { EditExamMenuService } from './edit-exam-menu.service.js';
 import { RemoveNotificationMenuService } from './remove-notification-menu.service.js';
+import { TeacherMenuService } from './teacher-menu.service.js';
 import { ManagedClass, ManagedExam } from './academic-calendar.models.js';
 import {
   ManagedClassRepository,
@@ -189,6 +190,7 @@ export class AcademicCalendarService {
     private managedExamRepository?: ManagedExamRepository,
     private loggingService?: LoggingService,
     private groupMembershipRepository?: GroupMembershipRepository,
+    private teacherMenuService?: TeacherMenuService,
   ) {
     // Inicializar servicios
     if (this.loggingService) {
@@ -397,6 +399,16 @@ export class AcademicCalendarService {
       return response;
     }
 
+    if (this.teacherMenuService?.isInFlow(userId)) {
+      if (normalized === '0' || normalized === 'volver' || normalized === 'regresar') {
+        this.teacherMenuService.cancelFlow(userId);
+        this.menuStateByUser.set(userId, 'contacto_ispc');
+        return this.renderNode(menuTree, 'contacto_ispc', userId, groupId);
+      }
+      const { response, completed } = await this.teacherMenuService.processInput(userId, rawText);
+      return response;
+    }
+
     const menuTree = this.loadMenus();
     if (!menuTree) {
       if (isMenuCommand) {
@@ -407,6 +419,7 @@ export class AcademicCalendarService {
 
     if (isMenuCommand) {
       this.menuStateByUser.set(userId, 'inicio');
+      this.teacherMenuService?.cancelFlow(userId);
       return this.renderNode(menuTree, 'inicio', userId, groupId);
     }
 
@@ -427,6 +440,11 @@ export class AcademicCalendarService {
 
     const options = node.opciones || {};
     const nextNode = options[normalized];
+
+    if (nextNode === 'profesores_ispc' && this.teacherMenuService) {
+      this.menuStateByUser.delete(userId);
+      return await this.teacherMenuService.startTeacherFlow(userId, groupId);
+    }
 
     if (!nextNode) {
       // Si la opción no es válida y es un número, indicamos error y mantenemos el estado
@@ -858,13 +876,20 @@ export class AcademicCalendarService {
         if (schedules.length) {
           const mapped = await Promise.all(schedules.map(async (s) => {
             const mc = await this.managedClassRepository.getById(s.managed_class_id);
+            if (!mc) return null;
             return {
               hora: s.schedule_time,
-              materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
-              meetLink: s.meet_link || (mc ? mc.meet_link : ''),
+              materia: mc.subject,
+              meetLink: s.meet_link || mc.meet_link || '',
+              group_id: mc.group_id || null,
             };
           }));
-          return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+          const filteredMapped = mapped.filter((item) => {
+            if (!item) return false;
+            if (groupId && item.group_id && item.group_id !== groupId) return false;
+            return true;
+          }) as Array<{ hora: string; materia: string; meetLink: string }>;
+          return filteredMapped.sort((a, b) => a.hora.localeCompare(b.hora));
         }
       }
 
@@ -884,13 +909,20 @@ export class AcademicCalendarService {
             if (flattened.length) {
               const mapped = await Promise.all(flattened.map(async (s) => {
                 const mc = await this.managedClassRepository.getById(s.managed_class_id);
+                if (!mc) return null;
                 return {
                   hora: s.schedule_time,
-                  materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
-                  meetLink: s.meet_link || (mc ? mc.meet_link : ''),
+                  materia: mc.subject,
+                  meetLink: s.meet_link || mc.meet_link || '',
+                  group_id: mc.group_id || null,
                 };
               }));
-              return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+              const filteredMapped = mapped.filter((item) => {
+                if (!item) return false;
+                if (item.group_id && item.group_id !== groupId) return false;
+                return true;
+              }) as Array<{ hora: string; materia: string; meetLink: string }>;
+              return filteredMapped.sort((a, b) => a.hora.localeCompare(b.hora));
             }
           }
         }
@@ -900,13 +932,15 @@ export class AcademicCalendarService {
         if (globalSchedules.length) {
           const mapped = await Promise.all(globalSchedules.map(async (s) => {
             const mc = await this.managedClassRepository.getById(s.managed_class_id);
+            if (!mc) return null;
             return {
               hora: s.schedule_time,
-              materia: mc ? mc.subject : `Clase ${s.managed_class_id}`,
-              meetLink: s.meet_link || (mc ? mc.meet_link : ''),
+              materia: mc.subject,
+              meetLink: s.meet_link || mc.meet_link || '',
             };
           }));
-          return mapped.sort((a, b) => a.hora.localeCompare(b.hora));
+          const filteredMapped = mapped.filter(Boolean) as Array<{ hora: string; materia: string; meetLink: string }>;
+          return filteredMapped.sort((a, b) => a.hora.localeCompare(b.hora));
         }
       }
     }

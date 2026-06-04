@@ -6,6 +6,7 @@ import { AcademicCalendarService } from './features/academic-calendar/academic-c
 import { ExamMenuService } from './features/academic-calendar/exam-menu.service.js';
 import { EditExamMenuService } from './features/academic-calendar/edit-exam-menu.service.js';
 import { RemoveNotificationMenuService } from './features/academic-calendar/remove-notification-menu.service.js';
+import { TeacherMenuService } from './features/academic-calendar/teacher-menu.service.js';
 import { AIQueryService } from './features/ai/ai-query.service.js';
 import { ClassNotificationService } from './features/notifications/class-notification.service.js';
 import { ConversationStateService } from './features/conversation/conversation-state.service.js';
@@ -279,6 +280,7 @@ async function bootstrap() {
   const examMenuService = new ExamMenuService(managedExamRepository);
   const editExamMenuService = new EditExamMenuService(managedExamRepository);
   const removeNotificationMenuService = new RemoveNotificationMenuService(reminderRepository, managedExamRepository);
+  const teacherMenuService = new TeacherMenuService(managedTeacherRepository, commissionRepository);
   const loggingService = new LoggingService();
   const academicCalendarService = new AcademicCalendarService(
     dynamicMessageService,
@@ -295,8 +297,14 @@ async function bootstrap() {
     managedExamRepository,
     loggingService,
     groupMembershipRepository,
+    teacherMenuService,
   );
-  const classNotificationService = new ClassNotificationService(managedClassRepository, classNotificationRepository);
+  const classNotificationService = new ClassNotificationService(
+    managedClassRepository,
+    classNotificationRepository,
+    classCommissionScheduleRepository,
+    commissionRepository
+  );
   const messageIntentParserService = new MessageIntentParserService();
   const rateLimitService = new RateLimitService(rateLimitRepository);
   const moderationService = new UserModerationService(userModerationRepository);
@@ -316,6 +324,8 @@ async function bootstrap() {
     reminderRepository,
     managedTeacherRepository,
     groupContextRepository,
+    groupMembershipRepository,
+    commissionRepository,
   );
 
   // --- RAG: búsqueda semántica en PDFs indexados ---

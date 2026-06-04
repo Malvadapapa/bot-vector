@@ -54,8 +54,12 @@ describe('Fase 6 E2E - !config-grupo flow', () => {
     moderationRepo = new UserModerationRepository(db);
     groupContextRepo = new GroupContextRepository(db);
     commissionRepo = new CommissionRepository(db);
-    const { ClassCommissionScheduleRepository } = reposModule as any;
+    const { ClassCommissionScheduleRepository, GroupRepository } = reposModule as any;
     const classCommissionScheduleRepo = new ClassCommissionScheduleRepository(db);
+    const groupRepo = new GroupRepository(db);
+
+    // Register group first to satisfy foreign key constraint of group_context
+    await groupRepo.register('12345-67890@g.us', 'Test Group');
 
     // Ensure admin has a minimal profile to avoid profile completion flow
     await userProfileRepo.upsert('admin1@s.whatsapp.net', 'Admin', '01/01', 'admin@ispc.edu.ar', 1);

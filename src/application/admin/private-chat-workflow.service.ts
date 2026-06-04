@@ -34,6 +34,8 @@ interface PendingClassData {
   meet_link?: string;
   // edit flow
   editId?: number;
+  lastScheduleList?: any[];
+  selectedScheduleId?: number;
 }
 
 interface PendingTeacherData {
@@ -542,6 +544,18 @@ export class PrivateChatWorkflowService {
 
     if (currentState === 'await_class_edit_new_link') {
       return this.handleClassEditNewLink(userId, cleaned);
+    }
+
+    if (currentState === 'await_class_meet_edit_select_class') {
+      return this.handleClassMeetEditSelectClass(userId, cleaned);
+    }
+
+    if (currentState === 'await_class_meet_edit_select_commission') {
+      return this.handleClassMeetEditSelectCommission(userId, cleaned);
+    }
+
+    if (currentState === 'await_class_meet_edit_new_link') {
+      return this.handleClassMeetEditNewLink(userId, cleaned);
     }
 
     if (currentState === 'await_teacher_name') {
@@ -1656,13 +1670,14 @@ export class PrivateChatWorkflowService {
 
   private async superAdminMenuText(userId: string): Promise<string> {
     return [
-      'Menú Super-Admin:',
+      '👑 *Menú Super-Admin*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
       '',
       '1 - Listar y seleccionar grupo',
       '2 - Gestionar cohortes (por entry_year)',
       '3 - Auditar grupos sin cohorte',
       '',
-      '0/menu - Volver al menú admin normal',
+      '0 - Volver al menú admin normal',
     ].join('\n');
   }
 
@@ -1682,8 +1697,7 @@ export class PrivateChatWorkflowService {
     }
 
     return [
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
-      '📋 *Administrando grupo:*',
+      '🗑️ *Administrando grupo:*',
       `• *Nombre:* ${groupName}`,
       `• *Cohorte:* ${groupCohort}`,
       `• *ID:* ${gid}`,
@@ -1706,13 +1720,14 @@ export class PrivateChatWorkflowService {
 
   private async superAdminCohortMenuText(userId: string): Promise<string> {
     return [
-      'Menú Cohortes:',
+      '📁 *Menú Cohortes*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
       '',
       '1 - Listar cohortes configuradas',
       '2 - Crear/Editar cohorte',
       '3 - Seleccionar cohorte para gestionar',
       '',
-      '0/menu - Volver al menú Super-Admin',
+      '0 - Volver al menú Super-Admin',
     ].join('\n');
   }
 
@@ -2492,20 +2507,25 @@ export class PrivateChatWorkflowService {
 
     if (scopedData?.inScopedAdminMenu && scopedData.groupId) {
       this.pendingAdminState.set(userId, 'super_admin_scoped_admin_main');
-      // intentar enriquecer cabecera con display_name y cohorte
-      let headerLabel = scopedData.groupId;
+      let groupName = scopedData.groupId;
+      let groupCohort = 'Sin definir';
       try {
         if (this.groupRepository) {
           const g = await this.groupRepository.findByGroupId(scopedData.groupId);
           if (g) {
-            headerLabel = `${g.display_name || scopedData.groupId} — Cohorte: ${g.entry_year ?? 'General'}\nID: ${scopedData.groupId}`;
+            groupName = g.display_name || scopedData.groupId;
+            groupCohort = g.entry_year ?? 'General';
           }
         }
       } catch (e) {
         // ignore
       }
       return [
-        `Panel admin del Grupo (${headerLabel}):`,
+        '⚙️ *Panel admin del Grupo:*',
+        `• *Nombre:* ${groupName}`,
+        `• *Cohorte:* ${groupCohort}`,
+        `• *ID:* ${scopedData.groupId}`,
+        '━━━━━━━━━━━━━━━━━━━━━━━━━━',
         '',
         '1 - Configurar avisos de clase',
         '2 - Gestionar avisos de exámenes',
@@ -2523,7 +2543,8 @@ export class PrivateChatWorkflowService {
     }
 
     return [
-      `Panel admin (${displayName}):`,
+      `⚙️ *Panel admin (${displayName}):*`,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
       '',
       '1 - Configurar avisos de clase',
       '2 - Gestionar avisos de exámenes',
@@ -2534,7 +2555,7 @@ export class PrivateChatWorkflowService {
       '7 - Moderación de usuarios (desbaneo)',
       '8 - Banear usuario',
       '',
-      '0/menu - Volver al menú principal',
+      '0 - Volver al menú principal',
       '',
       'En cada submenú encontrarás opciones para forzar pruebas de notificación.',
     ].join('\n');
@@ -2583,61 +2604,80 @@ export class PrivateChatWorkflowService {
 
   private classNoticesSubmenuText(): string {
     return [
-      '⚙️ Configurar avisos de clase',
+      '⚙️ *Configurar avisos de clase*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
       '1 - Ver materias programadas',
       '2 - Cargar materia',
       '3 - Eliminar materia',
       '4 - Habilitar/deshabilitar notificaciones',
-      '5 - Editar materia/horario/enlace',
-      '5 - Forzar aviso de clase (prueba)',
+      '5 - Editar materia/horario',
+      '6 - Editar enlace de Meet por materia/comisión',
+      '7 - Forzar aviso de clase (prueba)',
+      '',
       '0 - Volver',
     ].join('\n');
   }
 
   private examsSubmenuText(): string {
     return [
-      '📝 Gestión de exámenes',
+      '📝 *Gestión de exámenes*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
       '1 - Cargar examen',
       '2 - Ver exámenes',
       '3 - Forzar aviso de examen (prueba)',
+      '',
       '0 - Volver',
     ].join('\n');
   }
 
   private institutionalNoticesSubmenuText(): string {
     return [
-      '📬 Gestión de avisos institucionales',
+      '📬 *Gestión de avisos institucionales*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
       '1 - Cargar aviso',
       '2 - Ver avisos',
       '3 - Forzar aviso institucional (prueba)',
       '4 - Editar aviso existente',
+      '',
       '0 - Volver',
     ].join('\n');
   }
 
   private newsSubmenuText(): string {
     return [
-      '📰 Noticias',
+      '📰 *Noticias*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
       '1 - Actualizar noticias',
+      '',
       '0 - Volver',
     ].join('\n');
   }
 
   private teachersSubmenuText(): string {
     return [
-      '👨‍🏫 Cargar emails de profesores',
+      '👨‍🏫 *Cargar emails de profesores*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
       '1 - Ver profesores',
       '2 - Cargar profesor',
       '3 - Eliminar profesor',
+      '',
       '0 - Volver',
     ].join('\n');
   }
 
   private moderationSubmenuText(): string {
     return [
-      '🛡️ Moderación de usuarios',
+      '🛡️ *Moderación de usuarios*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
       '1 - Ver usuarios baneados',
       '2 - Desbanear usuario por ID',
+      '',
       '0 - Volver',
     ].join('\n');
   }
@@ -2688,6 +2728,16 @@ export class PrivateChatWorkflowService {
     }
 
     if (lowered === '6') {
+      this.pendingAdminState.set(userId, 'await_class_meet_edit_select_class');
+      const classes = await this.managedClassRepository.listAll(groupId);
+      if (!classes.length) return 'No hay materias cargadas.';
+      return [
+        'Elegí la materia para editar su enlace de Meet:',
+        ...classes.map((c, idx) => `${idx + 1} - ${c.subject} (${c.schedule_day} ${c.schedule_time})`)
+      ].join('\n');
+    }
+
+    if (lowered === '7') {
       return this.buildClassNotificationPreview(userId);
     }
 
@@ -3157,6 +3207,88 @@ export class PrivateChatWorkflowService {
     await this.managedTeacherRepository.delete(teacherId);
     this.pendingAdminState.delete(userId);
     return `Profesor "${teacher.teacher.name}" eliminado ✅`;
+  }
+
+  private async handleClassMeetEditSelectClass(userId: string, cleaned: string): Promise<string> {
+    const idxStr = cleaned.trim();
+    if (!/^\d+$/.test(idxStr)) return 'Pasame un número válido de la lista.';
+    const groupId = this.pendingSuperAdminData.get(userId)?.groupId;
+    const classes = await this.managedClassRepository.listAll(groupId);
+    const idx = Number(idxStr) - 1;
+    if (idx < 0 || idx >= classes.length) return `Número inválido. Elegí entre 1 y ${classes.length}.`;
+    const cls = classes[idx];
+
+    if (!this.classCommissionScheduleRepository || !this.commissionRepository) {
+      this.pendingAdminState.delete(userId);
+      return 'Repositorios no disponibles.';
+    }
+
+    const schedules = await this.classCommissionScheduleRepository.listByManagedClass(cls.id!);
+    if (!schedules.length) {
+      this.pendingAdminState.delete(userId);
+      return 'No hay comisiones registradas para esta materia.';
+    }
+
+    const pending = this.pendingClassData.get(userId) || {};
+    pending.editId = cls.id;
+    pending.lastScheduleList = schedules;
+    this.pendingClassData.set(userId, pending);
+    this.pendingAdminState.set(userId, 'await_class_meet_edit_select_commission');
+
+    const parts = ['Seleccioná la comisión de la que querés editar el enlace:'];
+    for (let i = 0; i < schedules.length; i++) {
+      const s = schedules[i];
+      const commission = await this.commissionRepository.getById(s.commission_id);
+      const commName = commission ? commission.name : String(s.commission_id);
+      const formattedCommName = commName.toLowerCase().includes('comisi') ? commName : `Comisión ${commName}`;
+      parts.push(`${i + 1} - ${formattedCommName} | Horario: ${s.schedule_day} ${s.schedule_time} | Link: ${s.meet_link || '(sin enlace)'}`);
+    }
+    return parts.join('\n');
+  }
+
+  private async handleClassMeetEditSelectCommission(userId: string, cleaned: string): Promise<string> {
+    const idxStr = cleaned.trim();
+    if (!/^\d+$/.test(idxStr)) return 'Pasame un número válido de la lista.';
+    const pending = this.pendingClassData.get(userId);
+    const schedules = pending?.lastScheduleList;
+    if (!pending || !schedules || !schedules.length) {
+      this.pendingAdminState.delete(userId);
+      this.pendingClassData.delete(userId);
+      return 'Faltan datos. Volvé a intentar.';
+    }
+
+    const idx = Number(idxStr) - 1;
+    if (idx < 0 || idx >= schedules.length) return `Número inválido. Elegí entre 1 y ${schedules.length}.`;
+    const selectedSchedule = schedules[idx];
+
+    pending.selectedScheduleId = selectedSchedule.id;
+    this.pendingClassData.set(userId, pending);
+    this.pendingAdminState.set(userId, 'await_class_meet_edit_new_link');
+
+    return 'Pasame el nuevo enlace (debe comenzar con http).';
+  }
+
+  private async handleClassMeetEditNewLink(userId: string, cleaned: string): Promise<string> {
+    const link = cleaned.trim();
+    if (!link.startsWith('http')) return 'Enlace inválido. Debe comenzar con http.';
+    const pending = this.pendingClassData.get(userId);
+    const scheduleId = pending?.selectedScheduleId;
+    if (!pending || !scheduleId) {
+      this.pendingAdminState.delete(userId);
+      this.pendingClassData.delete(userId);
+      return 'Faltan datos. Volvé a intentar.';
+    }
+
+    if (!this.classCommissionScheduleRepository) {
+      this.pendingAdminState.delete(userId);
+      this.pendingClassData.delete(userId);
+      return 'Repositorio no disponible.';
+    }
+
+    await this.classCommissionScheduleRepository.updateMeetLink(scheduleId, link);
+    this.pendingAdminState.delete(userId);
+    this.pendingClassData.delete(userId);
+    return `Enlace de Meet de la comisión actualizado correctamente ✅`;
   }
 
   private clearPendingData(userId: string): void {
@@ -3690,6 +3822,7 @@ export class PrivateChatWorkflowService {
             email,
             subject: pending.currentSubject,
             group_id: pending.groupId,
+            commission_id: pending.currentCommissionId,
           });
         }
       } catch (e) {

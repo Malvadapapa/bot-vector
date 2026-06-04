@@ -4,6 +4,19 @@ import { LoggingService } from '../shared/logging/logging.service.js';
 import fs from 'fs/promises';
 import path from 'path';
 
+let consoleErrorSpy: any;
+let consoleLogSpy: any;
+
+beforeEach(() => {
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  consoleErrorSpy?.mockRestore();
+  consoleLogSpy?.mockRestore();
+});
+
 describe('General Menu Navigation and Error Logging Tests', () => {
   const TEST_DATA_DIR = path.join(process.cwd(), 'data-test-logging');
 

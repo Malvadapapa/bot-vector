@@ -50,6 +50,19 @@ vi.mock('imapflow', () => {
   };
 });
 
+let consoleErrorSpy: any;
+let consoleLogSpy: any;
+
+beforeEach(() => {
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  consoleErrorSpy?.mockRestore();
+  consoleLogSpy?.mockRestore();
+});
+
 // ============================================================================
 // 1. OutboundEmailService Tests
 // ============================================================================

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import sqlite3 from 'sqlite3';
+import { run } from '../../../shared/db/db-utils.js';
 import { applyMigrations } from '../../../shared/db/migrations.js';
 import {
   ReminderRepository,
@@ -216,6 +217,7 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
     });
 
     it('debería asociar comisiones al contexto del grupo', async () => {
+      await run(db, "INSERT INTO whatsapp_groups(group_id, display_name, is_active) VALUES ('group123', 'group123', 1)");
       const com1 = await commissionRepo.createOrGet('Comisión 1', 2026, 'Tarde');
       const com2 = await commissionRepo.createOrGet('Comisión 2', 2026, 'Noche');
 
@@ -442,6 +444,8 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
     });
 
     it('debería mantener agenda separada por groupId en !hoy', async () => {
+      await run(db, "INSERT INTO whatsapp_groups(group_id, display_name, is_active) VALUES ('groupA@g.us', 'Group A', 1)");
+      await run(db, "INSERT INTO whatsapp_groups(group_id, display_name, is_active) VALUES ('groupB@g.us', 'Group B', 1)");
       const commissionA = await commissionRepo.createOrGet('1', 2026, 'Noche');
       const commissionB = await commissionRepo.createOrGet('2', 2026, 'Noche');
 

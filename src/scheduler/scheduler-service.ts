@@ -114,9 +114,10 @@ export class SchedulerService {
           const shouldSend = await this.outboxDedupRepository.markIfNew(dedupKey);
           if (!shouldSend) continue;
 
-          const message = this.classNotificationService.buildNotificationMessage(managedClass);
+          const message = await this.classNotificationService.buildNotificationMessage(managedClass);
           // PHASE 5: Send to active groups from database
           for (const groupId of currentActiveGroupIds) {
+            if (managedClass.group_id && managedClass.group_id !== groupId) continue;
             await this.whatsappGateway.sendTextMessage(groupId, message);
           }
           await this.classNotificationService.recordNotificationSent(managedClass.id!);
@@ -138,6 +139,7 @@ export class SchedulerService {
           const message = this.examNotificationService.formatNotificationMessage(item.exam, item.frequency);
           // PHASE 5: Send to active groups from database
           for (const groupId of currentActiveGroupIds) {
+            if (item.exam.group_id && item.exam.group_id !== groupId) continue;
             await this.whatsappGateway.sendTextMessage(groupId, message);
           }
         }

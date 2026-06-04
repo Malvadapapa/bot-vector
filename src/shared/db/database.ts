@@ -17,23 +17,28 @@ export class DatabaseConnection {
     }
 
     this.ready = new Promise((resolve, reject) => {
-      this.db = new sqlite3.Database(finalPath, async (err) => {
+      this.db = new sqlite3.Database(finalPath, (err) => {
         if (err) {
           console.error(`[BD] No se pudo abrir la base de datos: ${err.message}`);
           reject(err);
           return;
         }
 
-        try {
-          console.log(`[BD] Conectado a: ${finalPath}`);
-          await applyMigrations(this.db);
-          console.log('[BD] Esquema verificado y migraciones aplicadas');
-          resolve();
-        } catch (migrationErr) {
-          const msg = (migrationErr as any)?.message || 'error desconocido';
-          console.error(`[BD] Error aplicando migraciones: ${msg}`);
-          reject(migrationErr);
-        }
+        this.db.run('PRAGMA foreign_keys = ON;', async (pragmaErr) => {
+          if (pragmaErr) {
+            console.error(`[BD] Error al activar foreign_keys: ${pragmaErr.message}`);
+          }
+          try {
+            console.log(`[BD] Conectado a: ${finalPath}`);
+            await applyMigrations(this.db);
+            console.log('[BD] Esquema verificado y migraciones aplicadas');
+            resolve();
+          } catch (migrationErr) {
+            const msg = (migrationErr as any)?.message || 'error desconocido';
+            console.error(`[BD] Error aplicando migraciones: ${msg}`);
+            reject(migrationErr);
+          }
+        });
       });
 
       this.db?.on('error', (dbErr) => {

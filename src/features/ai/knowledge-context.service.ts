@@ -1,4 +1,13 @@
-import { InstitutionalNoticeRepository, ManagedClassRepository, ManagedExamRepository, ManagedTeacherRepository, ReminderRepository, UserProfileRepository } from '../../infrastructure/persistence/db/repositories.js';
+import {
+  InstitutionalNoticeRepository,
+  ManagedClassRepository,
+  ManagedExamRepository,
+  ManagedTeacherRepository,
+  ReminderRepository,
+  UserProfileRepository,
+  GroupMembershipRepository,
+  CommissionRepository
+} from '../../infrastructure/persistence/db/repositories.js';
 import { GroupContextRepository } from '../academic-calendar/academic-calendar.repository.js';
 
 function compact(text: string, limit = 180): string {
@@ -16,6 +25,8 @@ export class KnowledgeContextService {
     private reminderRepository: ReminderRepository,
     private teacherRepository: ManagedTeacherRepository,
     private groupContextRepository?: GroupContextRepository,
+    private groupMembershipRepository?: GroupMembershipRepository,
+    private commissionRepository?: CommissionRepository,
   ) {}
 
   public async buildContext(userId: string, groupId?: string): Promise<string> {
@@ -38,7 +49,25 @@ export class KnowledgeContextService {
     // 1. INFORMACIÓN DEL USUARIO
     parts.push('\n─ PERFIL DEL USUARIO ─');
     if (profile) {
-      const commissionInfo = profile.user_commission_id ? `, comisión ${profile.user_commission_id}` : ', sin comisión asignada';
+      let commissionInfo = ', sin comisión asignada';
+      if (commissionId !== null) {
+        if (this.commissionRepository) {
+          try {
+            const comm = await this.commissionRepository.getById(commissionId);
+            if (comm) {
+              const rawName = comm.name || '';
+              const friendlyName = rawName.toLowerCase().includes('comisi') ? rawName : `Comisión ${rawName}`;
+              commissionInfo = `, ${friendlyName}`;
+            } else {
+              commissionInfo = `, comisión ID ${commissionId}`;
+            }
+          } catch {
+            commissionInfo = `, comisión ID ${commissionId}`;
+          }
+        } else {
+          commissionInfo = `, comisión ID ${commissionId}`;
+        }
+      }
       parts.push(`Nombre: ${profile.name} (${profile.birthday_day_month})${profile.email ? ` | Email: ${profile.email}` : ''}${commissionInfo}`);
     } else {
       parts.push('Perfil: No registrado');
@@ -108,25 +137,38 @@ export class KnowledgeContextService {
   }
 
   private async resolveCommissionId(userId: string, fallbackCommissionId: number | null, groupId?: string): Promise<number | null> {
-    if (groupId && this.groupContextRepository) {
-      try {
-        const groupContext = await this.groupContextRepository.getByGroupId(groupId);
-        if (!groupContext) return null;
-
-        if (typeof groupContext.commission_id === 'number') {
-          return groupContext.commission_id;
-        }
-
-        if (typeof groupContext.id === 'number') {
-          const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
-          if (commissions.length === 1 && typeof commissions[0].id === 'number') {
-            return commissions[0].id;
+    if (groupId) {
+      // 1. Check group membership commission first
+      if (this.groupMembershipRepository) {
+        try {
+          const membership = await this.groupMembershipRepository.getMembership(groupId, userId);
+          if (membership && typeof membership.commission_id === 'number') {
+            return membership.commission_id;
           }
+        } catch {
+          // ignore
         }
+      }
 
-        return null;
-      } catch {
-        return null;
+      // 2. Fallback to group context/commissions
+      if (this.groupContextRepository) {
+        try {
+          const groupContext = await this.groupContextRepository.getByGroupId(groupId);
+          if (groupContext) {
+            if (typeof groupContext.commission_id === 'number') {
+              return groupContext.commission_id;
+            }
+
+            if (typeof groupContext.id === 'number') {
+              const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+              if (commissions.length === 1 && typeof commissions[0].id === 'number') {
+                return commissions[0].id;
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 

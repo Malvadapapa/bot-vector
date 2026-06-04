@@ -74,7 +74,7 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
   it('superadmin receives only superadmin menu in private on menu / 0', async () => {
     // When superadmin types menu, they get Super-Admin menu
     const saMenu = await svc.handlePrivateMessage('sa1', 'menu');
-    expect(saMenu).toContain('Menú Super-Admin:');
+    expect(saMenu).toContain('Menú Super-Admin');
     expect(saMenu).toContain('1 - Listar y seleccionar grupo');
     expect(saMenu).toContain('2 - Gestionar cohortes (por entry_year)');
     expect(saMenu).not.toContain('Panel admin (');
@@ -109,7 +109,7 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
 
     // 5. Choose option 7 to enter scoped admin menu
     const scopedMenu = await svc.handlePrivateMessage('sa1', '7');
-    expect(scopedMenu).toContain('Panel admin del Grupo (');
+    expect(scopedMenu).toContain('Panel admin del Grupo:');
     expect(scopedMenu).toContain('1 - Configurar avisos de clase');
     expect(scopedMenu).toContain('0 - Volver al menú de gestión de grupo');
 
@@ -120,7 +120,7 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
 
     // 7. Exit class submenu by typing 0 or menu -> should return back to scoped admin menu
     const backToScoped = await svc.handlePrivateMessage('sa1', '0');
-    expect(backToScoped).toContain('Panel admin del Grupo (');
+    expect(backToScoped).toContain('Panel admin del Grupo:');
 
     // 8. Exit scoped admin menu by typing 0 -> should return to group management menu
     const backToMgmt = await svc.handlePrivateMessage('sa1', '0');
@@ -130,7 +130,7 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
 
     // 9. Exit group management menu by typing 0 -> should return to superadmin main menu
     const backToSaMain = await svc.handlePrivateMessage('sa1', '0');
-    expect(backToSaMain).toContain('Menú Super-Admin:');
+    expect(backToSaMain).toContain('Menú Super-Admin');
   });
 
   it('verifies that !config-grupo requires isGroupAdmin or isSuperAdmin in groups', async () => {

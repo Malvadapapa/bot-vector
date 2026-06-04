@@ -1,5 +1,5 @@
 import { ManagedClass } from '../../domain/models.js';
-import { ManagedClassRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { ManagedClassRepository, ClassCommissionScheduleRepository, CommissionRepository } from '../../infrastructure/persistence/db/repositories.js';
 import { ClassNotificationRepository } from './notifications.repository.js';
 
 const FRIENDLY_PHRASES = [
@@ -17,6 +17,8 @@ export class ClassNotificationService {
   constructor(
     private managedClassRepository: ManagedClassRepository,
     private classNotificationRepository: ClassNotificationRepository,
+    private classCommissionScheduleRepository?: ClassCommissionScheduleRepository,
+    private commissionRepository?: CommissionRepository,
   ) {}
 
   public async getClassesToNotifyNow(now: Date = new Date()): Promise<Array<ManagedClass & { id: number }>> {
@@ -51,9 +53,48 @@ export class ClassNotificationService {
     return classesToNotify;
   }
 
-  public buildNotificationMessage(managedClass: ManagedClass): string {
+  public async buildNotificationMessage(managedClass: ManagedClass): Promise<string> {
     const phrase = FRIENDLY_PHRASES[Math.floor(Math.random() * FRIENDLY_PHRASES.length)];
-    return `${phrase}\n\n📚 ${managedClass.subject}\n🧩 Comisiones: ${this.getCommissionText(managedClass.commission_count)}\n🔗 Enlace: ${managedClass.meet_link}`;
+    let commissionText = '';
+
+    if (this.classCommissionScheduleRepository && this.commissionRepository && managedClass.id) {
+      try {
+        const schedules = await this.classCommissionScheduleRepository.listByManagedClass(managedClass.id);
+        if (schedules.length > 0) {
+          const commIds = schedules.map((s) => s.commission_id);
+          const names: string[] = [];
+          for (const cid of commIds) {
+            const comm = await this.commissionRepository.getById(cid);
+            if (comm) {
+              let name = comm.name;
+              if (managedClass.commission_count === 2) {
+                if (comm.name === '1' || comm.name.toUpperCase() === 'A') {
+                  name = 'A';
+                } else if (comm.name === '2' || comm.name.toUpperCase() === 'B') {
+                  name = 'B';
+                }
+              } else if (managedClass.commission_count === 1) {
+                name = 'Unica';
+              }
+              if (!names.includes(name)) {
+                names.push(name);
+              }
+            }
+          }
+          if (names.length > 0) {
+            commissionText = names.join(', ');
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    if (!commissionText) {
+      commissionText = this.getCommissionText(managedClass.commission_count);
+    }
+
+    return `${phrase}\n\n📚 ${managedClass.subject}\n🧩 Comisión: ${commissionText}\n🔗 Enlace: ${managedClass.meet_link}`;
   }
 
   public async recordNotificationSent(managedClassId: number): Promise<void> {
@@ -75,6 +116,6 @@ export class ClassNotificationService {
 
   private getCommissionText(commissionCount: number): string {
     const normalized = Number.isFinite(commissionCount) ? Math.max(1, Math.trunc(commissionCount)) : 1;
-    return normalized === 1 ? '1 (unica)' : String(normalized);
+    return normalized === 1 ? 'Unica' : String(normalized);
   }
 }
