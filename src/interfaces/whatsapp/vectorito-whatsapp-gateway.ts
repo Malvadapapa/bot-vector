@@ -14,7 +14,7 @@ import { PrivateChatWorkflowService } from '../../application/admin/private-chat
 import { RateLimitService } from '../../features/ai/rate-limit.service.js';
 import { UserModerationService } from '../../features/moderation/user-moderation.service.js';
 import { AdminRepository, GroupRepository, UserProfileRepository, GroupMembershipRepository } from '../../infrastructure/persistence/db/repositories.js';
-import { logTuiChatMessage } from '../../shared/config/tui-shared.js';
+import { logTuiChatMessage, logTuiProcessTrace } from '../../shared/config/tui-shared.js';
 
 const nodeRequire = createRequire(import.meta.url);
 const qrcodeTerminal = nodeRequire('qrcode-terminal');
@@ -257,7 +257,7 @@ export class VectoritoWhatsAppGateway {
             const isActiveGroup = !isGroup ? true : await this.groupRepository.isActive(chatId);
 
             if (incomingText) {
-              this.logIncoming(chatId, senderJid, incomingText, isGroup, isAdmin);
+              this.logIncoming(chatId, senderJid, incomingText, isGroup, isAdmin, incomingMessage);
             } else if (isGroup) {
               console.warn(`⚠️ [Gateway] Mensaje de grupo sin texto reconocible: chat=${chatId} sender=${senderJid}`);
             }
@@ -487,10 +487,12 @@ export class VectoritoWhatsAppGateway {
           if (!isAdmin && !isCommand && !(hasPendingMenu && isNumericReply)) {
             const moderation = await this.moderationService.evaluate(senderJid, normalizedGroupText, isAdmin || isSuperAdmin, new Date());
             if (moderation.warningMessage) {
+              logTuiProcessTrace(`Advertencia de moderación para ${senderJid}: ${moderation.warningMessage}`);
               await this.sendTextMessage(chatId, moderation.warningMessage, senderJid, false);
               continue;
             }
             if (moderation.blocked) {
+              logTuiProcessTrace(`Acceso denegado: El usuario ${senderJid} se encuentra bloqueado por moderación.`);
               if (invokedByMention) {
                 await this.sendTextMessage(chatId, '⚠️ Ahora no puedo responderte. Si creés que es un error, hablá con un admin.', senderJid, false);
               }
@@ -719,7 +721,7 @@ export class VectoritoWhatsAppGateway {
     return false;
   }
 
-  private logIncoming(chatId: string, sender: string, text: string, isGroup: boolean, isAdmin: boolean): void {
+  private logIncoming(chatId: string, sender: string, text: string, isGroup: boolean, isAdmin: boolean, incomingMessage?: any): void {
     const msg = this.compactText(text);
     const scopeLabel = isGroup ? '[GRUPO]' : '[PRIVADO]';
     const baseColor = isGroup ? ANSI.cyan : ANSI.yellow;
@@ -727,20 +729,41 @@ export class VectoritoWhatsAppGateway {
       ? `${ANSI.magenta}${ANSI.bright}[ADMIN]${ANSI.reset} ${sender}`
       : `${ANSI.dim}${sender}${ANSI.reset}`;
 
-    console.log(`${baseColor}📩 ${scopeLabel}${ANSI.reset} ${senderLabel} ${ANSI.dim}chat=${chatId}${ANSI.reset} -> "${msg}"`);
+    if (process.env.TUI_ENABLED !== 'true') {
+      console.log(`${baseColor}📩 ${scopeLabel}${ANSI.reset} ${senderLabel} ${ANSI.dim}chat=${chatId}${ANSI.reset} -> "${msg}"`);
+    }
     
     const phone = sender.split('@')[0];
-    if (isGroup) {
-      this.groupRepository.findByGroupId(chatId).then((group) => {
-        const entryYear = group?.entry_year != null ? `Camada ${group.entry_year}` : 'General';
-        const contextLabel = `[Grupo: ${group?.display_name || chatId} | ${entryYear}]`;
-        logTuiChatMessage(phone, text, 'user', contextLabel);
-      }).catch(() => {
-        logTuiChatMessage(phone, text, 'user', `[Grupo: ${chatId}]`);
-      });
-    } else {
-      logTuiChatMessage(phone, text, 'user', '[Privado]');
-    }
+    const key = incomingMessage?.key;
+    const altJid = key?.participantAlt || key?.remoteJidAlt;
+    const realPhone = altJid ? altJid.split('@')[0] : phone;
+    const realPhoneJid = altJid || (sender.endsWith('@s.whatsapp.net') ? sender : `${realPhone}@s.whatsapp.net`);
+
+    // Intentar obtener perfil usando el sender (puede ser LID) y, si no existe, el JID real de teléfono.
+    const getProfile = async () => {
+      let profile = await this.userProfileRepository.get(sender);
+      if (!profile && realPhoneJid !== sender) {
+        profile = await this.userProfileRepository.get(realPhoneJid);
+      }
+      return profile;
+    };
+
+    getProfile().then((profile) => {
+      const displayName = profile?.name ? `${profile.name} (${realPhone})` : realPhone;
+      if (isGroup) {
+        this.groupRepository.findByGroupId(chatId).then((group) => {
+          const entryYear = group?.entry_year != null ? `Camada ${group.entry_year}` : 'General';
+          const contextLabel = `[Grupo: ${group?.display_name || chatId} | ${entryYear}]`;
+          logTuiChatMessage(displayName, text, 'user', contextLabel);
+        }).catch(() => {
+          logTuiChatMessage(displayName, text, 'user', `[Grupo: ${chatId}]`);
+        });
+      } else {
+        logTuiChatMessage(displayName, text, 'user', '[Privado]');
+      }
+    }).catch(() => {
+      logTuiChatMessage(realPhone, text, 'user', isGroup ? `[Grupo: ${chatId}]` : '[Privado]');
+    });
   }
 
   private logOutgoing(jid: string, text: string, senderId?: string, sourceWasPrivate?: boolean): void {
@@ -751,7 +774,9 @@ export class VectoritoWhatsAppGateway {
     const color = inferredPrivate ? ANSI.yellow : ANSI.green;
     const replyTo = senderId ? ` ${ANSI.dim}a=${senderId}${ANSI.reset}` : '';
 
-    console.log(`${color}📤 ${scopeLabel}${ANSI.reset}${replyTo} ${ANSI.dim}destino=${jid}${ANSI.reset} -> "${msg}"`);
+    if (process.env.TUI_ENABLED !== 'true') {
+      console.log(`${color}📤 ${scopeLabel}${ANSI.reset}${replyTo} ${ANSI.dim}destino=${jid}${ANSI.reset} -> "${msg}"`);
+    }
     
     if (isGroup) {
       this.groupRepository.findByGroupId(jid).then((group) => {
@@ -1026,7 +1051,9 @@ export class VectoritoWhatsAppGateway {
 
       // Evitar filtrar si es un log de trazabilidad del bot (📩 o 📤)
       if (typeof first === 'string' && (first.includes('📩') || first.includes('📤'))) {
-        originalLog(...args);
+        if (process.env.TUI_ENABLED !== 'true') {
+          originalLog(...args);
+        }
         return;
       }
 

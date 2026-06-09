@@ -9,7 +9,7 @@ export class FallbackAIService implements AIProvider {
     }
   }
 
-  public async generateContent(userId: string, prompt: string): Promise<string> {
+  public async generateContent(userId: string, prompt: string, rawPrompt?: string): Promise<string> {
     let lastError: any = null;
 
     for (let i = 0; i < this.providers.length; i++) {
@@ -18,7 +18,7 @@ export class FallbackAIService implements AIProvider {
       const provider = this.providers[attemptIndex];
 
       try {
-        const response = await provider.generateContent(userId, prompt);
+        const response = await provider.generateContent(userId, prompt, rawPrompt);
         // Si tuvo éxito, actualizamos el proveedor activo para seguir usándolo
         this.activeProviderIndex = attemptIndex;
         return response;

@@ -9,7 +9,11 @@ const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_KNOWLEDGE_DIR = path.join(process.cwd(), 'data', 'ai-context');
 const DEFAULT_CACHE_FILE = path.join(DEFAULT_KNOWLEDGE_DIR, '.gemini-upload-cache.json');
 const MAX_CHAT_TURNS = Number(process.env.MAX_CHAT_TURNS || 12);
-const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MINUTES || 120) * 60_000;
+const MAX_SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas máximo
+const SESSION_TTL_MS = Math.min(
+  Number(process.env.SESSION_TTL_MINUTES || 120) * 60_000,
+  MAX_SESSION_TTL_MS
+);
 const UPLOAD_DELAY_MS = 1500;
 const POLL_DELAY_MS = 1500;
 const MAX_POLL_ATTEMPTS = 30;
@@ -37,7 +41,7 @@ const SESSION_CLEANUP_INTERVAL_MS = 5 * 60_000;
 // Las instrucciones se importan desde ../../../shared/config/instructions.js
 
 type UploadedFile = { name: string; uri: string; mimeType: string };
-type SessionTurn = { user: string; model: string };
+type SessionTurn = { user: string; model: string; timestamp: number };
 type PromptPart = { text: string } | { fileData: { fileUri: string; mimeType: string } };
 type PromptMessage = { role: 'user' | 'model'; parts: PromptPart[] };
 
@@ -68,9 +72,13 @@ function sanitizeBotText(text: string): string {
 
 function buildHistory(turns: SessionTurn[]): PromptMessage[] {
   const out: PromptMessage[] = [];
+  const now = Date.now();
+  const twelveHoursAgo = now - 12 * 60 * 60 * 1000;
   for (const t of turns) {
-    out.push({ role: 'user', parts: [{ text: t.user }] });
-    out.push({ role: 'model', parts: [{ text: t.model }] });
+    if (t.timestamp >= twelveHoursAgo) {
+      out.push({ role: 'user', parts: [{ text: t.user }] });
+      out.push({ role: 'model', parts: [{ text: t.model }] });
+    }
   }
   return out;
 }
@@ -204,7 +212,7 @@ export class GeminiService implements AIProvider {
   /**
    * Genera contenido usando la cadena de modelos con fallback automático.
    */
-  public async generateContent(userId: string, prompt: string): Promise<string> {
+  public async generateContent(userId: string, prompt: string, rawPrompt?: string): Promise<string> {
     await this.initialize();
 
     const now = Date.now();
@@ -214,7 +222,7 @@ export class GeminiService implements AIProvider {
       if (entry.cooldownUntil > now) continue;
 
       try {
-        const result = await this.tryGenerateWithRetry(entry, userId, prompt);
+        const result = await this.tryGenerateWithRetry(entry, userId, prompt, rawPrompt);
         return result;
       } catch (err: any) {
         lastError = err;
@@ -256,9 +264,15 @@ export class GeminiService implements AIProvider {
 
   // ───── Métodos privados ─────
 
-  private async tryGenerateWithRetry(entry: ModelEntry, userId: string, prompt: string): Promise<string> {
+  private async tryGenerateWithRetry(entry: ModelEntry, userId: string, prompt: string, rawPrompt?: string): Promise<string> {
     const baseHistory = entry.isGemma ? this.baseHistoryGemma : this.baseHistoryGemini;
     const session = this.getOrCreateSession(userId);
+    
+    // Filtrar turnos viejos de más de 12 horas antes de construir el historial
+    const nowMs = Date.now();
+    const twelveHoursAgo = nowMs - 12 * 60 * 60 * 1000;
+    session.turns = session.turns.filter((t) => t.timestamp >= twelveHoursAgo);
+
     const history = [...baseHistory, ...buildHistory(session.turns)];
 
     let lastErr: any = null;
@@ -268,11 +282,15 @@ export class GeminiService implements AIProvider {
         const response = await chatSession.sendMessage(prompt);
         const text = sanitizeBotText(response.response.text());
 
-        session.turns.push({ user: prompt, model: text });
+        const finalUserPrompt = rawPrompt || prompt;
+        session.turns.push({ user: finalUserPrompt, model: text, timestamp: nowMs });
+        
+        // Mantener filtro activo de 12 horas y límite de turnos
+        session.turns = session.turns.filter((t) => t.timestamp >= twelveHoursAgo);
         if (session.turns.length > MAX_CHAT_TURNS) {
           session.turns = session.turns.slice(-MAX_CHAT_TURNS);
         }
-        session.lastActivity = Date.now();
+        session.lastActivity = nowMs;
 
         return text;
       } catch (err: any) {

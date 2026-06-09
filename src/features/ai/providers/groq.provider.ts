@@ -29,7 +29,7 @@ export class GroqProvider implements AIProvider {
     this.initialized = true;
   }
 
-  public async generateContent(userId: string, prompt: string): Promise<string> {
+  public async generateContent(userId: string, prompt: string, rawPrompt?: string): Promise<string> {
     await this.initialize();
     
     if (!this.apiKey) {

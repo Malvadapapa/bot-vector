@@ -2,7 +2,7 @@
 
 Todas las modificaciones notables de este proyecto serán documentadas en este archivo.
 
-## [2.1.0-alpha.3] - Unreleased
+## [0.2.1-alpha.3] - Unreleased
 
 ### Agregado
 - **Protección contra Prompt Leakage (BUG-001)**:
@@ -16,14 +16,20 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - Al terminar las materias, solicita registrar la lista de emails de clase de la cohorte en formato `etiqueta|email` separados por comas (salteable con `skip` o `mas tarde`).
 - **Enrutamiento de Avisos de Profesor Multi-Grupo**: Un profesor puede estar registrado para dictar en múltiples grupos/camadas con un único correo. El monitor IMAP valida y restringe la publicación del aviso estrictamente a los grupos autorizados para el remitente, permitiendo enviar a todos sus grupos por defecto o filtrar según selector de camada.
 - **Conexión de Profesores y Avisos en Contexto IA**: En `buildContext`, se vinculan los avisos institucionales con el profesor emisor basándose en su correo para inyectar la relación a la IA, permitiendo responder a preguntas como *"¿el profesor de programación dejó algún aviso?"* de forma natural.
-- **Tablero de Supervisión TUI (Interfaz de Consola Dividida)**:
-  - Implementación de una interfaz gráfica de terminal (TUI) autocontenida basada en `neo-blessed` que se activa mediante `TUI_ENABLED=true` en `.env`.
-  - División vertical de la pantalla al 50% en dos visualizadores continuos: el **Panel Izquierdo** para el flujo de conversaciones de WhatsApp y trazas del proceso RAG/IA (incluyendo validación de comisiones, hits de contexto y llamadas al LLM), y el **Panel Derecho** para logs generales de infraestructura y errores del sistema.
-  - Implementación de un interceptor de stream seguro (`StreamInterceptor`) que intercepta directamente el objeto `console` global con control de recursión (`activeInterceptions`) y limpiador de códigos ANSI (`stripAnsi`), evitando interferencias con el motor de dibujo de Blessed.
-  - Integración de barras de scroll visuales e independientes para cada panel (amarillo/cian).
-  - Soporte de scroll independiente por mouse "hover" (sin necesidad de hacer foco previo) y foco alternado vía teclado (tecla `Tab`) para navegar el historial completo (scrollback de 10k líneas).
-  - Forzado automático de codificación UTF-8 (`chcp 65001`) en entornos Windows para la correcta renderización de emojis y bordes de paneles.
-  - Extracción automática de números de teléfono de estudiantes y representación de contextos de grupo (nombre y camada) en el flujo del chat.
+  - **Tablero de Supervisión TUI (Interfaz de Consola Dividida)**:
+    - Implementación de una interfaz gráfica de terminal (TUI) autocontenida basada en `neo-blessed` que se activa mediante `TUI_ENABLED=true` en `.env`.
+    - División vertical de la pantalla al 50% en dos visualizadores continuos: el **Panel Izquierdo** para el flujo de conversaciones de WhatsApp y trazas del proceso RAG/IA (incluyendo validación de comisiones, hits de contexto y llamadas al LLM), y el **Panel Derecho** para logs generales de infraestructura y errores del sistema.
+    - Implementación de un interceptor de stream seguro (`StreamInterceptor`) que intercepta directamente el objeto `console` global con control de recursión (`activeInterceptions`) y limpiador de códigos ANSI (`stripAnsi`), evitando interferencias con el motor de dibujo de Blessed.
+    - Integración de barras de scroll visuales e independientes para cada panel (amarillo/cian).
+    - Soporte de scroll independiente por mouse "hover" (sin necesidad de hacer foco previo) y foco alternado vía teclado (tecla `Tab`) para navegar el historial completo (scrollback de 10k líneas).
+    - Forzado automático de codificación UTF-8 (`chcp 65001`) en entornos Windows para la correcta renderización de emojis y bordes de paneles.
+    - Extracción automática de números de teléfono de estudiantes y representación de contextos de grupo (nombre y camada) en el flujo del chat.
+    - **Refinamiento y Colores del Tablero TUI**:
+      - **Filtro de Logs Redundantes**: Supresión completa del flujo de mensajes en bruto (`📩` y `📤`) en el panel derecho de infraestructura cuando la TUI está activa, evitando logs duplicados.
+      - **Resolución de JID/LID a Teléfono Real**: Extracción automática de JIDs telefónicos alternativos (`participantAlt` / `remoteJidAlt`) proporcionados por Baileys. Las consultas a la base de datos de perfiles ahora buscan tanto por el JID de envío (que puede ser un Linked ID `@lid`) como por el JID real de teléfono, mostrando siempre `Nombre del Estudiante (Teléfono Real)` o el teléfono real en su defecto en el panel de conversación.
+      - **Colores Semánticos y Accesibles**: Aplicación de colores automáticos mediante Blessed en el panel derecho de logs (Verde para éxitos y conexiones, Amarillo/Naranja para advertencias, bloqueos y reintentos, Rojo para excepciones y errores graves).
+      - **Identificación de Origen (Tags)**: Las etiquetas bracketed al inicio de las líneas de log (ej. `[BD]`, `[RAG]`, `[IA]`, `[WhatsApp]`, `[Scheduler]`, etc.) se colorean de manera independiente con su propio tono visual persistente para identificar de un vistazo el origen de los flujos.
+      - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
 
 ### Corregido
 - **Aislamiento de Contexto entre Comisiones (BUG-002)**: Corrección del error por el cual el comando `!semana` y las consultas de agenda vía IA mezclaban los cronogramas de distintas comisiones en un mismo grupo. El bot ahora valida la comisión del usuario antes de responder sobre agendas, aulas o enlaces de cursado. Si no puede determinar la comisión, solicita al alumno que se identifique antes de continuar.
@@ -31,6 +37,11 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - `AcademicCalendarService`: filtrado por `commission_id` del usuario en `formatDay`, `formatWeekEvents` y comandos rápidos.
   - `KnowledgeContextService`: inyección del contexto de comisión en `buildContext` para consultas IA.
   - Tests: 6 pruebas nuevas en `prompt-leakage.spec.ts` validando el bloqueo y aislamiento.
+- **Exposición y Persistencia Excesiva de Memoria Conversacional (BUG-003)**: Corrección del problema de fuga y persistencia excesiva de memoria. Se aisló el historial estrictamente por el identificador de usuario y se guardó únicamente el prompt original limpio en lugar del prompt enriquecido (que incluía directivas, RAG e información de BD). Se inyectó una marca de tiempo a cada turno y se limitó su vigencia a un máximo de 12 horas.
+  - `AIProvider`, `GeminiService`, `GroqProvider`, `FallbackAIService`: Se añadió el parámetro opcional `rawPrompt` para almacenar la consulta limpia del estudiante en la memoria.
+  - `GeminiService`: Filtrado activo de turnos que superen las 12 horas y limitación del TTL general de inactividad de la sesión a un máximo de 12 horas.
+  - `AIQueryService`: Envío de la consulta limpia (`prompt`) como `rawPrompt` al proveedor de IA.
+  - Tests: Creación de `conversational-memory.spec.ts` para certificar el almacenamiento del prompt limpio y la expiración en 12 horas.
 - **Errores de compilación TypeScript (4 errores)**:
   - `private-chat-workflow.service.ts:2517` — TS2322: conversión de `entry_year` (`number | null`) a `string` con fallback `'General'`.
   - `academic-calendar.service.ts:412` — TS2448/TS2454/TS2345: variable `menuTree` usada antes de su declaración; se movió la declaración al inicio de `handleMenuInput`.
@@ -50,7 +61,7 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - `domain/models.ts`: eliminadas ~175 líneas de interfaces comentadas (`Reminder`, `InstitutionalNotice`, `ManagedExam`, `ManagedClass`, `ManagedTeacher`, `Comision`, `Commission`, `GroupContext`, `CohortConfig`, `ClassCommissionSchedule`) ya migradas a `academic-calendar.models.ts` y `notifications.models.ts`. Re-exports conservados.
   - `migration-helper.ts`: archivo huérfano eliminado (solo contenía un comentario legacy, sin imports).
 
-## [2.1.0-alpha.2] - 2026-06-01
+## [0.2.1-alpha.2] - 2026-06-01
 
 ### Agregado
 - **Comisiones Independientes por Grupo**: Se añadió la columna `commission_id` a la tabla `group_memberships` (migración versión 27) y se adaptaron los repositorios para guardar la comisión de los estudiantes por cada grupo de forma autónoma.
@@ -71,7 +82,7 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 - **Depuración de Tono Conversacional**: Remoción integral de modismos excesivamente informales (`chango`, `máquina`, `che`, `querido`) y bromas internas de baneo, adoptando un tono profesional y académico (polite & professional) alineado al entorno del ISPC.
 - **Simplificación de Errores de Conexión TLS**: Ajuste en `email.service.ts` para que, en caso de fallas de conexión TLS conocidas, muestre solo el mensaje simplificado de error en lugar del stack trace multilínea completo para evitar spam masivo en la consola.
 
-## [2.1.0-alpha.1] - 2026-05-29
+## [0.2.1-alpha.1] - 2026-05-29
 
 ### Refactorización Arquitectónica: Vertical Slicing + Screaming Architecture
 

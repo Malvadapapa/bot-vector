@@ -153,11 +153,104 @@ export class TerminalTui {
     this.screen.render();
   }
 
+  private colorizeLogLine(text: string): string {
+    if (text.includes('{red-fg}') || text.includes('{yellow-fg}') || text.includes('{green-fg}')) {
+      return text;
+    }
+
+    const lowerText = text.toLowerCase();
+    let msgColor = '';
+
+    // Determinar color semántico general
+    if (
+      lowerText.includes('error') || 
+      lowerText.includes('failed') || 
+      lowerText.includes('fail') || 
+      lowerText.includes('rechazado') || 
+      lowerText.includes('rejected') || 
+      lowerText.includes('fatal') || 
+      lowerText.includes('excepción') || 
+      lowerText.includes('exception')
+    ) {
+      msgColor = 'red';
+    } else if (
+      lowerText.includes('warn') || 
+      lowerText.includes('⚠️') || 
+      lowerText.includes('denied') || 
+      lowerText.includes('denegado') || 
+      lowerText.includes('bloqueado') || 
+      lowerText.includes('blocked') || 
+      lowerText.includes('retry') || 
+      lowerText.includes('reintentando') || 
+      lowerText.includes('descartado') || 
+      lowerText.includes('desconexión') || 
+      lowerText.includes('desconectado')
+    ) {
+      msgColor = 'yellow';
+    } else if (
+      lowerText.includes('✅') || 
+      lowerText.includes('exito') || 
+      lowerText.includes('éxito') || 
+      lowerText.includes('exitosamente') || 
+      lowerText.includes('correctamente') || 
+      lowerText.includes('success') || 
+      lowerText.includes('conectado') || 
+      lowerText.includes('sincronización') || 
+      lowerText.includes('inicializado') || 
+      lowerText.includes('escucha en tiempo real') ||
+      lowerText.includes('sincronizado')
+    ) {
+      msgColor = 'green';
+    }
+
+    // Detectar etiqueta de origen [TAG] al inicio de la línea
+    const match = text.match(/^([^\[]*)\[([^\]]+)\](.*)$/);
+    if (match) {
+      const prefix = match[1];
+      const tag = match[2];
+      const rest = match[3];
+
+      let tagColor = 'white';
+      const tagLower = tag.toLowerCase();
+      if (tagLower.startsWith('bd')) tagColor = 'light-magenta';
+      else if (tagLower.startsWith('rag')) tagColor = 'light-cyan';
+      else if (tagLower.startsWith('ia')) tagColor = 'magenta';
+      else if (tagLower.startsWith('admin')) tagColor = 'light-red';
+      else if (tagLower.startsWith('scheduler')) tagColor = 'light-yellow';
+      else if (tagLower.startsWith('whatsapp')) tagColor = 'light-green';
+      else if (tagLower.includes('email') || tagLower.startsWith('imap') || tagLower.startsWith('smtp')) tagColor = 'light-blue';
+      else if (tagLower.startsWith('gateway')) tagColor = 'cyan';
+      else if (tagLower.startsWith('intentdetect')) tagColor = 'light-magenta';
+
+      let formattedPrefix = prefix;
+      let formattedRest = rest;
+
+      if (msgColor) {
+        if (prefix) {
+          formattedPrefix = `{${msgColor}-fg}${prefix}{/${msgColor}-fg}`;
+        }
+        if (rest) {
+          formattedRest = `{${msgColor}-fg}${rest}{/${msgColor}-fg}`;
+        }
+      }
+
+      const formattedTag = `{${tagColor}-fg}[${tag}]{/${tagColor}-fg}`;
+      return `${formattedPrefix}${formattedTag}${formattedRest}`;
+    }
+
+    // Si no hay etiqueta bracketed, coloreamos el texto completo si corresponde
+    if (msgColor) {
+      return `{${msgColor}-fg}${text}{/${msgColor}-fg}`;
+    }
+
+    return text;
+  }
+
   private initInterceptor(): void {
     this.interceptor = new StreamInterceptor((text) => {
       const cleaned = text.replace(/\n$/, '');
       if (cleaned.length > 0) {
-        this.logPanel.log(cleaned);
+        this.logPanel.log(this.colorizeLogLine(cleaned));
       }
     });
     this.interceptor.start();

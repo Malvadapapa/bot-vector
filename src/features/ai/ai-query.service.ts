@@ -42,11 +42,13 @@ export class AIQueryService {
     // 0) Compruebo bloqueo a través del servicio de moderación (envía notificación privada si corresponde)
     const evalResult = await this.userModerationService.evaluate(userId, prompt, isAdmin, nowResolved);
     if (evalResult.blocked) {
+      logTuiProcessTrace(`Acceso denegado: El usuario ${userId} se encuentra suspendido por moderación.`);
       return '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.';
     }
 
     // 0.1) Comprobar intento de prompt leakage (divulgación de instrucciones de sistema)
     if (this.isPromptLeakageAttempt(prompt)) {
+      logTuiProcessTrace(`Intento de Prompt Leakage bloqueado para el usuario ${userId}. Prompt: "${prompt}"`);
       return '¡Hola! Como asistente virtual del ISPC, estoy para ayudarte con consultas sobre materias, horarios, exámenes y temas académicos del instituto. No puedo compartir mis reglas de comportamiento ni configuraciones internas. ¿En qué te puedo ayudar hoy con respecto al ISPC?';
     }
 
@@ -75,11 +77,14 @@ export class AIQueryService {
     }
 
     if (cls.status === 'unclear') {
+      logTuiProcessTrace(`Consulta de ${userId} marcada como poco clara ("unclear").`);
       return this.generateClarifyingQuestion(prompt);
     }
 
     // 2) Off-topic -> delegar escalado a UserModerationService
+    logTuiProcessTrace(`Consulta de ${userId} clasificada como OFF-TOPIC.`);
     const action = await this.userModerationService.handleInfraction(userId, undefined, cls.reason || 'offtopic', nowResolved);
+    logTuiProcessTrace(`Acción de moderación aplicada para ${userId}: ${action.action} (Mensaje: ${action.message})`);
     if (action.action === 'warn-private') return `[MODERATION::WARN_PRIVATE] ${action.message}`;
     if (action.action === 'warn-public-restrict') return `[MODERATION::WARN_PUBLIC] ${action.message}`;
     if (action.action === 'ban') return `[MODERATION::BAN] ${action.message}`;
@@ -146,7 +151,7 @@ export class AIQueryService {
 
     logTuiProcessTrace(`Invocando API del modelo de IA (${this.aiProvider.constructor.name})...`);
     const aiText = await this.withTimeout(
-      this.aiProvider.generateContent(userId, mergedPrompt),
+      this.aiProvider.generateContent(userId, mergedPrompt, prompt),
       AIQueryService.RESPONSE_TIMEOUT_MS,
     );
     logTuiProcessTrace(`Respuesta del modelo recibida con éxito.`);
@@ -159,9 +164,12 @@ export class AIQueryService {
     // ✅ Consumir cuota SOLO si la respuesta es válida
     const decision = await this.rateLimitService.checkAndConsume(userId, now, isAdmin);
     if (!decision.allowed) {
+      logTuiProcessTrace(`Acceso denegado por cuota: El usuario ${userId} superó su límite diario de consultas.`);
       console.warn(`[IA] Usuario ${userId} alcanzó límite de cuota después de generar respuesta`);
       return `${normalizedAiText}\n\n${decision.message}`;
     }
+
+    logTuiProcessTrace(`Cuota consumida para ${userId}. Restantes: ${decision.remaining_after_request === Number.MAX_SAFE_INTEGER ? 'ilimitadas (admin)' : decision.remaining_after_request}`);
 
     // Cuántas preguntas quedan (solo para usuarios comunes)
     const quotaSuffix = !isAdmin && decision.quota_message ? `\n\n${decision.quota_message}` : '';

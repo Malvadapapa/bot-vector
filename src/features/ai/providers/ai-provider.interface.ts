@@ -1,6 +1,6 @@
 export interface AIProvider {
   /** Genera contenido a partir de un prompt. */
-  generateContent(userId: string, prompt: string): Promise<string>;
+  generateContent(userId: string, prompt: string, rawPrompt?: string): Promise<string>;
   
   /** Devuelve el nombre del proveedor y del modelo activo. */
   getModelName(): string;
