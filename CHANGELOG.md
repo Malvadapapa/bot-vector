@@ -32,6 +32,12 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
       - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
 
 ### Corregido
+- **Bypass e Inconsistencia en el Contador del Límite Diario (BUG-005)**:
+  - Se resolvió la condición de carrera en solicitudes simultáneas serializando las consultas y actualizaciones del límite por cada usuario mediante un mecanismo de cola/bloqueo basado en promesas en `RateLimitService`.
+  - Se movió el descuento de la cuota (`checkAndConsume`) al inicio del proceso de generación en `AIQueryService.generateAnswer` para evitar el procesamiento innecesario de prompts e inyecciones a la IA cuando el cupo ya está agotado.
+  - Se eliminó la fuga de respuestas al retornar únicamente el mensaje de bloqueo (sin concatenar el texto generado por la IA) cuando la cuota no es aprobada.
+  - Se refactorizaron y personalizaron los mensajes del bot para cada uno de los estados posibles de la cuota (tope diario alcanzado, solicitud pendiente por primera vez, consulta en espera, cuota extra agotada, etc.) y se implementó una notificación proactiva y privada a los administradores del grupo/superadmins cuando se registra un nuevo pedido de aprobación, identificando al estudiante y el grupo de origen.
+  - Se agregaron nuevas pruebas unitarias cubriendo la atomicidad concurrente y los textos dinámicos de cuota.
 - **Vulnerabilidad de Ingeniería Social en el Límite de Preguntas (BUG-004)**: Corrección de la vulnerabilidad por la cual un usuario con cupo de preguntas agotado podía obtener respuestas académicas del bot o engañar al modelo. Se implementó una comprobación dura (cláusula guarda) que intercepta el mensaje y bloquea la llamada al LLM si el contador del usuario en la base de datos es 0.
   - `RateLimitService`: Implementación de `isQuotaExhausted` para verificar si la cuota de consultas diarias y de bonus de un usuario está completamente agotada para el día sin consumir recursos.
   - `AIQueryService`: Inserción de una cláusula guarda en `answer` para verificar `isQuotaExhausted` y denegar el acceso devolviendo directamente el mensaje de bloqueo sin consultar la API de la IA.

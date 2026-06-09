@@ -175,5 +175,78 @@ describe('Slice de Inteligencia Artificial (Rate Limiting) - Pruebas', () => {
       const decBlockedAgain = await rateLimitService.checkAndConsume('userX', now, false);
       expect(decBlockedAgain.allowed).toBe(false);
     });
+
+    it('debería retornar los mensajes precisos para todos los estados de cuota y bloquear correctamente', async () => {
+      const now = new Date();
+      const userId = 'userPrecision';
+
+      // 1. Primera pregunta (Quedan preguntas diarias)
+      const dec1 = await rateLimitService.checkAndConsume(userId, now, false);
+      expect(dec1.allowed).toBe(true);
+      expect(dec1.quota_message).toBe('Por recursos limitados hoy te puedo responder hasta 2 preguntas. Te quedan 1.');
+
+      // 2. Segunda pregunta (Se agotan las preguntas diarias)
+      const dec2 = await rateLimitService.checkAndConsume(userId, now, false);
+      expect(dec2.allowed).toBe(true);
+      expect(dec2.quota_message).toBe('Llegaste al tope diario de 2 preguntas. Si necesitás seguir, tu próxima consulta registrará automáticamente un pedido de aprobación para obtener preguntas extra.');
+
+      // 3. Tercera pregunta (Bloqueado - Primera solicitud de aprobación)
+      const dec3 = await rateLimitService.checkAndConsume(userId, now, false);
+      expect(dec3.allowed).toBe(false);
+      expect(dec3.message).toBe('Te quedaste sin preguntas por hoy. Ya registré tu solicitud de aprobación para que un administrador te habilite 2 preguntas extra.');
+      expect(dec3.newly_pending).toBe(true);
+
+      // 4. Cuarta pregunta (Bloqueado - Ya pendiente)
+      const dec4 = await rateLimitService.checkAndConsume(userId, now, false);
+      expect(dec4.allowed).toBe(false);
+      expect(dec4.message).toBe('Tu solicitud de aprobación sigue pendiente. Por favor, esperá a que un administrador la apruebe para poder continuar.');
+      expect(dec4.newly_pending).toBe(false);
+
+      // Admin aprueba
+      await rateLimitService.approveNextPendingRequest(now);
+
+      // 5. Quinta pregunta (Primer bonus - Quedan preguntas extra)
+      const dec5 = await rateLimitService.checkAndConsume(userId, now, false);
+      expect(dec5.allowed).toBe(true);
+      expect(dec5.quota_message).toBe('Tenés aprobación de admin: te quedan 1 preguntas extra hoy.');
+
+      // 6. Sexta pregunta (Segundo bonus - Se agotan las preguntas extra)
+      const dec6 = await rateLimitService.checkAndConsume(userId, now, false);
+      expect(dec6.allowed).toBe(true);
+      expect(dec6.quota_message).toBe('Consumiste tu última pregunta extra aprobada por el administrador. Si volvés a consultar, se registrará una nueva solicitud de aprobación.');
+
+      // 7. Séptima pregunta (Bloqueado - Nueva solicitud tras consumir extras)
+      const dec7 = await rateLimitService.checkAndConsume(userId, now, false);
+      expect(dec7.allowed).toBe(false);
+      expect(dec7.message).toBe('Consumiste todas tus preguntas extra. Ya registré una nueva solicitud de aprobación para que un administrador te habilite otras 2 preguntas.');
+      expect(dec7.newly_pending).toBe(true);
+    });
+
+    it('debería procesar de forma atómica y ordenada múltiples llamadas concurrentes', async () => {
+      const now = new Date();
+      const userId = 'userConcurrent';
+
+      // Disparamos 4 llamadas concurrentes (sabiendo que el límite diario es 2)
+      const promises = [
+        rateLimitService.checkAndConsume(userId, now, false),
+        rateLimitService.checkAndConsume(userId, now, false),
+        rateLimitService.checkAndConsume(userId, now, false),
+        rateLimitService.checkAndConsume(userId, now, false),
+      ];
+
+      const results = await Promise.all(promises);
+
+      // El orden de resolución debe ser el orden de llamada, por lo que:
+      // Las primeras dos deben estar permitidas, las últimas dos bloqueadas
+      expect(results[0].allowed).toBe(true);
+      expect(results[1].allowed).toBe(true);
+      expect(results[2].allowed).toBe(false);
+      expect(results[3].allowed).toBe(false);
+
+      // La tercera debe ser newly_pending = true
+      expect(results[2].newly_pending).toBe(true);
+      // La cuarta debe ser newly_pending = false
+      expect(results[3].newly_pending).toBe(false);
+    });
   });
 });

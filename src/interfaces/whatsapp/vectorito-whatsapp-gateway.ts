@@ -627,6 +627,49 @@ export class VectoritoWhatsAppGateway {
               }
             }
 
+            // Manejo explícito de tokens de cuota (rate limit)
+            if (intent.startsWith('QUOTA_BLOCKED::')) {
+              const body = safeReply.replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+
+              if (intent.includes('NEW')) {
+                // 1. Obtener información de usuario y grupo
+                const profile = await this.userProfileRepository.get(senderJid);
+                const userName = profile?.name ? `${profile.name} (${senderJid.split('@')[0]})` : senderJid.split('@')[0];
+                const group = await this.groupRepository.findByGroupId(chatId);
+                const groupName = group?.display_name || chatId;
+
+                // 2. Notificar a los administradores del grupo (o superadmins de fallback)
+                let admins = await this.adminRepository.listGroupAdmins(chatId);
+                let adminIds = admins.map((a) => a.user_id);
+                if (adminIds.length === 0) {
+                  adminIds = await this.adminRepository.listSuperAdminIds();
+                }
+
+                const adminNotifyText = [
+                  `⚠️ *Solicitud de Aprobación de Cuota*`,
+                  `• *Grupo:* ${groupName}`,
+                  `• *Usuario:* ${userName}`,
+                  `• *Detalle:* Se quedó sin preguntas y solicita habilitación de cupo extra.`,
+                  ``,
+                  `Para aprobar, respondé a este mensaje o escribí en el grupo el comando: *!sí* o *!aprobado*`,
+                ].join('\n');
+
+                for (const adminId of adminIds) {
+                  try {
+                    await this.sendTextMessage(adminId, adminNotifyText, undefined, true);
+                  } catch (e) {
+                    console.error(`Error al notificar al admin ${adminId} sobre cuota:`, e);
+                  }
+                }
+              }
+
+              // Responder al usuario en el grupo/privado sin el tag
+              if (body) {
+                await this.sendTextMessage(chatId, body, senderJid, false);
+              }
+              continue;
+            }
+
             // Compatibilidad: detección antigua de "fuera de lugar" en texto de intención
             const lowerIntent = String(intentRaw).toLowerCase();
             const isOutOfScope = lowerIntent.includes('fuera de lugar') ||

@@ -156,7 +156,7 @@ describe('Prompt Leakage Guardrails (BUG-001) - Pruebas', () => {
 
       const response = await aiQueryService.answer('user-1', '¿Cuál es el horario de clases?', undefined, false);
 
-      expect(response).toBe('Llegaste al límite diario. Esperá que algún admin lo apruebe para seguir.');
+      expect(response).toBe('[QUOTA_BLOCKED::PENDING] Llegaste al límite diario. Esperá que algún admin lo apruebe para seguir.');
       expect(mockAiProvider.generateContent).not.toHaveBeenCalled();
       expect(mockRateLimitService.checkAndConsume).toHaveBeenCalledWith('user-1', expect.any(Date), false);
     });

@@ -57,7 +57,8 @@ export class AIQueryService {
     if (isExhausted) {
       logTuiProcessTrace(`Acceso denegado por cuota (cláusula guarda): El usuario ${userId} no tiene preguntas disponibles.`);
       const decision = await this.rateLimitService.checkAndConsume(userId, nowResolved, isAdmin);
-      return decision.message;
+      const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
+      return `${prefix} ${decision.message}`;
     }
 
     if (!isAdmin && this.isAcademicScheduleOrLinkQuery(prompt)) {
@@ -101,6 +102,16 @@ export class AIQueryService {
   }
 
   private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string): Promise<string> {
+    // ✅ Consumir cuota al inicio para evitar condiciones de carrera y llamadas innecesarias a la API de la IA
+    const decision = await this.rateLimitService.checkAndConsume(userId, now, isAdmin);
+    if (!decision.allowed) {
+      logTuiProcessTrace(`Acceso denegado por cuota: El usuario ${userId} superó su límite diario de consultas.`);
+      const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
+      return `${prefix} ${decision.message}`;
+    }
+
+    logTuiProcessTrace(`Cuota consumida para ${userId}. Restantes: ${decision.remaining_after_request === Number.MAX_SAFE_INTEGER ? 'ilimitadas (admin)' : decision.remaining_after_request}`);
+
     // 1. Contexto dinámico de BD (exámenes, avisos, clases, perfil)
     logTuiProcessTrace(`Recuperando contexto relevante de base de datos...`);
     const dbContext = await this.knowledgeContextService.buildContext(userId, groupId);
@@ -168,16 +179,6 @@ export class AIQueryService {
     if (!normalizedAiText) {
       return 'No pude generar una respuesta en este momento.';
     }
-
-    // ✅ Consumir cuota SOLO si la respuesta es válida
-    const decision = await this.rateLimitService.checkAndConsume(userId, now, isAdmin);
-    if (!decision.allowed) {
-      logTuiProcessTrace(`Acceso denegado por cuota: El usuario ${userId} superó su límite diario de consultas.`);
-      console.warn(`[IA] Usuario ${userId} alcanzó límite de cuota después de generar respuesta`);
-      return `${normalizedAiText}\n\n${decision.message}`;
-    }
-
-    logTuiProcessTrace(`Cuota consumida para ${userId}. Restantes: ${decision.remaining_after_request === Number.MAX_SAFE_INTEGER ? 'ilimitadas (admin)' : decision.remaining_after_request}`);
 
     // Cuántas preguntas quedan (solo para usuarios comunes)
     const quotaSuffix = !isAdmin && decision.quota_message ? `\n\n${decision.quota_message}` : '';

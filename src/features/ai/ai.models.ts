@@ -14,4 +14,6 @@ export interface RateLimitDecision {
   message: string;
   quota_message: string;
   approval_pending: boolean;
+  newly_pending?: boolean;
 }
+
