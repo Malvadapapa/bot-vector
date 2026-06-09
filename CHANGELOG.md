@@ -32,6 +32,10 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
       - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
 
 ### Corregido
+- **Vulnerabilidad de Ingeniería Social en el Límite de Preguntas (BUG-004)**: Corrección de la vulnerabilidad por la cual un usuario con cupo de preguntas agotado podía obtener respuestas académicas del bot o engañar al modelo. Se implementó una comprobación dura (cláusula guarda) que intercepta el mensaje y bloquea la llamada al LLM si el contador del usuario en la base de datos es 0.
+  - `RateLimitService`: Implementación de `isQuotaExhausted` para verificar si la cuota de consultas diarias y de bonus de un usuario está completamente agotada para el día sin consumir recursos.
+  - `AIQueryService`: Inserción de una cláusula guarda en `answer` para verificar `isQuotaExhausted` y denegar el acceso devolviendo directamente el mensaje de bloqueo sin consultar la API de la IA.
+  - Tests: Mockeo de `isQuotaExhausted` y adición de pruebas unitarias en `prompt-leakage.spec.ts` para validar el bloqueo de usuarios sin cuota y el acceso a administradores.
 - **Aislamiento de Contexto entre Comisiones (BUG-002)**: Corrección del error por el cual el comando `!semana` y las consultas de agenda vía IA mezclaban los cronogramas de distintas comisiones en un mismo grupo. El bot ahora valida la comisión del usuario antes de responder sobre agendas, aulas o enlaces de cursado. Si no puede determinar la comisión, solicita al alumno que se identifique antes de continuar.
   - `AIQueryService`: clasificador de consultas sensibles a comisión con bloqueo preventivo.
   - `AcademicCalendarService`: filtrado por `commission_id` del usuario en `formatDay`, `formatWeekEvents` y comandos rápidos.

@@ -19,6 +19,7 @@ describe('Prompt Leakage Guardrails (BUG-001) - Pruebas', () => {
 
     mockRateLimitService = {
       checkAndConsume: vi.fn(async () => ({ allowed: true, quota_message: '' })),
+      isQuotaExhausted: vi.fn(async () => false),
     };
 
     mockKnowledgeContextService = {
@@ -141,6 +142,32 @@ describe('Prompt Leakage Guardrails (BUG-001) - Pruebas', () => {
       const response = await aiQueryService.answer('user-1', prompt, undefined, true, 'group-1');
 
       expect(response).toContain('Mocked AI Response for schedule');
+      expect(mockAiProvider.generateContent).toHaveBeenCalled();
+    });
+  });
+
+  describe('Question Limit Guardrails (BUG-004)', () => {
+    it('debería bloquear inmediatamente y no llamar a la API del LLM si el límite de preguntas está agotado', async () => {
+      mockRateLimitService.isQuotaExhausted.mockResolvedValue(true);
+      mockRateLimitService.checkAndConsume.mockResolvedValue({
+        allowed: false,
+        message: 'Llegaste al límite diario. Esperá que algún admin lo apruebe para seguir.',
+      });
+
+      const response = await aiQueryService.answer('user-1', '¿Cuál es el horario de clases?', undefined, false);
+
+      expect(response).toBe('Llegaste al límite diario. Esperá que algún admin lo apruebe para seguir.');
+      expect(mockAiProvider.generateContent).not.toHaveBeenCalled();
+      expect(mockRateLimitService.checkAndConsume).toHaveBeenCalledWith('user-1', expect.any(Date), false);
+    });
+
+    it('debería permitir la consulta si el usuario es administrador incluso si la cuota regular está agotada', async () => {
+      mockRateLimitService.isQuotaExhausted.mockResolvedValue(false);
+      mockAiProvider.generateContent.mockResolvedValue('Admin Response');
+
+      const response = await aiQueryService.answer('admin-1', '¿Cuál es el horario de clases?', undefined, true);
+
+      expect(response).toContain('Admin Response');
       expect(mockAiProvider.generateContent).toHaveBeenCalled();
     });
   });

@@ -58,6 +58,11 @@ export class EmailService {
     }
 
     const client = this.createImapClient();
+    if (typeof client.on === 'function') {
+      client.on('error', (err) => {
+        console.warn('[EmailService] Error de cliente IMAP (búsqueda):', err?.message || err);
+      });
+    }
 
     try {
       await client.connect();
@@ -138,6 +143,11 @@ export class EmailService {
     const runIdle = async () => {
       // Crear un cliente nuevo en cada intento de conexión para evitar errores de reuso
       const client = this.createImapClient();
+      if (typeof client.on === 'function') {
+        client.on('error', (err) => {
+          console.warn('[EmailService IDLE] Error de cliente IMAP (escucha):', err?.message || err);
+        });
+      }
 
       try {
         await client.connect();

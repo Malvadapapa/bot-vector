@@ -52,6 +52,14 @@ export class AIQueryService {
       return '¡Hola! Como asistente virtual del ISPC, estoy para ayudarte con consultas sobre materias, horarios, exámenes y temas académicos del instituto. No puedo compartir mis reglas de comportamiento ni configuraciones internas. ¿En qué te puedo ayudar hoy con respecto al ISPC?';
     }
 
+    // 0.2) Comprobar límite de preguntas diario (cláusula guarda)
+    const isExhausted = await this.rateLimitService.isQuotaExhausted(userId, nowResolved, isAdmin);
+    if (isExhausted) {
+      logTuiProcessTrace(`Acceso denegado por cuota (cláusula guarda): El usuario ${userId} no tiene preguntas disponibles.`);
+      const decision = await this.rateLimitService.checkAndConsume(userId, nowResolved, isAdmin);
+      return decision.message;
+    }
+
     if (!isAdmin && this.isAcademicScheduleOrLinkQuery(prompt)) {
       logTuiProcessTrace(`Validando comisión de cursado para el usuario ${userId} en grupo ${groupId}...`);
       const validation = await this.knowledgeContextService.validateUserCommission(userId, groupId);

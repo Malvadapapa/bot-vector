@@ -33,6 +33,27 @@ export class RateLimitService {
 
   constructor(private repository: RateLimitRepository) {}
 
+  public async isQuotaExhausted(userId: string, now?: Date, isAdmin = false): Promise<boolean> {
+    if (isAdmin) {
+      return false;
+    }
+
+    const localNow = now ?? new Date();
+    const localDate = new Date(localNow.toISOString().slice(0, 10));
+
+    const current = await this.repository.get(userId);
+    if (!current) {
+      return false;
+    }
+
+    const isNewDay = current.last_reset_date.toISOString().slice(0, 10) < localDate.toISOString().slice(0, 10);
+    if (isNewDay) {
+      return false;
+    }
+
+    return current.question_count >= RateLimitService.DAILY_LIMIT && current.bonus_questions_remaining <= 0;
+  }
+
   public async checkAndConsume(userId: string, now?: Date, isAdmin = false): Promise<RateLimitDecision> {
     if (isAdmin) {
       return {

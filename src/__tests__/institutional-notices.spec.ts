@@ -46,6 +46,9 @@ vi.mock('imapflow', () => {
         this.usable = false;
         return Promise.resolve();
       }
+      on(event: string, handler: Function) {
+        // Mock method
+      }
     }
   };
 });
