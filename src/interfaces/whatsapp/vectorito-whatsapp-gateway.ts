@@ -123,9 +123,7 @@ export class VectoritoWhatsAppGateway {
         await this.handleGroupParticipantsUpdate(update);
       });
 
-      if (!this.whatsappSocket.authState.creds.registered) {
-        console.log('\n[WhatsApp] Sesión nueva: se requiere escanear QR.');
-      }
+
 
       this.whatsappSocket.ev.on('connection.update', async (update: any) => {
         const { connection, lastDisconnect, qr } = update;
@@ -407,10 +405,7 @@ export class VectoritoWhatsAppGateway {
 
           // Detectar mención real por JID y, como respaldo, por alias dinámicos del bot.
           const messageMentionsBot = this.isBotMentioned(mentionedJids, incomingText);
-          if (incomingText.includes('@')) {
-            const botIdDebug = String(this.whatsappSocket?.user?.id || this.whatsappSocket?.user?.jid || '');
-            console.log(`🔎 [MentionDebug] bot=${botIdDebug || 'sin-id'} mentioned=${mentionedJids.join(',') || 'ninguno'} text="${incomingText}" result=${messageMentionsBot}`);
-          }
+
 
           // Limpiar el texto de basura de sesión y menciones para la IA
           const normalizedGroupText = incomingText
@@ -464,7 +459,6 @@ export class VectoritoWhatsAppGateway {
 
           // Si es un número y NO hay menú activo, ignorar completamente
           if (isNumericReply && !hasPendingMenu && !messageMentionsBot) {
-            console.warn(`⚠️ [Gateway] Número ignorado fuera de menú: chat=${chatId} sender=${senderJid} text="${incomingText}"`);
             continue;
           }
 
@@ -516,7 +510,7 @@ export class VectoritoWhatsAppGateway {
           );
           if (groupReply == null) continue;
 
-          // PHASE 4: Handle group configuration command
+          // Manejar comando de configuración de grupo
           if (typeof groupReply === 'string' && groupReply.startsWith('config-grupo:')) {
             const groupId = groupReply.substring('config-grupo:'.length);
             const configReply = await this.privateChatWorkflow.startGroupContextConfiguration(senderJid, groupId);

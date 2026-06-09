@@ -507,5 +507,45 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
       expect(step2).not.toBeNull();
       expect(step2!.toLowerCase()).toContain('fechas');
     });
+
+    describe('validateUserCommission Guardrails (BUG-002)', () => {
+      it('debería bloquear comandos de agenda en grupos multi-comisión si el perfil del usuario está incompleto', async () => {
+        await run(db, "INSERT INTO whatsapp_groups(group_id, display_name, is_active) VALUES ('g5@g.us', 'Grupo 5', 1)");
+        const comA = await commissionRepo.createOrGet('A', 2026, 'Tarde');
+        const comB = await commissionRepo.createOrGet('B', 2026, 'Noche');
+        
+        const contextId = await contextRepo.upsert('g5@g.us', 2026, null, 'Camada 2026');
+        await contextRepo.setCommissionsForGroupContext(contextId, [comA, comB]);
+
+        const response = await calendarService.handleCommand('user_incomplete', '!hoy', new Date(), false, 'g5@g.us');
+        expect(response).toBe(AcademicCalendarService['INCOMPLETE_PROFILE_MESSAGE']);
+      });
+
+      it('debería bloquear comandos de agenda en grupos multi-comisión si el usuario tiene comisión nula o inválida', async () => {
+        await run(db, "INSERT INTO whatsapp_groups(group_id, display_name, is_active) VALUES ('g6@g.us', 'Grupo 6', 1)");
+        const comA = await commissionRepo.createOrGet('A', 2026, 'Tarde');
+        const comB = await commissionRepo.createOrGet('B', 2026, 'Noche');
+        
+        const contextId = await contextRepo.upsert('g6@g.us', 2026, null, 'Camada 2026');
+        await contextRepo.setCommissionsForGroupContext(contextId, [comA, comB]);
+
+        await userProfileRepo.upsert('user_no_commission', 'Juan', '15/09', 'juan@ispc.edu.ar');
+        const response = await calendarService.handleCommand('user_no_commission', '!hoy', new Date(), false, 'g6@g.us');
+        expect(response).toBe(AcademicCalendarService['INVALID_OR_MISSING_COMMISSION_MESSAGE']);
+      });
+
+      it('debería permitir comandos de agenda si el usuario tiene comisión válida en el grupo multi-comisión', async () => {
+        await run(db, "INSERT INTO whatsapp_groups(group_id, display_name, is_active) VALUES ('g7@g.us', 'Grupo 7', 1)");
+        const comA = await commissionRepo.createOrGet('A', 2026, 'Tarde');
+        const comB = await commissionRepo.createOrGet('B', 2026, 'Noche');
+        
+        const contextId = await contextRepo.upsert('g7@g.us', 2026, null, 'Camada 2026');
+        await contextRepo.setCommissionsForGroupContext(contextId, [comA, comB]);
+
+        await userProfileRepo.upsert('user_valid', 'Juan', '15/09', 'juan@ispc.edu.ar', comA);
+        const response = await calendarService.handleCommand('user_valid', '!hoy', new Date(), false, 'g7@g.us');
+        expect(response).toContain('no hay clases programadas');
+      });
+    });
   });
 });

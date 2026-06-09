@@ -175,6 +175,40 @@ export class KnowledgeContextService {
     return typeof fallbackCommissionId === 'number' ? fallbackCommissionId : null;
   }
 
+  public async validateUserCommission(userId: string, groupId?: string): Promise<{ valid: boolean; reason: 'incomplete_profile' | 'missing_commission' | 'invalid_commission' | null }> {
+    if (groupId && this.groupContextRepository) {
+      const groupContext = await this.groupContextRepository.getByGroupId(groupId);
+      if (groupContext && typeof groupContext.id === 'number') {
+        const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+        if (commissions.length > 1) {
+          const profile = await this.userProfileRepository.get(userId);
+          if (!profile || !profile.name?.trim() || !profile.birthday_day_month?.trim() || !profile.email?.trim()) {
+            return { valid: false, reason: 'incomplete_profile' };
+          }
+
+          const commissionId = await this.resolveCommissionId(userId, profile.user_commission_id ?? null, groupId);
+          if (commissionId === null) {
+            return { valid: false, reason: 'missing_commission' };
+          }
+
+          const belongs = commissions.some((c) => c.id === commissionId);
+          if (!belongs) {
+            return { valid: false, reason: 'invalid_commission' };
+          }
+
+          if (this.commissionRepository) {
+            const exists = await this.commissionRepository.getById(commissionId);
+            if (!exists) {
+              return { valid: false, reason: 'invalid_commission' };
+            }
+          }
+        }
+      }
+    }
+
+    return { valid: true, reason: null };
+  }
+
   private filterClassesByCommission<T extends { commission_count: number }>(classes: T[], commissionId: number | null, strictScope: boolean): T[] {
     if (commissionId === null) {
       return classes;

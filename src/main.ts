@@ -232,12 +232,12 @@ async function bootstrap() {
   const classCommissionScheduleRepository = new ClassCommissionScheduleRepository(sqliteDb);
   const inboundEmailRejectionRepository = new InboundEmailRejectionRepository(sqliteDb);
 
-  // PHASE 2: Commission and Group Context repositories
+  // Repositorios de comisiones y contexto de grupo
   const commissionRepository = new CommissionRepository(sqliteDb);
   const groupContextRepository = new GroupContextRepository(sqliteDb);
 
   const allowedGroupIds = await groupRepository.getAllActiveIds();
-  console.log(`[PHASE-1] ${allowedGroupIds.length} active groups loaded from database`);
+  console.log(`[Grupos] ${allowedGroupIds.length} grupos activos cargados desde BD`);
 
   const seedCodes = settings.adminSeedCodes
     .split(',')
@@ -249,19 +249,19 @@ async function bootstrap() {
     if (seedCodes.length === 0) {
       const generated = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
       await adminCodeRepository.addCode(generated);
-      console.log(`[ADMIN] No registered admins. Startup code generated: ${generated}`);
+      console.log(`[ADMIN] Sin admins registrados. Código de inicio generado: ${generated}`);
     } else {
       for (const code of seedCodes) {
         await adminCodeRepository.addCode(code);
       }
-      console.log(`[ADMIN] No registered admins. Seed codes loaded: ${seedCodes.join(', ')}`);
+      console.log(`[ADMIN] Sin admins registrados. Códigos seed cargados: ${seedCodes.join(', ')}`);
     }
   } else {
     // If admins already exist, clean up and delete any unconsumed seed codes from the DB to prevent reuse
     for (const code of seedCodes) {
       await adminCodeRepository.deleteIfUnconsumed(code);
     }
-    console.log(`[ADMIN] System already bootstrapped with ${existingAdmins.length} admin(s). Startup seed codes disabled and cleared.`);
+    console.log(`[ADMIN] Sistema ya inicializado con ${existingAdmins.length} admin(s). Códigos seed desactivados.`);
   }
 
   const rssParserService = new RssParserService();
@@ -333,7 +333,7 @@ async function bootstrap() {
       return ragPipeline.syncAll(activeGroupIds, false);
     })
     .then(() => {
-      console.log(`[RAG] Sincronización inicial completada. Vectores disponibles: ${ragQueryService.getVectorCount() || 'pendiente de carga'}`);
+      console.log(`[RAG] Sincronización inicial completada. Vectores indexados: ${ragQueryService.getVectorCount() || 0}`);
     })
     .catch((err) => {
       console.error(`[RAG] Error en sincronización inicial (se mantiene el flujo IA con contexto interno):`, err?.message);

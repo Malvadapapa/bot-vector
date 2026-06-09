@@ -2514,7 +2514,7 @@ export class PrivateChatWorkflowService {
           const g = await this.groupRepository.findByGroupId(scopedData.groupId);
           if (g) {
             groupName = g.display_name || scopedData.groupId;
-            groupCohort = g.entry_year ?? 'General';
+            groupCohort = g.entry_year != null ? String(g.entry_year) : 'General';
           }
         }
       } catch (e) {
@@ -3455,7 +3455,7 @@ export class PrivateChatWorkflowService {
     return `🚫 Usuario ${phone} baneado (${typeLabel}) por 365 días ✅\n\nPara desbanear, usá la opción 7 del menú admin.`;
   }
 
-  // PHASE 4: Group Context Configuration Flow (executed from group via !config-grupo)
+  // Flujo de configuración de contexto de grupo (ejecutado desde grupo vía !config-grupo)
   public async startGroupContextConfiguration(userId: string, groupId: string): Promise<string> {
     if (!this.groupContextRepository || !this.commissionRepository) {
       return '❌ Servicio de configuración de grupo no disponible.';

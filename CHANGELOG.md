@@ -17,6 +17,31 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 - **Enrutamiento de Avisos de Profesor Multi-Grupo**: Un profesor puede estar registrado para dictar en múltiples grupos/camadas con un único correo. El monitor IMAP valida y restringe la publicación del aviso estrictamente a los grupos autorizados para el remitente, permitiendo enviar a todos sus grupos por defecto o filtrar según selector de camada.
 - **Conexión de Profesores y Avisos en Contexto IA**: En `buildContext`, se vinculan los avisos institucionales con el profesor emisor basándose en su correo para inyectar la relación a la IA, permitiendo responder a preguntas como *"¿el profesor de programación dejó algún aviso?"* de forma natural.
 
+### Corregido
+- **Aislamiento de Contexto entre Comisiones (BUG-002)**: Corrección del error por el cual el comando `!semana` y las consultas de agenda vía IA mezclaban los cronogramas de distintas comisiones en un mismo grupo. El bot ahora valida la comisión del usuario antes de responder sobre agendas, aulas o enlaces de cursado. Si no puede determinar la comisión, solicita al alumno que se identifique antes de continuar.
+  - `AIQueryService`: clasificador de consultas sensibles a comisión con bloqueo preventivo.
+  - `AcademicCalendarService`: filtrado por `commission_id` del usuario en `formatDay`, `formatWeekEvents` y comandos rápidos.
+  - `KnowledgeContextService`: inyección del contexto de comisión en `buildContext` para consultas IA.
+  - Tests: 6 pruebas nuevas en `prompt-leakage.spec.ts` validando el bloqueo y aislamiento.
+- **Errores de compilación TypeScript (4 errores)**:
+  - `private-chat-workflow.service.ts:2517` — TS2322: conversión de `entry_year` (`number | null`) a `string` con fallback `'General'`.
+  - `academic-calendar.service.ts:412` — TS2448/TS2454/TS2345: variable `menuTree` usada antes de su declaración; se movió la declaración al inicio de `handleMenuInput`.
+
+### Modificado
+- **Refactorización y limpieza de logs de consola**:
+  - Eliminación de etiquetas obsoletas como `[PHASE-1]` y `(PHASE 5: ...)` en los logs de arranque de `main.ts` y `scheduler-service.ts`.
+  - Traducción de todos los mensajes de administración y arranque en `main.ts` al español.
+  - Corrección del log contradictorio en RAG que mostraba 'pendiente de carga' cuando no había vectores.
+  - Eliminación del mensaje de QR engañoso en `vectorito-whatsapp-gateway.ts` cuando la sesión ya estaba registrada.
+  - Eliminación del log verboso `MentionDebug` y de la advertencia de 'Número ignorado fuera de menú' para evitar spam en la consola de WhatsApp.
+  - Limpieza de comentarios legacy `PHASE N` en todo el código fuente de los archivos `academic-calendar.service.ts`, `institutional-email-monitor.ts`, `private-chat-workflow.service.ts` y `models.ts` reemplazándolos con explicaciones funcionales claras en español.
+
+### Eliminado
+- **Limpieza de código muerto post-modularización**:
+  - `repositories.ts`: eliminadas ~1000 líneas de repositorios comentados que ya fueron migrados a `features/academic-calendar/`, `features/notifications/` y `features/messages/`. Re-exports conservados.
+  - `domain/models.ts`: eliminadas ~175 líneas de interfaces comentadas (`Reminder`, `InstitutionalNotice`, `ManagedExam`, `ManagedClass`, `ManagedTeacher`, `Comision`, `Commission`, `GroupContext`, `CohortConfig`, `ClassCommissionSchedule`) ya migradas a `academic-calendar.models.ts` y `notifications.models.ts`. Re-exports conservados.
+  - `migration-helper.ts`: archivo huérfano eliminado (solo contenía un comentario legacy, sin imports).
+
 ## [2.1.0-alpha.2] - 2026-06-01
 
 ### Agregado

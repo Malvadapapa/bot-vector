@@ -91,4 +91,57 @@ describe('Prompt Leakage Guardrails (BUG-001) - Pruebas', () => {
       }
     });
   });
+
+  describe('validateUserCommission Guardrails (BUG-002)', () => {
+    beforeEach(() => {
+      // Mock validateUserCommission on mockKnowledgeContextService
+      mockKnowledgeContextService.validateUserCommission = vi.fn(async () => ({ valid: true, reason: null }));
+    });
+
+    it('debería bloquear consultas sobre horarios/cronogramas si la validación falla por perfil incompleto', async () => {
+      mockKnowledgeContextService.validateUserCommission.mockResolvedValue({ valid: false, reason: 'incomplete_profile' });
+
+      const prompt = '¿Cuáles son las materias que se cursan hoy a las 15hs?';
+      const response = await aiQueryService.answer('user-1', prompt, undefined, false, 'group-1');
+
+      expect(response).toBe('⚠️ Para poder consultar agendas, clases o enlaces de cursado, primero tenés que completar tu registro. Por favor, escribime por privado para registrarte.');
+      expect(mockAiProvider.generateContent).not.toHaveBeenCalled();
+      expect(mockKnowledgeContextService.buildContext).not.toHaveBeenCalled();
+    });
+
+    it('debería bloquear consultas sobre horarios/cronogramas si la validación falla por comisión faltante o inválida', async () => {
+      mockKnowledgeContextService.validateUserCommission.mockResolvedValue({ valid: false, reason: 'missing_commission' });
+
+      const prompt = 'pasame el enlace de cursado de hoy';
+      const response = await aiQueryService.answer('user-1', prompt, undefined, false, 'group-1');
+
+      expect(response).toBe('⚠️ Para poder brindarte información sobre horarios, clases, aulas o enlaces de cursado, necesito saber a qué comisión pertenecés. Por favor, registrá tu comisión en el bot escribiendo \'hola\' en el chat privado.');
+      expect(mockAiProvider.generateContent).not.toHaveBeenCalled();
+      expect(mockKnowledgeContextService.buildContext).not.toHaveBeenCalled();
+    });
+
+    it('debería permitir consultas académicas normales no relacionadas con horarios/clases incluso si la validación de comisión falla', async () => {
+      mockKnowledgeContextService.validateUserCommission.mockResolvedValue({ valid: false, reason: 'missing_commission' });
+      mockAiProvider.generateContent.mockResolvedValue('Mocked AI Response for general question');
+
+      const prompt = '¿Quién es el creador de Python?';
+      // Use admin to bypass classification topic checks
+      const response = await aiQueryService.answer('user-1', prompt, undefined, true, 'group-1');
+
+      expect(response).toContain('Mocked AI Response for general question');
+      expect(mockAiProvider.generateContent).toHaveBeenCalled();
+    });
+
+    it('debería permitir consultas sobre horarios/cronogramas si la validación de comisión es exitosa', async () => {
+      mockKnowledgeContextService.validateUserCommission.mockResolvedValue({ valid: true, reason: null });
+      mockAiProvider.generateContent.mockResolvedValue('Mocked AI Response for schedule');
+
+      const prompt = 'dame el horario de clases de hoy';
+      // Use admin to bypass classification topic checks
+      const response = await aiQueryService.answer('user-1', prompt, undefined, true, 'group-1');
+
+      expect(response).toContain('Mocked AI Response for schedule');
+      expect(mockAiProvider.generateContent).toHaveBeenCalled();
+    });
+  });
 });

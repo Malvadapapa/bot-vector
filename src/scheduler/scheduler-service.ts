@@ -38,9 +38,9 @@ export class SchedulerService {
   }
 
   public async startJobs(): Promise<void> {
-    console.log('[Scheduler] Iniciando tareas automáticas (PHASE 5: multi-tenant aware)...');
+    console.log('[Scheduler] Iniciando tareas automáticas...');
     
-    // PHASE 5: Get active groups from database instead of static settings
+    // Obtener grupos activos desde BD
     const activeGroupIds = await this.groupRepository.getAllActiveIds();
     if (!activeGroupIds.length) {
       console.log('[Scheduler] Avisos a grupos desactivados: no hay grupos activos en BD.');
@@ -77,7 +77,7 @@ export class SchedulerService {
           const shouldSend = await this.outboxDedupRepository.markIfNew(dedupKey);
           if (!shouldSend) continue;
 
-          // PHASE 5: Send to active groups from database
+          // Enviar a grupos activos
           for (const groupId of currentActiveGroupIds) {
             if (reminder.group_id && reminder.group_id !== groupId) continue;
             await this.whatsappGateway.sendTextMessage(groupId, text);
@@ -115,7 +115,7 @@ export class SchedulerService {
           if (!shouldSend) continue;
 
           const message = await this.classNotificationService.buildNotificationMessage(managedClass);
-          // PHASE 5: Send to active groups from database
+          // Enviar a grupos activos
           for (const groupId of currentActiveGroupIds) {
             if (managedClass.group_id && managedClass.group_id !== groupId) continue;
             await this.whatsappGateway.sendTextMessage(groupId, message);
@@ -137,7 +137,7 @@ export class SchedulerService {
           if (!shouldSend) continue;
 
           const message = this.examNotificationService.formatNotificationMessage(item.exam, item.frequency);
-          // PHASE 5: Send to active groups from database
+          // Enviar a grupos activos
           for (const groupId of currentActiveGroupIds) {
             if (item.exam.group_id && item.exam.group_id !== groupId) continue;
             await this.whatsappGateway.sendTextMessage(groupId, message);
@@ -162,7 +162,7 @@ export class SchedulerService {
 
           const mention = `@${user.user_id.replace('@s.whatsapp.net', '')}`;
           const message = `🎉🎂🥳 ¡MUY FELIZ CUMPLEAÑOS ${user.name}! 🥳🎂🎉\n\nQue tengas un día espectacular ${mention}. ¡Un abrazo gigante de parte de todos! 🎈🎁🎊`;
-          // PHASE 5: Send to active groups from database
+          // Enviar a grupos activos
           for (const groupId of currentActiveGroupIds) {
             await this.whatsappGateway.sendTextMessage(groupId, message);
           }
@@ -199,7 +199,7 @@ export class SchedulerService {
           const currentActiveGroupIds = await this.groupRepository.getAllActiveIds();
           if (currentActiveGroupIds.length > 0) {
             const message = `✅ Se limpió la agenda: ${deleted} examen(es) vencido(s) eliminado(s).`;
-            // PHASE 5: Send to active groups from database
+            // Enviar a grupos activos
             for (const groupId of currentActiveGroupIds) {
               await this.whatsappGateway.sendTextMessage(groupId, message);
             }

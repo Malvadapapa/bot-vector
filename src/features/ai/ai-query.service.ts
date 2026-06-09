@@ -49,6 +49,16 @@ export class AIQueryService {
       return '¡Hola! Como asistente virtual del ISPC, estoy para ayudarte con consultas sobre materias, horarios, exámenes y temas académicos del instituto. No puedo compartir mis reglas de comportamiento ni configuraciones internas. ¿En qué te puedo ayudar hoy con respecto al ISPC?';
     }
 
+    if (!isAdmin && this.isAcademicScheduleOrLinkQuery(prompt)) {
+      const validation = await this.knowledgeContextService.validateUserCommission(userId, groupId);
+      if (!validation.valid) {
+        if (validation.reason === 'incomplete_profile') {
+          return '⚠️ Para poder consultar agendas, clases o enlaces de cursado, primero tenés que completar tu registro. Por favor, escribime por privado para registrarte.';
+        }
+        return '⚠️ Para poder brindarte información sobre horarios, clases, aulas o enlaces de cursado, necesito saber a qué comisión pertenecés. Por favor, registrá tu comisión en el bot escribiendo \'hola\' en el chat privado.';
+      }
+    }
+
     if (isAdmin) {
       return await this.generateAnswer(userId, prompt, nowResolved, isAdmin, groupId);
     }
@@ -257,5 +267,16 @@ export class AIQueryService {
     ];
 
     return leakagePatterns.some((pattern) => pattern.test(normalized));
+  }
+
+  private isAcademicScheduleOrLinkQuery(prompt: string): boolean {
+    const lower = prompt.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const scheduleKeywords = [
+      'agenda', 'horario', 'clase', 'materia', 'aula', 'enlace', 'link', 'meet',
+      'cursar', 'cursado', 'cronograma', 'calendario', 'semana', 'hoy', 'mañana',
+      'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo',
+      'examen', 'examenes', 'parcial', 'final'
+    ];
+    return scheduleKeywords.some(kw => lower.includes(kw));
   }
 }

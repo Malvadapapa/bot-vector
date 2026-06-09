@@ -169,6 +169,12 @@ export class AcademicCalendarService {
   private static readonly GROUP_CONFIG_REQUIRED_MESSAGE =
     '⚠️ Este grupo todavía no tiene configuración académica completa. Un administrador del grupo debe ejecutar !config-grupo para habilitar agenda, materias y exámenes.';
 
+  private static readonly INCOMPLETE_PROFILE_MESSAGE =
+    '⚠️ Para poder consultar agendas, clases o enlaces de cursado, primero tenés que completar tu registro. Por favor, escribime por privado para registrarte.';
+
+  private static readonly INVALID_OR_MISSING_COMMISSION_MESSAGE =
+    '⚠️ Para poder brindarte información sobre horarios, clases, aulas o enlaces de cursado, necesito saber a qué comisión pertenecés. Por favor, registrá tu comisión en el bot escribiendo \'hola\' en el chat privado.';
+
   private menuStateByUser = new Map<string, string>();
   private moderationAdminService = new ModerationAdminCommandService();
   private dashboardPanelService?: DashboardPanelService;
@@ -297,7 +303,7 @@ export class AcademicCalendarService {
       return this.dynamicMessageService.getNews(5, false);
     }
 
-    // PHASE 4: Group configuration command
+    // Comando de configuración de grupo
     if (resolvedCommand === '!config-grupo' || resolvedCommand === '!configurar-grupo') {
       if (!isGroupAdmin && !isSuperAdmin) {
         return '🔒 Solo administradores pueden ejecutar este comando.';
@@ -361,6 +367,7 @@ export class AcademicCalendarService {
       normalized = 'menu';
     }
     const isMenuCommand = normalized === '!menu' || normalized === '!m' || normalized === '!menú';
+    const menuTree = this.loadMenus();
 
     // Procesar flujos de exámenes si el usuario está en uno
     if (this.examMenuService?.isInFlow(userId)) {
@@ -403,13 +410,12 @@ export class AcademicCalendarService {
       if (normalized === '0' || normalized === 'volver' || normalized === 'regresar') {
         this.teacherMenuService.cancelFlow(userId);
         this.menuStateByUser.set(userId, 'contacto_ispc');
-        return this.renderNode(menuTree, 'contacto_ispc', userId, groupId);
+        return this.renderNode(menuTree!, 'contacto_ispc', userId, groupId);
       }
       const { response, completed } = await this.teacherMenuService.processInput(userId, rawText);
       return response;
     }
 
-    const menuTree = this.loadMenus();
     if (!menuTree) {
       if (isMenuCommand) {
         return this.renderFallbackMenu(userId);
@@ -482,6 +488,12 @@ export class AcademicCalendarService {
   }
 
   private async formatDay(userId: string, currentDt: Date, groupId?: string): Promise<string> {
+    const validation = await this.validateUserCommission(userId, groupId);
+    if (!validation.valid) {
+      return validation.reason === 'incomplete_profile'
+        ? AcademicCalendarService.INCOMPLETE_PROFILE_MESSAGE
+        : AcademicCalendarService.INVALID_OR_MISSING_COMMISSION_MESSAGE;
+    }
     const dayName = DAY_NAMES[currentDt.getDay()] || 'dia';
     const dateStr = `${currentDt.getDate()} de ${MONTH_NAMES[currentDt.getMonth()]}`;
     const classes = await this.getClassesForWeekday(dayName, userId, groupId);
@@ -508,6 +520,12 @@ export class AcademicCalendarService {
   }
 
   private async formatCurrentClassLink(userId: string, currentDt: Date, groupId?: string): Promise<string> {
+    const validation = await this.validateUserCommission(userId, groupId);
+    if (!validation.valid) {
+      return validation.reason === 'incomplete_profile'
+        ? AcademicCalendarService.INCOMPLETE_PROFILE_MESSAGE
+        : AcademicCalendarService.INVALID_OR_MISSING_COMMISSION_MESSAGE;
+    }
     const dayName = DAY_NAMES[currentDt.getDay()] || 'dia';
     const classes = await this.getClassesForWeekday(dayName, userId, groupId);
     const nowMinutes = currentDt.getHours() * 60 + currentDt.getMinutes();
@@ -542,6 +560,14 @@ export class AcademicCalendarService {
   }
 
   private async formatManagedExams(userId?: string, groupId?: string): Promise<string> {
+    if (userId) {
+      const validation = await this.validateUserCommission(userId, groupId);
+      if (!validation.valid) {
+        return validation.reason === 'incomplete_profile'
+          ? AcademicCalendarService.INCOMPLETE_PROFILE_MESSAGE
+          : AcademicCalendarService.INVALID_OR_MISSING_COMMISSION_MESSAGE;
+      }
+    }
     const userCommissionId = userId ? await this.getUserCommissionId(userId, groupId) : null;
     const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(10, groupId), userCommissionId, Boolean(groupId));
     if (!exams.length) return '📝 Próximos exámenes:\n- No hay exámenes cargados por ahora.';
@@ -573,6 +599,12 @@ export class AcademicCalendarService {
   }
 
   private async formatWeekEvents(userId: string, currentDt: Date, offsetDays: number, groupId?: string): Promise<string> {
+    const validation = await this.validateUserCommission(userId, groupId);
+    if (!validation.valid) {
+      return validation.reason === 'incomplete_profile'
+        ? AcademicCalendarService.INCOMPLETE_PROFILE_MESSAGE
+        : AcademicCalendarService.INVALID_OR_MISSING_COMMISSION_MESSAGE;
+    }
     const notices = await this.dynamicMessageService.getValidNotices(100);
     const userCommissionId = await this.getUserCommissionId(userId, groupId);
     const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(100, groupId), userCommissionId, Boolean(groupId));
@@ -865,7 +897,7 @@ export class AcademicCalendarService {
   }
 
   private async getClassesForWeekday(dayName: string, userId?: string, groupId?: string): Promise<Array<{ hora: string; materia: string; meetLink: string }>> {
-    // Nuevo comportamiento (Phase 3): cuando exista ClassCommissionSchedule usarlo
+    // Usar ClassCommissionSchedule cuando exista
     const userCommissionId = userId ? await this.getUserCommissionId(userId, groupId) : null;
 
     // Si tenemos schedules en la BD y la repo correspondiente, preferirlos
@@ -992,6 +1024,40 @@ export class AcademicCalendarService {
       return null;
     }
     return profile.user_commission_id;
+  }
+
+  private async validateUserCommission(userId: string, groupId?: string): Promise<{ valid: boolean; reason: 'incomplete_profile' | 'missing_commission' | 'invalid_commission' | null }> {
+    if (groupId && this.groupContextRepository) {
+      const groupContext = await this.groupContextRepository.getByGroupId(groupId);
+      if (groupContext && typeof groupContext.id === 'number') {
+        const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+        if (commissions.length > 1) {
+          const profile = await this.userProfileRepository.get(userId);
+          if (!profile || !profile.name?.trim() || !profile.birthday_day_month?.trim() || !profile.email?.trim()) {
+            return { valid: false, reason: 'incomplete_profile' };
+          }
+
+          const commissionId = await this.getUserCommissionId(userId, groupId);
+          if (commissionId === null) {
+            return { valid: false, reason: 'missing_commission' };
+          }
+
+          const belongs = commissions.some((c) => c.id === commissionId);
+          if (!belongs) {
+            return { valid: false, reason: 'invalid_commission' };
+          }
+
+          if (this.commissionRepository) {
+            const exists = await this.commissionRepository.getById(commissionId);
+            if (!exists) {
+              return { valid: false, reason: 'invalid_commission' };
+            }
+          }
+        }
+      }
+    }
+
+    return { valid: true, reason: null };
   }
 
   private filterClassesByCommission(classes: ManagedClass[], userCommissionId: number | null, strictScope = false): ManagedClass[] {

@@ -27,7 +27,7 @@ export class InstitutionalEmailMonitor {
 
     console.log(`[EmailMonitor] Se obtuvieron ${emails.length} email(s) del buzón.`);
 
-    // PHASE 5: Get target group ID dynamically if callback provided
+    // Obtener grupo destino dinámicamente si hay callback
     const targetGroupId = this.getTargetGroupId ? await this.getTargetGroupId() : undefined;
 
     for (const email of emails) {
