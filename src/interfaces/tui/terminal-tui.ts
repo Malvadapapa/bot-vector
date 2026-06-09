@@ -1,4 +1,5 @@
 import blessed from 'neo-blessed';
+import { execSync } from 'child_process';
 import { StreamInterceptor } from './stream-interceptor.js';
 
 export class TerminalTui {
@@ -8,6 +9,14 @@ export class TerminalTui {
   private interceptor!: StreamInterceptor;
 
   constructor() {
+    // Forzar codificación de página de códigos de consola UTF-8 en Windows antes de iniciar Blessed
+    if (process.platform === 'win32') {
+      try {
+        execSync('chcp 65001', { stdio: 'ignore' });
+      } catch {
+        // Ignorado si falla en algún entorno restringido
+      }
+    }
     this.initLayout();
     this.initInterceptor();
   }
@@ -19,6 +28,7 @@ export class TerminalTui {
       title: 'Vectorito - Tablero de Supervisión',
       dockBorders: true,
       forceUnicode: true,
+      mouse: true, // Habilitar soporte de captura de eventos de mouse y rueda de scroll
     });
 
     const borderStyle = { type: 'line' as const };
@@ -39,8 +49,21 @@ export class TerminalTui {
       mouse: true,
       scrollable: true,
       alwaysScroll: true,
+      scrollback: 10000,
+      scrollbar: {
+        ch: ' ',
+        track: {
+          bg: 'black',
+        },
+        style: {
+          bg: 'yellow',
+        },
+      },
       style: {
         border: { fg: 'green' },
+        focus: {
+          border: { fg: 'yellow' },
+        },
         label: labelStyle,
       },
     });
@@ -60,24 +83,71 @@ export class TerminalTui {
       mouse: true,
       scrollable: true,
       alwaysScroll: true,
+      scrollback: 10000,
+      scrollbar: {
+        ch: ' ',
+        track: {
+          bg: 'black',
+        },
+        style: {
+          bg: 'cyan',
+        },
+      },
       style: {
         border: { fg: 'magenta' },
+        focus: {
+          border: { fg: 'cyan' },
+        },
         label: labelStyle,
       },
     });
 
-    // 4. Adaptabilidad a cambios de tamaño de consola
+    // 4. Eventos de scroll con rueda del mouse (capturados vía evento genérico 'mouse')
+    this.chatPanel.on('mouse', (data: any) => {
+      if (data.action === 'wheelup') {
+        this.chatPanel.scroll(-2);
+        this.screen.render();
+      } else if (data.action === 'wheeldown') {
+        this.chatPanel.scroll(2);
+        this.screen.render();
+      }
+    });
+
+    this.logPanel.on('mouse', (data: any) => {
+      if (data.action === 'wheelup') {
+        this.logPanel.scroll(-2);
+        this.screen.render();
+      } else if (data.action === 'wheeldown') {
+        this.logPanel.scroll(2);
+        this.screen.render();
+      }
+    });
+
+    // 5. Navegación e intercambio de foco con la tecla Tab
+    this.screen.key(['tab'], () => {
+      if (this.screen.focused === this.chatPanel) {
+        this.logPanel.focus();
+      } else {
+        this.chatPanel.focus();
+      }
+      this.screen.render();
+    });
+
+    // 6. Adaptabilidad a cambios de tamaño de consola
     this.screen.on('resize', () => {
       this.chatPanel.emit('resize');
       this.logPanel.emit('resize');
       this.screen.render();
     });
 
-    // 5. Atajos de salida limpia (Escape, q, Ctrl+C)
+    // 7. Atajos de salida limpia (Escape, q, Ctrl+C)
     this.screen.key(['escape', 'q', 'C-c'], () => {
       this.destroy();
       process.exit(0);
     });
+
+    // Foco inicial por defecto
+    this.chatPanel.focus();
 
     // Renderizado Inicial
     this.screen.render();
@@ -96,13 +166,14 @@ export class TerminalTui {
   /**
    * Imprime un mensaje de WhatsApp en el panel de conversación
    */
-  public appendChatMessage(sender: string, text: string, type: 'user' | 'bot'): void {
+  public appendChatMessage(sender: string, text: string, type: 'user' | 'bot', contextLabel?: string): void {
     const time = new Date().toLocaleTimeString();
     const color = type === 'user' ? 'cyan' : 'green';
     const tag = type === 'user' ? '👤 STUDENT' : '🤖 BOT';
+    const contextStr = contextLabel ? ` {yellow-fg}${contextLabel}{/yellow-fg}` : '';
 
     this.chatPanel.log(
-      `[{gray-fg}${time}{/gray-fg}] {${color}-fg}{bold}${tag} (${sender}){/bold}{/${color}-fg}: ${text}`
+      `[{white-fg}${time}{/white-fg}]${contextStr} {${color}-fg}{bold}${tag} (${sender}){/bold}{/${color}-fg}: ${text}`
     );
   }
 
@@ -113,7 +184,7 @@ export class TerminalTui {
     const time = new Date().toLocaleTimeString();
     // Sangrado e indentación para diferenciar del chat y color amarillo suave
     this.chatPanel.log(
-      `  [{gray-fg}${time}{/gray-fg}] {yellow-fg}⚙️ [PROCESO RAG]: ${trace}{/yellow-fg}`
+      `  [{white-fg}${time}{/white-fg}] {yellow-fg}⚙️ [PROCESO RAG]: ${trace}{/yellow-fg}`
     );
   }
 

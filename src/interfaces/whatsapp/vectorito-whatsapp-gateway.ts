@@ -728,7 +728,19 @@ export class VectoritoWhatsAppGateway {
       : `${ANSI.dim}${sender}${ANSI.reset}`;
 
     console.log(`${baseColor}📩 ${scopeLabel}${ANSI.reset} ${senderLabel} ${ANSI.dim}chat=${chatId}${ANSI.reset} -> "${msg}"`);
-    logTuiChatMessage(sender, text, 'user');
+    
+    const phone = sender.split('@')[0];
+    if (isGroup) {
+      this.groupRepository.findByGroupId(chatId).then((group) => {
+        const entryYear = group?.entry_year != null ? `Camada ${group.entry_year}` : 'General';
+        const contextLabel = `[Grupo: ${group?.display_name || chatId} | ${entryYear}]`;
+        logTuiChatMessage(phone, text, 'user', contextLabel);
+      }).catch(() => {
+        logTuiChatMessage(phone, text, 'user', `[Grupo: ${chatId}]`);
+      });
+    } else {
+      logTuiChatMessage(phone, text, 'user', '[Privado]');
+    }
   }
 
   private logOutgoing(jid: string, text: string, senderId?: string, sourceWasPrivate?: boolean): void {
@@ -740,7 +752,18 @@ export class VectoritoWhatsAppGateway {
     const replyTo = senderId ? ` ${ANSI.dim}a=${senderId}${ANSI.reset}` : '';
 
     console.log(`${color}📤 ${scopeLabel}${ANSI.reset}${replyTo} ${ANSI.dim}destino=${jid}${ANSI.reset} -> "${msg}"`);
-    logTuiChatMessage('Vectorito', text, 'bot');
+    
+    if (isGroup) {
+      this.groupRepository.findByGroupId(jid).then((group) => {
+        const entryYear = group?.entry_year != null ? `Camada ${group.entry_year}` : 'General';
+        const contextLabel = `[Grupo: ${group?.display_name || jid} | ${entryYear}]`;
+        logTuiChatMessage('Vectorito', text, 'bot', contextLabel);
+      }).catch(() => {
+        logTuiChatMessage('Vectorito', text, 'bot', `[Grupo: ${jid}]`);
+      });
+    } else {
+      logTuiChatMessage('Vectorito', text, 'bot', '[Privado]');
+    }
   }
 
   private compactText(text: string): string {

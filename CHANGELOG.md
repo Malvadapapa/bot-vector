@@ -16,6 +16,14 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - Al terminar las materias, solicita registrar la lista de emails de clase de la cohorte en formato `etiqueta|email` separados por comas (salteable con `skip` o `mas tarde`).
 - **Enrutamiento de Avisos de Profesor Multi-Grupo**: Un profesor puede estar registrado para dictar en múltiples grupos/camadas con un único correo. El monitor IMAP valida y restringe la publicación del aviso estrictamente a los grupos autorizados para el remitente, permitiendo enviar a todos sus grupos por defecto o filtrar según selector de camada.
 - **Conexión de Profesores y Avisos en Contexto IA**: En `buildContext`, se vinculan los avisos institucionales con el profesor emisor basándose en su correo para inyectar la relación a la IA, permitiendo responder a preguntas como *"¿el profesor de programación dejó algún aviso?"* de forma natural.
+- **Tablero de Supervisión TUI (Interfaz de Consola Dividida)**:
+  - Implementación de una interfaz gráfica de terminal (TUI) autocontenida basada en `neo-blessed` que se activa mediante `TUI_ENABLED=true` en `.env`.
+  - División vertical de la pantalla al 50% en dos visualizadores continuos: el **Panel Izquierdo** para el flujo de conversaciones de WhatsApp y trazas del proceso RAG/IA (incluyendo validación de comisiones, hits de contexto y llamadas al LLM), y el **Panel Derecho** para logs generales de infraestructura y errores del sistema.
+  - Implementación de un interceptor de stream seguro (`StreamInterceptor`) que intercepta directamente el objeto `console` global con control de recursión (`activeInterceptions`) y limpiador de códigos ANSI (`stripAnsi`), evitando interferencias con el motor de dibujo de Blessed.
+  - Integración de barras de scroll visuales e independientes para cada panel (amarillo/cian).
+  - Soporte de scroll independiente por mouse "hover" (sin necesidad de hacer foco previo) y foco alternado vía teclado (tecla `Tab`) para navegar el historial completo (scrollback de 10k líneas).
+  - Forzado automático de codificación UTF-8 (`chcp 65001`) en entornos Windows para la correcta renderización de emojis y bordes de paneles.
+  - Extracción automática de números de teléfono de estudiantes y representación de contextos de grupo (nombre y camada) en el flujo del chat.
 
 ### Corregido
 - **Aislamiento de Contexto entre Comisiones (BUG-002)**: Corrección del error por el cual el comando `!semana` y las consultas de agenda vía IA mezclaban los cronogramas de distintas comisiones en un mismo grupo. El bot ahora valida la comisión del usuario antes de responder sobre agendas, aulas o enlaces de cursado. Si no puede determinar la comisión, solicita al alumno que se identifique antes de continuar.

@@ -1,12 +1,18 @@
+import util from 'util';
+
 export class StreamInterceptor {
-  private originalStdoutWrite: typeof process.stdout.write;
-  private originalStderrWrite: typeof process.stderr.write;
-  private isWriting = false;
+  private originalLog!: typeof console.log;
+  private originalError!: typeof console.error;
+  private originalWarn!: typeof console.warn;
+  private originalInfo!: typeof console.info;
   private isIntercepting = false;
+  private activeInterceptions = 0;
 
   constructor(private onLog: (text: string) => void) {
-    this.originalStdoutWrite = process.stdout.write.bind(process.stdout);
-    this.originalStderrWrite = process.stderr.write.bind(process.stderr);
+    this.originalLog = console.log.bind(console);
+    this.originalError = console.error.bind(console);
+    this.originalWarn = console.warn.bind(console);
+    this.originalInfo = console.info.bind(console);
   }
 
   /**
@@ -21,56 +27,91 @@ export class StreamInterceptor {
     return str.replace(regex, '');
   }
 
+  private formatArgs(args: any[]): string {
+    return args
+      .map((arg) => (typeof arg === 'string' ? arg : util.inspect(arg, { colors: false })))
+      .join(' ');
+  }
+
   public start(): void {
     if (this.isIntercepting) return;
     this.isIntercepting = true;
 
-    // Interceptar stdout
-    process.stdout.write = ((chunk: any, encoding?: any, callback?: any): boolean => {
-      const text = chunk.toString();
-      
-      // Si ya estamos escribiendo un cambio de Blessed en consola, redirigir directo
-      if (this.isWriting) {
-        return this.originalStdoutWrite(chunk, encoding, callback);
+    console.log = (...args: any[]) => {
+      if (this.activeInterceptions > 0) {
+        this.originalLog(...args);
+        return;
       }
-
-      this.isWriting = true;
+      this.activeInterceptions++;
       try {
+        const text = this.formatArgs(args);
         const cleanText = this.stripAnsi(text);
         if (cleanText.trim().length > 0) {
           this.onLog(cleanText);
         }
       } finally {
-        this.isWriting = false;
+        this.activeInterceptions--;
       }
-      return true;
-    }) as any;
+    };
 
-    // Interceptar stderr
-    process.stderr.write = ((chunk: any, encoding?: any, callback?: any): boolean => {
-      const text = chunk.toString();
-
-      if (this.isWriting) {
-        return this.originalStderrWrite(chunk, encoding, callback);
+    console.info = (...args: any[]) => {
+      if (this.activeInterceptions > 0) {
+        this.originalInfo(...args);
+        return;
       }
-
-      this.isWriting = true;
+      this.activeInterceptions++;
       try {
+        const text = this.formatArgs(args);
+        const cleanText = this.stripAnsi(text);
+        if (cleanText.trim().length > 0) {
+          this.onLog(cleanText);
+        }
+      } finally {
+        this.activeInterceptions--;
+      }
+    };
+
+    console.warn = (...args: any[]) => {
+      if (this.activeInterceptions > 0) {
+        this.originalWarn(...args);
+        return;
+      }
+      this.activeInterceptions++;
+      try {
+        const text = this.formatArgs(args);
+        const cleanText = this.stripAnsi(text);
+        if (cleanText.trim().length > 0) {
+          this.onLog(`{yellow-fg}[WARN] ${cleanText}{/yellow-fg}`);
+        }
+      } finally {
+        this.activeInterceptions--;
+      }
+    };
+
+    console.error = (...args: any[]) => {
+      if (this.activeInterceptions > 0) {
+        this.originalError(...args);
+        return;
+      }
+      this.activeInterceptions++;
+      try {
+        const text = this.formatArgs(args);
         const cleanText = this.stripAnsi(text);
         if (cleanText.trim().length > 0) {
           this.onLog(`{red-fg}[ERROR] ${cleanText}{/red-fg}`);
         }
       } finally {
-        this.isWriting = false;
+        this.activeInterceptions--;
       }
-      return true;
-    }) as any;
+    };
   }
 
   public stop(): void {
     if (!this.isIntercepting) return;
-    process.stdout.write = this.originalStdoutWrite;
-    process.stderr.write = this.originalStderrWrite;
+    console.log = this.originalLog;
+    console.info = this.originalInfo;
+    console.warn = this.originalWarn;
+    console.error = this.originalError;
     this.isIntercepting = false;
   }
 }
