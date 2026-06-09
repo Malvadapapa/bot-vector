@@ -14,6 +14,7 @@ import { PrivateChatWorkflowService } from '../../application/admin/private-chat
 import { RateLimitService } from '../../features/ai/rate-limit.service.js';
 import { UserModerationService } from '../../features/moderation/user-moderation.service.js';
 import { AdminRepository, GroupRepository, UserProfileRepository, GroupMembershipRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { logTuiChatMessage } from '../../shared/config/tui-shared.js';
 
 const nodeRequire = createRequire(import.meta.url);
 const qrcodeTerminal = nodeRequire('qrcode-terminal');
@@ -727,6 +728,7 @@ export class VectoritoWhatsAppGateway {
       : `${ANSI.dim}${sender}${ANSI.reset}`;
 
     console.log(`${baseColor}📩 ${scopeLabel}${ANSI.reset} ${senderLabel} ${ANSI.dim}chat=${chatId}${ANSI.reset} -> "${msg}"`);
+    logTuiChatMessage(sender, text, 'user');
   }
 
   private logOutgoing(jid: string, text: string, senderId?: string, sourceWasPrivate?: boolean): void {
@@ -738,6 +740,7 @@ export class VectoritoWhatsAppGateway {
     const replyTo = senderId ? ` ${ANSI.dim}a=${senderId}${ANSI.reset}` : '';
 
     console.log(`${color}📤 ${scopeLabel}${ANSI.reset}${replyTo} ${ANSI.dim}destino=${jid}${ANSI.reset} -> "${msg}"`);
+    logTuiChatMessage('Vectorito', text, 'bot');
   }
 
   private compactText(text: string): string {

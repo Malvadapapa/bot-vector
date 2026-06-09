@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { EmbeddingProvider } from '../providers/embedding-provider.interface.js';
 import { VectorStorage } from './vector-storage.js';
+import { logTuiProcessTrace } from '../../../shared/config/tui-shared.js';
 
 export interface RagSearchResult {
   text: string;
@@ -78,9 +79,9 @@ export class RagQueryService {
       }));
 
       if (filtered.length > 0) {
-        console.log(
-          `[RAG] Búsqueda exitosa (${groupId ? `grupo: ${groupId}` : 'solo general'}): ${filtered.length} chunks (scores: ${filtered.map((r) => r.score.toFixed(3)).join(', ')}${filtered[0].weak ? ' - DÉBIL' : ''})`,
-        );
+        const msg = `Búsqueda exitosa (${groupId ? `grupo: ${groupId}` : 'solo general'}): ${filtered.length} chunks (scores: ${filtered.map((r) => r.score.toFixed(3)).join(', ')}${filtered[0].weak ? ' - DÉBIL' : ''})`;
+        console.log(`[RAG] ${msg}`);
+        logTuiProcessTrace(msg);
       }
 
       return filtered;

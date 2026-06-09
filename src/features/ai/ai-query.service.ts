@@ -3,6 +3,7 @@ import { KnowledgeContextService } from './knowledge-context.service.js';
 import { RateLimitService } from './rate-limit.service.js';
 import { RagQueryService } from './rag/rag-query.service.js';
 import { UserModerationService } from '../moderation/user-moderation.service.js';
+import { logTuiProcessTrace } from '../../shared/config/tui-shared.js';
 
 export class AIQueryService {
   private static readonly RESPONSE_TIMEOUT_MS = 25_000;
@@ -50,13 +51,16 @@ export class AIQueryService {
     }
 
     if (!isAdmin && this.isAcademicScheduleOrLinkQuery(prompt)) {
+      logTuiProcessTrace(`Validando comisión de cursado para el usuario ${userId} en grupo ${groupId}...`);
       const validation = await this.knowledgeContextService.validateUserCommission(userId, groupId);
       if (!validation.valid) {
+        logTuiProcessTrace(`Comisión inválida/inexistente. Bloqueando consulta de agenda.`);
         if (validation.reason === 'incomplete_profile') {
           return '⚠️ Para poder consultar agendas, clases o enlaces de cursado, primero tenés que completar tu registro. Por favor, escribime por privado para registrarte.';
         }
         return '⚠️ Para poder brindarte información sobre horarios, clases, aulas o enlaces de cursado, necesito saber a qué comisión pertenecés. Por favor, registrá tu comisión en el bot escribiendo \'hola\' en el chat privado.';
       }
+      logTuiProcessTrace(`Comisión válida detectada.`);
     }
 
     if (isAdmin) {
@@ -85,6 +89,7 @@ export class AIQueryService {
 
   private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string): Promise<string> {
     // 1. Contexto dinámico de BD (exámenes, avisos, clases, perfil)
+    logTuiProcessTrace(`Recuperando contexto relevante de base de datos...`);
     const dbContext = await this.knowledgeContextService.buildContext(userId, groupId);
 
     // 2. Contexto RAG — búsqueda semántica en los PDFs indexados
@@ -92,6 +97,7 @@ export class AIQueryService {
     let isWeakRag = false;
 
     if (this.ragQueryService) {
+      logTuiProcessTrace(`Iniciando búsqueda semántica RAG para: "${prompt}"`);
       const ragResults = await this.ragQueryService.search(prompt, 3, groupId);
       ragContext = this.ragQueryService.formatContext(ragResults);
 
@@ -101,9 +107,13 @@ export class AIQueryService {
     }
 
     if (ragContext) {
-      console.log(`[IA] Estrategia de contexto: RAG local (chunks inyectados) ${isWeakRag ? '[DÉBIL]' : ''}`);
+      const msg = `Estrategia de contexto: RAG local (chunks inyectados) ${isWeakRag ? '[DÉBIL]' : ''}`;
+      console.log(`[IA] ${msg}`);
+      logTuiProcessTrace(msg);
     } else {
-      console.log('[IA] Estrategia de contexto: contexto interno sin RAG relevante');
+      const msg = 'Estrategia de contexto: contexto interno sin RAG relevante';
+      console.log(`[IA] ${msg}`);
+      logTuiProcessTrace(msg);
     }
 
     // 3. Construir el prompt enriquecido
@@ -134,10 +144,12 @@ export class AIQueryService {
       prompt,
     ].filter(Boolean).join('\n\n');
 
+    logTuiProcessTrace(`Invocando API del modelo de IA (${this.aiProvider.constructor.name})...`);
     const aiText = await this.withTimeout(
       this.aiProvider.generateContent(userId, mergedPrompt),
       AIQueryService.RESPONSE_TIMEOUT_MS,
     );
+    logTuiProcessTrace(`Respuesta del modelo recibida con éxito.`);
 
     const normalizedAiText = String(aiText || '').trim();
     if (!normalizedAiText) {

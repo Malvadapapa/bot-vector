@@ -53,6 +53,8 @@ import { VectoritoWhatsAppGateway } from './interfaces/whatsapp/vectorito-whatsa
 import { SchedulerService } from './scheduler/scheduler-service.js';
 import { RagQueryService } from './features/ai/rag/rag-query.service.js';
 import { RagPipelineService } from './features/ai/rag/rag-pipeline.service.js';
+import { TerminalTui } from './interfaces/tui/terminal-tui.js';
+import { setTerminalTui } from './shared/config/tui-shared.js';
 
 // Las instrucciones se importan desde ./shared/config/instructions.js
 
@@ -203,6 +205,12 @@ function setupProcessSafetyHandlers() {
 async function bootstrap() {
   ensureSingleInstance();
   setupProcessSafetyHandlers();
+
+  if (process.env.TUI_ENABLED === 'true') {
+    const tui = new TerminalTui();
+    setTerminalTui(tui);
+  }
+
   console.log('=== Vectorito: inicio de servicio ===');
   console.log('Cargando configuración, base de datos y conexión a WhatsApp...');
 
