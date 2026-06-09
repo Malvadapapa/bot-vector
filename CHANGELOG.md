@@ -5,6 +5,10 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 ## [2.1.0-alpha.3] - Unreleased
 
 ### Agregado
+- **Protección contra Prompt Leakage (BUG-001)**:
+  - Implementación de un filtro por expresiones regulares a nivel de código (`AIQueryService.answer`) que intercepta intentos maliciosos de extraer directivas, instrucciones, system prompts o configuraciones internas del bot, retornando un mensaje neutral de fallback sin consumir cuota de API ni llamar al modelo.
+  - Consolidación y robustecimiento de las instrucciones del sistema (`DEFAULT_BOT_INSTRUCTIONS`) en un único archivo compartido (`src/shared/config/instructions.ts`), agregando guardrails restrictivos para evitar la divulgación de las directivas ante solicitudes indirectas o juegos de rol.
+  - Creación de un nuevo archivo de pruebas unitarias (`prompt-leakage.spec.ts`) para validar y certificar el bloqueo de inyecciones maliciosas y la correcta continuidad de consultas académicas legítimas.
 - **Detección Dinámica de Datos Ausentes**: Monitoreo de consultas (vía IA) sobre clases, exámenes o profesores cuando no hay registros en la base de datos para el grupo. El Gateway de WhatsApp ahora intercepta estas consultas, notifica de manera privada a los administradores del grupo (o superadmins como fallback) e informa públicamente en el grupo solicitando su carga.
 - **Alertas de Configuración Faltante**: El Gateway de WhatsApp ahora notifica de forma proactiva y privada a los administradores del grupo cuando un usuario intenta usar comandos rápidos (`!hoy`, `!examenes`, etc.) en un grupo sin configuración académica.
 - **Onboarding de Grupo Extendido (Profesores y Emails)**:

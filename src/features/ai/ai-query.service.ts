@@ -44,6 +44,11 @@ export class AIQueryService {
       return '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.';
     }
 
+    // 0.1) Comprobar intento de prompt leakage (divulgación de instrucciones de sistema)
+    if (this.isPromptLeakageAttempt(prompt)) {
+      return '¡Hola! Como asistente virtual del ISPC, estoy para ayudarte con consultas sobre materias, horarios, exámenes y temas académicos del instituto. No puedo compartir mis reglas de comportamiento ni configuraciones internas. ¿En qué te puedo ayudar hoy con respecto al ISPC?';
+    }
+
     if (isAdmin) {
       return await this.generateAnswer(userId, prompt, nowResolved, isAdmin, groupId);
     }
@@ -218,5 +223,39 @@ export class AIQueryService {
 
   private generateClarifyingQuestion(prompt: string): string {
     return `Perdón, no entendí bien tu pregunta: ¿podés dar más detalles o decir exactamente qué necesitas sobre el ISPC?`;
+  }
+
+  private isPromptLeakageAttempt(prompt: string): boolean {
+    const normalized = prompt
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Quitar tildes
+      .trim();
+
+    const leakagePatterns = [
+      // Petición directa de reglas/instrucciones del bot/creador/sistema
+      /(reglas|instrucciones|directivas|configuracion|prompt)s?\s+(que\s+te|de\s+tu|del\s+bot|de\s+la\s+ia|del\s+modelo|de\s+vector|internas|propias|de\s+comportamiento|de\s+funcionamiento|de\s+sistema|del\s+sistema)/i,
+      // Petición con posesivos: tus reglas, tus instrucciones, tu configuración, tu prompt, etc.
+      /(tus|tu|tuyas|tuyos)\s+(reglas|instrucciones|directivas|configuracion|prompt|directiva)s?/i,
+      // Directivas del creador / de Cristian Vargas
+      /(reglas|instrucciones|directivas|configuracion|prompt)s?\s+.*(creador|creo|diseno|cristian|vargas)/i,
+      // Revelar reglas
+      /revelar\s+(reglas|instrucciones|directivas|prompt|configuracion)s?/i,
+      /reveles\s+(reglas|instrucciones|directivas|prompt|configuracion)s?/i,
+      /divulgar\s+(reglas|instrucciones|directivas|prompt|configuracion)s?/i,
+      /mostrar\s+(reglas|instrucciones|directivas|prompt|configuracion)s?/i,
+      // Términos técnicos de prompt injection / leakage
+      /system\s+prompt/i,
+      /prompt\s+de\s+sistema/i,
+      /instrucciones\s+de\s+sistema/i,
+      /reglas\s+de\s+sistema/i,
+      /directivas\s+de\s+sistema/i,
+      /system\s+instruction/i,
+      /instrucciones\s+del\s+sistema/i,
+      /directivas\s+del\s+sistema/i,
+      /reglas\s+del\s+sistema/i,
+    ];
+
+    return leakagePatterns.some((pattern) => pattern.test(normalized));
   }
 }
