@@ -135,6 +135,7 @@ export class PrivateChatWorkflowService {
   private registrationRetries = new Map<string, number>();
   private pendingProfileTimestamps = new Map<string, number>();
   private dailyWarningSent = new Map<string, string>(); // userId -> YYYY-MM-DD
+  private commissionWarningTimestamps = new Map<string, number>(); // userId:groupId -> timestamp
   // Estado para baneo manual
   private pendingBanData = new Map<string, { phone?: string; banType?: string }>();
 
@@ -300,13 +301,23 @@ export class PrivateChatWorkflowService {
     if (isRegisterState && lastInteraction && (now - lastInteraction > 15 * 60 * 1000)) {
       this.clearPendingData(userId);
       this.pendingProfileTimestamps.delete(userId);
-      if (cleaned.toLowerCase() !== 'hola') {
-        return 'El proceso de registro se canceló por inactividad (15 minutos) ⏳. Escribí *hola* cuando quieras empezar de nuevo.';
+      if (cleaned.toLowerCase() !== '!registrarse' && cleaned.toLowerCase() !== 'registrarse') {
+        return 'El proceso de registro se canceló por inactividad (15 minutos) ⏳. Escribí *!registrarse* cuando quieras empezar de nuevo.';
       }
     }
 
-    if (isRegisterState || cleaned.toLowerCase() === 'hola') {
+    if (isRegisterState || this.isRegistrationCommand(cleaned)) {
       this.pendingProfileTimestamps.set(userId, now);
+    }
+
+    const lowerCleaned = cleaned.toLowerCase().trim();
+    if (!isRegisterState && this.isGreetingInvocation(lowerCleaned)) {
+      const profile = await this.userProfileRepository.get(userId);
+      const missingFields = this.getMissingProfileFields(profile);
+      const missingCommissions = await this.getMissingCommissionsForUser(userId);
+      if (missingFields.length > 0 || missingCommissions.length > 0) {
+        return '¡Hola! Para iniciar tu registro escribí *!registrarse* por privado.';
+      }
     }
 
     const profileCompletionResponse = await this.maybeHandleProfileCompletion(userId, cleaned);
@@ -337,12 +348,8 @@ export class PrivateChatWorkflowService {
 
     const profile = await this.userProfileRepository.get(userId);
     const missingFields = this.getMissingProfileFields(profile);
-    if (missingFields.length > 0) {
-      return this.handleUserRegistrationFlow(userId, cleaned);
-    }
-
     const missingCommissions = await this.getMissingCommissionsForUser(userId);
-    if (missingCommissions.length > 0) {
+    if (this.isRegistrationCommand(cleaned) && (missingFields.length > 0 || missingCommissions.length > 0)) {
       return this.handleUserRegistrationFlow(userId, cleaned);
     }
 
@@ -2307,7 +2314,7 @@ export class PrivateChatWorkflowService {
       this.clearPendingData(userId);
       this.registrationRetries.delete(`${userId}:birthday`);
       this.registrationRetries.delete(`${userId}:email`);
-      return 'Entendido, cancelé el registro 🙌\n\nSi querés retomarlo en otro momento, \n\nEscríbeme "hola" cuando quieras.';
+      return 'Entendido, cancelé el registro 🙌\n\nSi querés retomarlo en otro momento, \n\nEscríbeme "!registrarse" cuando quieras.';
     }
 
     if (currentState === 'await_user_profile_welcome') {
@@ -2341,7 +2348,7 @@ export class PrivateChatWorkflowService {
         if (retries >= 4) {
           this.registrationRetries.delete(retryKey);
           this.clearPendingData(userId);
-          return 'Demasiados intentos fallidos. Escribime "hola" cuando quieras intentar registrarte de nuevo 🙂';
+          return 'Demasiados intentos fallidos. Escribime "!registrarse" cuando quieras intentar registrarte de nuevo 🙂';
         }
         return `No pude leer esa fecha 😅\n\nUsá el formato *DD/MM*, por ejemplo: 15/09\n\n   Intentos restantes: ${4 - retries}`;
       }
@@ -2366,7 +2373,7 @@ export class PrivateChatWorkflowService {
         if (retries >= 5) {
           this.registrationRetries.delete(retryKey);
           this.clearPendingData(userId);
-          return 'Demasiados intentos fallidos. Escribime "hola" cuando quieras intentar registrarte de nuevo 🙂';
+          return 'Demasiados intentos fallidos. Escribime "!registrarse" cuando quieras intentar registrarte de nuevo 🙂';
         }
         return `Ese email no parece válido 🔍\n\nTiene que tener el formato: algo@dominio.algo\n\n   Intentos restantes: ${5 - retries}`;
       }
@@ -2406,7 +2413,7 @@ export class PrivateChatWorkflowService {
       const pending = this.pendingProfiles.get(userId);
       if (!pending?.name || !pending.birthday || !pending.email) {
         this.clearPendingData(userId);
-        return 'Faltan datos. Volvé a intentarlo con "hola".';
+        return 'Faltan datos. Volvé a intentarlo con "!registrarse".';
       }
 
       if (cleaned.toLowerCase() === 'sí' || cleaned.toLowerCase() === 'si') {
@@ -2475,7 +2482,7 @@ export class PrivateChatWorkflowService {
     const pending = this.pendingProfiles.get(userId);
     if (!pending?.name || !pending.birthday || !pending.email) {
       this.clearPendingData(userId);
-      return 'Faltan datos. Volvé a intentarlo con "hola".';
+      return 'Faltan datos. Volvé a intentarlo con "!registrarse".';
     }
 
     const choiceStr = cleaned.trim();
@@ -3338,6 +3345,38 @@ export class PrivateChatWorkflowService {
     if (!profile.birthday_day_month?.trim()) missing.push('birthday');
     if (!profile.email?.trim()) missing.push('email');
     return missing;
+  }
+
+  private isRegistrationCommand(cleaned: string): boolean {
+    const normalized = cleaned.toLowerCase().trim();
+    return normalized === '!registrarse' || normalized === 'registrarse';
+  }
+
+  private isGreetingInvocation(cleaned: string): boolean {
+    return ['hola', '¡hola', 'hola!', '!hola'].includes(cleaned.toLowerCase().trim());
+  }
+
+  public async getGroupCommissionMissingWarning(userId: string, groupId: string, nowMs = Date.now()): Promise<string | null> {
+    if (!this.groupMembershipRepository || !this.groupRepository || !this.groupContextRepository) return null;
+
+    const membership = await this.groupMembershipRepository.getMembership(groupId, userId);
+    if (!membership || !membership.is_active || membership.commission_id) return null;
+
+    const context = await this.groupContextRepository.getByGroupId(groupId);
+    if (!context || context.id === undefined) return null;
+
+    const commissions = await this.groupContextRepository.listCommissionsForGroupContext(context.id);
+    if (commissions.length === 0) return null;
+
+    const key = `${userId}:${groupId}`;
+    const lastWarning = this.commissionWarningTimestamps.get(key);
+    const thresholdMs = 48 * 60 * 60 * 1000;
+    if (lastWarning !== undefined && nowMs - lastWarning < thresholdMs) {
+      return '';
+    }
+
+    this.commissionWarningTimestamps.set(key, nowMs);
+    return '⚠️ Para usar el bot en este grupo necesitás completar tu comisión. Escribí *!registrarse* por privado y te guío para finalizarlo.';
   }
 
   private getNextAdminProfileState(profile: { name: string; birthday_day_month: string; email: string } | null): string {
