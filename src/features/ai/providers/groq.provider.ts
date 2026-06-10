@@ -42,7 +42,7 @@ export class GroqProvider implements AIProvider {
         { role: 'system', content: this.systemInstructions },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.7,
+      temperature: 0.1,
       max_tokens: 1024
     };
 

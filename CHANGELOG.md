@@ -32,6 +32,12 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
       - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
 
 ### Corregido
+- **Alucinación Creativa ante Prompts de Engaño (BUG-009)**:
+  - Mitigación de la vulnerabilidad ante solicitudes de generación creativa (ej. historias de ficción, poemas, cuentos, chistes, juegos de rol) disfrazadas como ayuda de materias académicas.
+  - Reducción de la temperatura del modelo a `0.1` tanto en Gemini (`GeminiService`) como en Groq (`GroqProvider`) para propiciar respuestas estructuradas, lógicas y no creativas.
+  - Refuerzo en las directivas de comportamiento del sistema (`DEFAULT_BOT_INSTRUCTIONS`) con reglas prioritarias de restricción de dominio y no-creatividad.
+  - Corrección de la importación y tipado de `ParsedMessage` en las pruebas unitarias de conversación (`conversation.spec.ts`).
+  - Creación de un suite de pruebas de guardrails de dominio (`domain-guardrails.spec.ts`) para verificar la configuración de temperaturas y directivas.
 - **Bypass e Inconsistencia en el Contador del Límite Diario (BUG-005)**:
   - Se resolvió la condición de carrera en solicitudes simultáneas serializando las consultas y actualizaciones del límite por cada usuario mediante un mecanismo de cola/bloqueo basado en promesas en `RateLimitService`.
   - Se movió el descuento de la cuota (`checkAndConsume`) al inicio del proceso de generación en `AIQueryService.generateAnswer` para evitar el procesamiento innecesario de prompts e inyecciones a la IA cuando el cupo ya está agotado.

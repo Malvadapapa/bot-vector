@@ -3,7 +3,7 @@ import sqlite3 from 'sqlite3';
 import { run } from '../../../shared/db/db-utils.js';
 import { ConfirmationRepository } from '../conversation.repository.js';
 import { ConversationStateService } from '../conversation-state.service.js';
-import { ParsedMessage } from '../../../domain/message-understanding/parsed-message.types.js';
+import { ParsedMessage } from '../../messages/messages.models.js';
 
 describe('Slice de Conversación - Pruebas Completas', () => {
   let db: sqlite3.Database;
@@ -88,13 +88,15 @@ describe('Slice de Conversación - Pruebas Completas', () => {
   describe('ConversationStateService', () => {
     describe('Flujo de nuevo recordatorio sin confirmación pendiente', () => {
       it('debería retornar "none" si el intent no es create_reminder', async () => {
-        const parsed: ParsedMessage = {
-          intent: 'help',
-          entities: [],
+        const parsed = {
+          intent: 'ai_query',
+          normalized_text: 'ayuda',
           keywords: [],
           requires_clarification: false,
           probable_date: null,
-        };
+          confidence: 1,
+          clarification_reason: null,
+        } as ParsedMessage;
 
         const action = await stateService.processMessage('user123', 'ayuda', parsed);
         expect(action.action_type).toBe('none');
@@ -102,13 +104,15 @@ describe('Slice de Conversación - Pruebas Completas', () => {
       });
 
       it('debería pedir aclaración si el recordatorio requiere aclaración de fecha', async () => {
-        const parsed: ParsedMessage = {
+        const parsed = {
           intent: 'create_reminder',
-          entities: [],
+          normalized_text: 'recordame examen',
           keywords: ['examen'],
           requires_clarification: true,
           probable_date: null,
-        };
+          confidence: 1,
+          clarification_reason: null,
+        } as ParsedMessage;
 
         const action = await stateService.processMessage('user123', 'recordame examen', parsed);
         expect(action.action_type).toBe('ask_date_clarification');
@@ -116,13 +120,15 @@ describe('Slice de Conversación - Pruebas Completas', () => {
       });
 
       it('debería pedir aclaración si no se detectó una probable_date', async () => {
-        const parsed: ParsedMessage = {
+        const parsed = {
           intent: 'create_reminder',
-          entities: [],
+          normalized_text: 'recordame examen mañana a las diez',
           keywords: ['examen'],
           requires_clarification: false,
           probable_date: null,
-        };
+          confidence: 1,
+          clarification_reason: null,
+        } as ParsedMessage;
 
         const action = await stateService.processMessage('user123', 'recordame examen mañana a las diez', parsed);
         expect(action.action_type).toBe('ask_date_clarification');
@@ -131,13 +137,15 @@ describe('Slice de Conversación - Pruebas Completas', () => {
 
       it('debería guardar confirmación pendiente y preguntar por confirmación cuando tiene datos correctos', async () => {
         const date = new Date('2026-06-15T00:00:00.000Z');
-        const parsed: ParsedMessage = {
+        const parsed = {
           intent: 'create_reminder',
-          entities: [],
+          normalized_text: 'recordame examen el 15 de junio',
           keywords: ['examen'],
           requires_clarification: false,
           probable_date: date,
-        };
+          confidence: 1,
+          clarification_reason: null,
+        } as ParsedMessage;
 
         const action = await stateService.processMessage('user123', 'recordame examen el 15 de junio', parsed);
         expect(action.action_type).toBe('ask_confirmation');

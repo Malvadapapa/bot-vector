@@ -161,7 +161,13 @@ export class GeminiService implements AIProvider {
       if (this.modelChain.some((m) => m.name === resolved)) continue;
 
       const isGemma = resolved.toLowerCase().includes('gemma');
-      const opts: any = { model: resolved };
+      const opts: any = {
+        model: resolved,
+        generationConfig: {
+          temperature: 0.1,
+          topP: 0.95,
+        },
+      };
       if (!isGemma) {
         opts.systemInstruction = DEFAULT_BOT_INSTRUCTIONS;
       }
