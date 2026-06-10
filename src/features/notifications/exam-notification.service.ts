@@ -5,6 +5,7 @@
 
 import { ManagedExamRepository } from '../../infrastructure/persistence/db/repositories.js';
 import { VectoritoWhatsAppGateway } from '../../interfaces/whatsapp/vectorito-whatsapp-gateway.js';
+import { getSettings } from '../../shared/config/settings.js';
 
 export class ExamNotificationService {
   private readonly cronWindowMs = 6 * 60 * 1000;
@@ -19,6 +20,7 @@ export class ExamNotificationService {
    * Al cargar un examen, detectar si es < 24h o < 48h y avisar inmediatamente
    */
   async checkAndNotifyEarlyLoad(examDate: Date, examTime: string, subject: string): Promise<void> {
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
     const now = new Date();
     const [hour, minute] = examTime.split(':').map(Number);
     const examDateTime = new Date(examDate);
@@ -32,7 +34,7 @@ export class ExamNotificationService {
     }
 
     if (diffHours < 24) {
-      const message = `🚨 Examen cargado con menos de 24 horas:\n📝 ${subject}\n⏰ ${examTime}\n📅 ${examDate.toLocaleDateString('es-AR')}\n\n¡Aviso urgente en el grupo!`;
+      const message = `🚨 Examen cargado con menos de 24 horas:\n📝 ${subject}\n⏰ ${examTime}\n📅 ${examDate.toLocaleDateString('es-AR', { timeZone: tz })}\n\n¡Aviso urgente en el grupo!`;
       for (const groupId of this.groupIds) {
         await this.gateway.sendTextMessage(groupId, message);
       }
@@ -40,7 +42,7 @@ export class ExamNotificationService {
     }
 
     if (diffHours < 48) {
-      const message = `⚠️ Examen cargado con menos de 48 horas:\n📝 ${subject}\n⏰ ${examTime}\n📅 ${examDate.toLocaleDateString('es-AR')}\n\n¡Todos atentos!`;
+      const message = `⚠️ Examen cargado con menos de 48 horas:\n📝 ${subject}\n⏰ ${examTime}\n📅 ${examDate.toLocaleDateString('es-AR', { timeZone: tz })}\n\n¡Todos atentos!`;
       for (const groupId of this.groupIds) {
         await this.gateway.sendTextMessage(groupId, message);
       }

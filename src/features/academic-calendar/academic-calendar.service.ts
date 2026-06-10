@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { getSettings } from '../../shared/config/settings.js';
 import { DynamicMessageService } from '../messages/dynamic-message.service.js';
+
 import { ModerationAdminCommandService } from '../moderation/moderation-admin-command.service.js';
 import { AdminLoggingCommandService } from '../../application/admin/admin-logging-command.service.js';
 import { DashboardPanelService } from '../../application/admin/dashboard-panel.service.js';
@@ -39,6 +41,26 @@ const MONTH_NAMES = [
   'diciembre',
 ];
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+function getLocalDateParts(date: Date) {
+  const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+  const formatter = new Intl.DateTimeFormat('es-AR', {
+    timeZone: tz,
+    day: 'numeric',
+    month: 'numeric',
+    year: 'numeric',
+    weekday: 'long'
+  });
+  const parts = formatter.formatToParts(date);
+  
+  const day = Number(parts.find(p => p.type === 'day')?.value || date.getDate());
+  const month = Number(parts.find(p => p.type === 'month')?.value || (date.getMonth() + 1));
+  const year = Number(parts.find(p => p.type === 'year')?.value || date.getFullYear());
+  const weekdayRaw = parts.find(p => p.type === 'weekday')?.value || 'lunes';
+  const weekday = weekdayRaw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  return { day, month, year, weekday };
+}
 
 type MenuNode = {
   mensaje: string;
@@ -494,8 +516,9 @@ export class AcademicCalendarService {
         ? AcademicCalendarService.INCOMPLETE_PROFILE_MESSAGE
         : AcademicCalendarService.INVALID_OR_MISSING_COMMISSION_MESSAGE;
     }
-    const dayName = DAY_NAMES[currentDt.getDay()] || 'dia';
-    const dateStr = `${currentDt.getDate()} de ${MONTH_NAMES[currentDt.getMonth()]}`;
+    const { day, month, weekday } = getLocalDateParts(currentDt);
+    const dayName = weekday;
+    const dateStr = `${day} de ${MONTH_NAMES[month - 1]}`;
     const classes = await this.getClassesForWeekday(dayName, userId, groupId);
     const notices = await this.getValidNoticesForDay(currentDt);
     const exams = await this.getExamsForDay(currentDt, userId, groupId);
@@ -526,9 +549,19 @@ export class AcademicCalendarService {
         ? AcademicCalendarService.INCOMPLETE_PROFILE_MESSAGE
         : AcademicCalendarService.INVALID_OR_MISSING_COMMISSION_MESSAGE;
     }
-    const dayName = DAY_NAMES[currentDt.getDay()] || 'dia';
+    const { weekday } = getLocalDateParts(currentDt);
+    const dayName = weekday;
     const classes = await this.getClassesForWeekday(dayName, userId, groupId);
-    const nowMinutes = currentDt.getHours() * 60 + currentDt.getMinutes();
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const parts = new Intl.DateTimeFormat('es-AR', {
+      timeZone: tz,
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(currentDt);
+    const hours = Number(parts.find(p => p.type === 'hour')?.value ?? currentDt.getHours());
+    const minutes = Number(parts.find(p => p.type === 'minute')?.value ?? currentDt.getMinutes());
+    const nowMinutes = hours * 60 + minutes;
     const AHEAD_MINUTES = 10; // Mostrar enlace hasta 10 min antes del inicio
 
     const available = classes
@@ -611,7 +644,17 @@ export class AcademicCalendarService {
     const start = new Date(currentDt);
     start.setDate(start.getDate() + offsetDays);
     const monday = new Date(start);
-    const day = monday.getDay();
+    const { weekday: mondayWeekday } = getLocalDateParts(monday);
+    const DAY_INDEXES: Record<string, number> = {
+      domingo: 0,
+      lunes: 1,
+      martes: 2,
+      miercoles: 3,
+      jueves: 4,
+      viernes: 5,
+      sabado: 6
+    };
+    const day = DAY_INDEXES[mondayWeekday] !== undefined ? DAY_INDEXES[mondayWeekday] : monday.getDay();
     const diff = day === 0 ? -6 : 1 - day;
     monday.setDate(monday.getDate() + diff);
     const sunday = new Date(monday);
@@ -631,7 +674,7 @@ export class AcademicCalendarService {
     for (let i = 0; i < 7; i += 1) {
       const dayDt = new Date(monday);
       dayDt.setDate(monday.getDate() + i);
-      const dayName = DAY_NAMES[dayDt.getDay()] || 'dia';
+      const { weekday: dayName } = getLocalDateParts(dayDt);
 
       const dayClasses = await this.getClassesForWeekday(dayName, userId, groupId);
 
@@ -813,10 +856,10 @@ export class AcademicCalendarService {
     if (!holidays.length) return 'Feriados: no hay feriados cargados.';
 
     const today = new Date();
-    const todayAtMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const todayStr = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(today);
     const upcoming = holidays.filter((h) => {
-      const dt = this.parseIsoDate(h.fecha);
-      return dt !== null && dt.getTime() >= todayAtMidnight.getTime();
+      return h.fecha >= todayStr;
     });
 
     if (!upcoming.length) {

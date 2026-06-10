@@ -1,6 +1,6 @@
 import sqlite3 from 'sqlite3';
 import { InstitutionalNotice } from './notifications.models.js';
-import { run, get, all } from '../../shared/db/db-utils.js';
+import { run, get, all, formatLocalDateOnly } from '../../shared/db/db-utils.js';
 
 export class InstitutionalNoticeRepository {
   constructor(private db: sqlite3.Database) {}
@@ -14,8 +14,8 @@ export class InstitutionalNoticeRepository {
         [
           notice.title,
           notice.body,
-          notice.start_date ? notice.start_date.toISOString().slice(0, 10) : null,
-          notice.end_date ? notice.end_date.toISOString().slice(0, 10) : null,
+          notice.start_date ? formatLocalDateOnly(notice.start_date) : null,
+          notice.end_date ? formatLocalDateOnly(notice.end_date) : null,
           notice.event_time ?? null,
           notice.source_email ?? null,
           notice.unique_hash,
@@ -94,12 +94,12 @@ export class InstitutionalNoticeRepository {
 
     if (data.start_date !== undefined) {
       fields.push('start_date = ?');
-      values.push(data.start_date ? data.start_date.toISOString().slice(0, 10) : null);
+      values.push(data.start_date ? formatLocalDateOnly(data.start_date) : null);
     }
 
     if (data.end_date !== undefined) {
       fields.push('end_date = ?');
-      values.push(data.end_date ? data.end_date.toISOString().slice(0, 10) : null);
+      values.push(data.end_date ? formatLocalDateOnly(data.end_date) : null);
     }
 
     if (!fields.length) return false;

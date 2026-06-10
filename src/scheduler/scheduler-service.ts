@@ -10,6 +10,7 @@ import { ConfirmationRepository } from '../features/conversation/conversation.re
 import { InstitutionalEmailMonitor } from '../features/notifications/integrations/institutional-email-monitor.js';
 import { VectoritoWhatsAppGateway } from '../interfaces/whatsapp/vectorito-whatsapp-gateway.js';
 import { RagPipelineService } from '../features/ai/rag/rag-pipeline.service.js';
+import { formatLocalDateOnly } from '../shared/db/db-utils.js';
 
 export class SchedulerService {
   private examNotificationService: ExamNotificationService;
@@ -68,7 +69,10 @@ export class SchedulerService {
         for (const reminder of due) {
           if (!reminder.id) continue;
 
-          const delta = Math.round((reminder.event_date.getTime() - new Date(new Date().toISOString().slice(0, 10)).getTime()) / (1000 * 60 * 60 * 24));
+          const todayLocalStr = formatLocalDateOnly(new Date());
+          const todayMidnight = new Date(`${todayLocalStr}T00:00:00-03:00`);
+          const eventMidnight = new Date(`${formatLocalDateOnly(reminder.event_date)}T00:00:00-03:00`);
+          const delta = Math.round((eventMidnight.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
           const text = reminder.event_type === 'institutional_notice'
             ? `Quedan pocos dias para inscribirse a: ${reminder.description}`
             : `Recordatorio: quedan ${delta} dias para ${reminder.description}.`;
@@ -109,7 +113,7 @@ export class SchedulerService {
 
         const classesToNotify = await this.classNotificationService.getClassesToNotifyNow();
         for (const managedClass of classesToNotify) {
-          const dayKey = new Date().toISOString().slice(0, 10);
+          const dayKey = formatLocalDateOnly(new Date());
           const dedupKey = `class:${managedClass.id}:${dayKey}`;
           const shouldSend = await this.outboxDedupRepository.markIfNew(dedupKey);
           if (!shouldSend) continue;
@@ -152,11 +156,13 @@ export class SchedulerService {
         if (!currentActiveGroupIds.length) return;
 
         const now = new Date();
-        const dayMonth = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const localDateStr = formatLocalDateOnly(now);
+        const [year, month, day] = localDateStr.split('-');
+        const dayMonth = `${day}/${month}`;
         const users = await this.userProfileRepository.listUsersWithBirthday(dayMonth);
 
         for (const user of users) {
-          const dedupKey = `birthday:${user.user_id}:${now.toISOString().slice(0, 10)}`;
+          const dedupKey = `birthday:${user.user_id}:${localDateStr}`;
           const shouldSend = await this.outboxDedupRepository.markIfNew(dedupKey);
           if (!shouldSend) continue;
 

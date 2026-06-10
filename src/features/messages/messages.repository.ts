@@ -1,11 +1,11 @@
 import sqlite3 from 'sqlite3';
-import { run, get } from '../../shared/db/db-utils.js';
+import { run, get, formatLocalDateOnly } from '../../shared/db/db-utils.js';
 
 export class DailyGreetingRepository {
   constructor(private db: sqlite3.Database) {}
 
   async hasGreeted(userId: string, date: Date): Promise<boolean> {
-    const keyDate = date.toISOString().slice(0, 10);
+    const keyDate = formatLocalDateOnly(date);
     const row = await get<any>(
       this.db,
       'SELECT user_id FROM user_daily_greetings WHERE user_id = ? AND greeting_date = ? LIMIT 1',
@@ -15,7 +15,7 @@ export class DailyGreetingRepository {
   }
 
   async markGreeted(userId: string, date: Date): Promise<void> {
-    const keyDate = date.toISOString().slice(0, 10);
+    const keyDate = formatLocalDateOnly(date);
     await run(
       this.db,
       'INSERT OR IGNORE INTO user_daily_greetings(user_id, greeting_date) VALUES (?, ?)',

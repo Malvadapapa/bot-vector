@@ -3,6 +3,8 @@ import { AIQueryService } from '../ai/ai-query.service.js';
 import { ConversationStateService } from '../conversation/conversation-state.service.js';
 import { MessageIntentParserService } from './message-intent-parser.service.js';
 import { DailyGreetingRepository } from './messages.repository.js';
+import { getSettings } from '../../shared/config/settings.js';
+import { formatLocalDateOnly } from '../../shared/db/db-utils.js';
 
 export class MessageRouter {
   private static BOT_MENTION_ALIASES = ['@vectorito', '@Vectorito'];
@@ -111,7 +113,7 @@ export class MessageRouter {
 
   private async handleHello(userId: string, now?: Date): Promise<string> {
     const localNow = now ?? new Date();
-    const dayKey = `${userId}:${localNow.toISOString().slice(0, 10)}`;
+    const dayKey = `${userId}:${formatLocalDateOnly(localNow)}`;
     const attempts = (this.helloAttemptsByUserDay.get(dayKey) || 0) + 1;
     this.helloAttemptsByUserDay.set(dayKey, attempts);
 
@@ -146,7 +148,14 @@ export class MessageRouter {
   }
 
   private pickGreetingByHour(now: Date): string {
-    const hour = now.getHours();
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const parts = new Intl.DateTimeFormat('es-AR', {
+      timeZone: tz,
+      hour: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+    const hour = Number(parts.find(p => p.type === 'hour')?.value ?? now.getHours());
+    
     if (hour >= 5 && hour < 12) return this.pickOne(['Hola, buen día.', 'Buen día, ¿cómo va?', 'Hola, muy buen día.']);
     if (hour >= 12 && hour < 20) return this.pickOne(['Hola, buenas tardes.', 'Buenas tardes, ¿todo bien?', 'Hola, muy buenas tardes.']);
     return this.pickOne(['Hola, buenas noches.', 'Buenas noches, ¿cómo andás?', 'Hola, muy buenas noches.']);

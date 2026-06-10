@@ -55,6 +55,12 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 - **Errores de compilación TypeScript (4 errores)**:
   - `private-chat-workflow.service.ts:2517` — TS2322: conversión de `entry_year` (`number | null`) a `string` con fallback `'General'`.
   - `academic-calendar.service.ts:412` — TS2448/TS2454/TS2345: variable `menuTree` usada antes de su declaración; se movió la declaración al inicio de `handleMenuInput`.
+- **Manejo Incorrecto de Fechas Relativas y Timezones (BUG-007)**:
+  - Localización de todas las consultas y cálculos de fecha y hora a la zona horaria del cursado (`America/Argentina/Cordoba` por defecto o la configurada en `getSettings().timezone`), mitigando el error donde el bot interpretaba incorrectamente el día actual o el cronograma semanal en base al huso horario UTC del servidor.
+  - Implementación de formateadores de fechas localizados utilizando `Intl.DateTimeFormat` con la configuración `sv-SE` (para obtener formatos estandarizados `YYYY-MM-DD` y `HH:MM:SS` sin desvíos de zona horaria) y `es-AR` para los nombres de días de la semana y respuestas amigables al usuario.
+  - Reemplazo de las llamadas directas a métodos nativos de `Date` (como `.getDay()`, `.getDate()`) por `getLocalDateParts` en `academic-calendar.service.ts` para asegurar que las comparaciones del día civil correspondan siempre a la hora local.
+  - Ajuste de los triggers de cron de tareas recurrentes en `SchedulerService` y el cálculo de recordatorios en `class-notification.service.ts` y `exam-notification.service.ts` para alinearlos con el huso horario local.
+  - Corrección de la base de datos de pruebas unitarias (`db-utils.spec.ts`) para normalizar las fechas de prueba e independizarlas del timezone del sistema donde se ejecutan los tests.
 
 ### Modificado
 - **Refactorización y limpieza de logs de consola**:

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { DynamicMessageService } from '../../features/messages/dynamic-message.service.js';
 import { ManagedExam, ManagedClassCreateInput, ManagedTeacherCreateInput } from '../../domain/models.js';
 import { InstitutionalNotice } from '../../features/notifications/notifications.models.js';
+import { formatLocalDateOnly } from '../../shared/db/db-utils.js';
 import {
   AdminRepository,
   AdminVerificationCodeRepository,
@@ -2447,7 +2448,7 @@ export class PrivateChatWorkflowService {
     const missingComms = await this.getMissingCommissionsForUser(userId);
 
     if (missingFields.length === 0 && missingComms.length === 0) {
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = formatLocalDateOnly(new Date());
       const lastWarn = this.dailyWarningSent.get(userId);
       if (lastWarn === todayStr) {
         return ''; // Ignorar silenciosamente
@@ -2769,7 +2770,7 @@ export class PrivateChatWorkflowService {
     if (lowered === '2') {
       const exams = await this.examsRepository.listWithIds(50, groupId);
       if (!exams.length) return 'No hay exámenes cargados.';
-      return ['Exámenes actuales:', ...exams.map((e) => `${e.id} - ${e.exam.subject} (${e.exam.exam_date.toISOString().slice(0, 10)})`)].join('\n');
+      return ['Exámenes actuales:', ...exams.map((e) => `${e.id} - ${e.exam.subject} (${formatLocalDateOnly(e.exam.exam_date)})`)].join('\n');
     }
 
     if (lowered === '3') {
@@ -2878,7 +2879,7 @@ export class PrivateChatWorkflowService {
 
       return [
         'Usuarios baneados:',
-        ...banned.map((u: any) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone} | Tipo: ${u.ban_type} | Hasta: ${u.banned_until.toISOString().slice(0, 10)}`),
+        ...banned.map((u: any) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone} | Tipo: ${u.ban_type} | Hasta: ${formatLocalDateOnly(u.banned_until)}`),
       ].join('\n');
     }
 
@@ -2943,7 +2944,7 @@ export class PrivateChatWorkflowService {
     }
 
     const exam = exams[0];
-    const examDate = exam.exam_date.toISOString().slice(0, 10);
+    const examDate = formatLocalDateOnly(exam.exam_date);
     return [
       `Recordatorio: se acerca ${exam.subject}.`,
       `Fecha: ${examDate}`,
@@ -3057,7 +3058,7 @@ export class PrivateChatWorkflowService {
 
   private formatNoticeDate(date?: Date): string {
     if (!date) return '(sin fecha)';
-    return date.toISOString().slice(0, 10);
+    return formatLocalDateOnly(date);
   }
 
   private formatNoticeDateRange(startDate?: Date, endDate?: Date): string {

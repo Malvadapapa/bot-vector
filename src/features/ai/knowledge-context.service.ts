@@ -29,10 +29,10 @@ export class KnowledgeContextService {
     private commissionRepository?: CommissionRepository,
   ) {}
 
-  public async buildContext(userId: string, groupId?: string): Promise<string> {
+  public async buildContext(userId: string, groupId?: string, now: Date = new Date()): Promise<string> {
     const [profile, exams, notices, classes, personalReminders, teachers] = await Promise.all([
       this.userProfileRepository.get(userId),
-      this.examRepository.listUpcoming(new Date(), 5, groupId),
+      this.examRepository.listUpcoming(now, 5, groupId),
       this.noticeRepository.listRecent(5),
       this.classRepository.listAll(groupId),
       this.reminderRepository.listRegisteredExams(userId),
