@@ -40,7 +40,8 @@ describe('db-utils', () => {
   });
 
   it('debería formatear fechas locales correctamente', () => {
-    const testDate = new Date(2026, 4, 29, 4, 30, 0); // 29 de Mayo de 2026 (meses indexados en 0 en JS, así que 4 = Mayo)
+    // 29 de Mayo de 2026 04:30:00 en zona horaria America/Argentina/Cordoba (UTC-3)
+    const testDate = new Date('2026-05-29T04:30:00-03:00');
     expect(formatLocalDateOnly(testDate)).toBe('2026-05-29');
     expect(formatLocalTime(testDate)).toBe('04:30:00');
   });

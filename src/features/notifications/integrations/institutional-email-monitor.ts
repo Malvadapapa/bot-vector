@@ -3,6 +3,7 @@ import { ParsedMail } from 'mailparser';
 import { InstitutionalNoticeRepository, InboundEmailRejectionRepository } from '../notifications.repository.js';
 import { ReminderRepository, ManagedTeacherRepository, GroupRepository } from '../../../infrastructure/persistence/db/repositories.js';
 import { EmailService, OutboundEmailService } from './email.service.js';
+import { formatLocalDateOnly } from '../../../shared/db/db-utils.js';
 
 export class InstitutionalEmailMonitor {
   private _polling = false;
@@ -133,7 +134,7 @@ export class InstitutionalEmailMonitor {
 
       // Validate dates
       const today = new Date();
-      if (notice.endDate && notice.endDate.getTime() < new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) {
+      if (notice.endDate && formatLocalDateOnly(notice.endDate) < formatLocalDateOnly(today)) {
         if (this.outboundEmailService) {
           const subject = 'Error al procesar tu aviso institucional';
           const body = `Hola.\n\nNo pudimos procesar tu aviso institucional.\n\nError: Fecha de vigencia expirada (termina antes de hoy).`;
@@ -264,7 +265,7 @@ export class InstitutionalEmailMonitor {
       if (this.outboundEmailService) {
         try {
           const subject = 'Confirmación de aviso institucional recibido';
-          const body = `Hola.\n\nTu aviso institucional fue recibido y procesado correctamente.\n\nTítulo: ${notice.title}\nVigencia: ${notice.startDate ? notice.startDate.toISOString().slice(0,10) : 'N/A'} a ${notice.endDate ? notice.endDate.toISOString().slice(0,10) : 'N/A'}\nHora: ${notice.eventTime ?? ''}\nGrupo: ${notice.grupo_selector ?? 'todos'}\nEstado: Confirmado`;
+          const body = `Hola.\n\nTu aviso institucional fue recibido y procesado correctamente.\n\nTítulo: ${notice.title}\nVigencia: ${notice.startDate ? formatLocalDateOnly(notice.startDate) : 'N/A'} a ${notice.endDate ? formatLocalDateOnly(notice.endDate) : 'N/A'}\nHora: ${notice.eventTime ?? ''}\nGrupo: ${notice.grupo_selector ?? 'todos'}\nEstado: Confirmado`;
           await this.outboundEmailService.send(notice.sourceEmail || sourceAddr, subject, body);
           if (insertedId) await this.noticeRepository.markConfirmed(insertedId);
         } catch (e) {
@@ -362,7 +363,7 @@ export class InstitutionalEmailMonitor {
   }
 
   private buildNaturalMessage(title: string, body: string, endDate?: Date, eventTime?: string): string {
-    const endText = endDate ? ` hasta ${endDate.toISOString().slice(0, 10)}` : '';
+    const endText = endDate ? ` hasta ${formatLocalDateOnly(endDate)}` : '';
     const timeText = eventTime ? ` a las ${eventTime}` : '';
     return `Aviso institucional: ${title}. ${body}${endText}${timeText}.`.trim();
   }

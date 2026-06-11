@@ -5,6 +5,7 @@ import { RagQueryService } from './rag/rag-query.service.js';
 import { UserModerationService } from '../moderation/user-moderation.service.js';
 import { logTuiProcessTrace } from '../../shared/config/tui-shared.js';
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
+import { getSettings } from '../../shared/config/settings.js';
 
 export class AIQueryService {
   private static readonly RESPONSE_TIMEOUT_MS = 25_000;
@@ -111,10 +112,12 @@ export class AIQueryService {
   }
 
   private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string, customDailyLimit?: number): Promise<string> {
+    const currentDateTime = now || new Date();
+
     // ✅ Consumir cuota al inicio para evitar condiciones de carrera y llamadas innecesarias a la API de la IA
     const decision = customDailyLimit !== undefined
-      ? await this.rateLimitService.checkAndConsume(userId, now, isAdmin, customDailyLimit)
-      : await this.rateLimitService.checkAndConsume(userId, now, isAdmin);
+      ? await this.rateLimitService.checkAndConsume(userId, currentDateTime, isAdmin, customDailyLimit)
+      : await this.rateLimitService.checkAndConsume(userId, currentDateTime, isAdmin);
     if (!decision.allowed) {
       logTuiProcessTrace(`Acceso denegado por cuota: El usuario ${userId} superó su límite diario de consultas.`);
       const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
@@ -125,7 +128,7 @@ export class AIQueryService {
 
     // 1. Contexto dinámico de BD (exámenes, avisos, clases, perfil)
     logTuiProcessTrace(`Recuperando contexto relevante de base de datos...`);
-    const dbContext = await this.knowledgeContextService.buildContext(userId, groupId);
+    const dbContext = await this.knowledgeContextService.buildContext(userId, groupId, currentDateTime);
 
     // 2. Contexto RAG — búsqueda semántica en los PDFs indexados
     let ragContext: string | null = null;
@@ -152,10 +155,11 @@ export class AIQueryService {
     }
 
     // 3. Construir el prompt enriquecido
-    const currentDateTime = now || new Date();
-    const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    const dayName = days[currentDateTime.getDay()];
-    const dateContext = `[Sistema] Fecha y hora actual: ${currentDateTime.toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })} (${dayName}). Usá este dato si el usuario pregunta por "hoy", "mañana" o eventos cercanos.`;
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const formattedDate = currentDateTime.toLocaleString('es-AR', { timeZone: tz });
+    const dayNameRaw = currentDateTime.toLocaleDateString('es-AR', { timeZone: tz, weekday: 'long' });
+    const dayName = dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1);
+    const dateContext = `[Sistema] Fecha y hora actual: ${formattedDate} (${dayName}). Usá este dato si el usuario pregunta por "hoy", "mañana" o eventos cercanos.`;
 
     let warningContext = '';
     if (isWeakRag) {

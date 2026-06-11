@@ -1,6 +1,7 @@
 import { ManagedClass } from '../../domain/models.js';
 import { ManagedClassRepository, ClassCommissionScheduleRepository, CommissionRepository } from '../../infrastructure/persistence/db/repositories.js';
 import { ClassNotificationRepository } from './notifications.repository.js';
+import { getSettings } from '../../shared/config/settings.js';
 
 const FRIENDLY_PHRASES = [
   '¡Hola! En 10 minutos comienza la clase',
@@ -102,16 +103,15 @@ export class ClassNotificationService {
   }
 
   private getDayName(date: Date): string {
-    const days = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
-    return days[date.getDay()] || 'lunes';
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const dayNameRaw = date.toLocaleDateString('es-AR', { timeZone: tz, weekday: 'long' });
+    return dayNameRaw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   }
 
   private isSameDay(date1: Date, date2: Date): boolean {
-    return (
-      date1.getFullYear() === date2.getFullYear() &&
-      date1.getMonth() === date2.getMonth() &&
-      date1.getDate() === date2.getDate()
-    );
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const formatter = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    return formatter.format(date1) === formatter.format(date2);
   }
 
   private getCommissionText(commissionCount: number): string {

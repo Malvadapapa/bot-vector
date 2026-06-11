@@ -136,8 +136,8 @@ describe('Slice de Conversación - Pruebas Completas', () => {
       });
 
       it('debería guardar confirmación pendiente y preguntar por confirmación cuando tiene datos correctos', async () => {
-        const date = new Date('2026-06-15T00:00:00.000Z');
-        const parsed = {
+        const date = new Date('2026-06-15T00:00:00-03:00');
+        const parsed: ParsedMessage = {
           intent: 'create_reminder',
           normalized_text: 'recordame examen el 15 de junio',
           keywords: ['examen'],

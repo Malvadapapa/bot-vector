@@ -1,4 +1,6 @@
 import sqlite3 from 'sqlite3';
+import { getSettings } from '../config/settings.js';
+
 
 export function run(db: sqlite3.Database, sql: string, params: unknown[] = []): Promise<{ lastID: number; changes: number }> {
   return new Promise((resolve, reject) => {
@@ -28,15 +30,24 @@ export function all<T = any>(db: sqlite3.Database, sql: string, params: unknown[
 }
 
 export function formatLocalDateOnly(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  return formatter.format(date);
 }
 
 export function formatLocalTime(date: Date): string {
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  return `${hours}:${minutes}:${seconds}`;
+  const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: tz,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  return formatter.format(date);
 }

@@ -2,6 +2,7 @@ import { ConversationAction } from './conversation.models.js';
 import { ConfirmationRepository } from './conversation.repository.js';
 import { ReminderRepository } from '../../infrastructure/persistence/db/repositories.js';
 import { ParsedMessage } from '../messages/messages.models.js';
+import { formatLocalDateOnly } from '../../shared/db/db-utils.js';
 
 const YES_ANSWERS = new Set(['si', 'sí', 'yes', 'ok', 'dale', 'confirmo']);
 const NO_ANSWERS = new Set(['no', 'cancelar', 'cancela', 'n']);
@@ -57,7 +58,7 @@ export class ConversationStateService {
 
       return {
         action_type: 'ask_confirmation',
-        response_text: `Detecte un recordatorio para el ${parsedMessage.probable_date.toISOString().slice(0, 10)}. Responde 'si' para guardar o 'no' para cancelar.`,
+        response_text: `Detecte un recordatorio para el ${formatLocalDateOnly(parsedMessage.probable_date)}. Responde 'si' para guardar o 'no' para cancelar.`,
       };
     }
 

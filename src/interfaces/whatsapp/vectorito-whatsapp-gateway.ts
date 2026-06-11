@@ -30,15 +30,15 @@ const ANSI = {
 };
 
 const NEW_USER_REGISTRATION_MESSAGES = [
-  '¡Hola! Soy Vectorito, el bot del ISPC. Antes de que podamos charlar, necesito que te registres por privado 🙂\nMandame un "hola" al privado y lo hacemos en un toque.',
-  '¡Buenas! Para poder responderte necesito conocerte un poco. ¿Me mandás un "hola" por privado para registrarte? Es súper rápido 🙂',
-  '¡Ey! Bienvenido. Porfa, escribime "hola" por privado así te registro y te puedo ayudar con lo que necesites del ISPC.',
+  '¡Hola! Soy Vectorito, el bot del ISPC. Antes de que podamos charlar, necesito que te registres por privado 🙂\nMandame un "!registrarse" al privado y lo hacemos en un toque.',
+  '¡Buenas! Para poder responderte necesito conocerte un poco. ¿Me mandás un "!registrarse" por privado para registrarte? Es súper rápido 🙂',
+  '¡Ey! Bienvenido. Porfa, escribime "!registrarse" por privado así te registro y te puedo ayudar con lo que necesites del ISPC.',
 ];
 
 const PROFILE_UPDATE_GROUP_MESSAGES = [
-  'Che, por una actualización del bot del ISPC necesito que completes tus datos por privado. Gracias 🙂\nEscribime por privado con un "hola" y lo hacemos rápido.',
-  '¡Ey! Hubo actualización del bot del ISPC y me faltan tus datos. Mandame "hola" por privado así los completamos 🙂',
-  'Amigo, para seguir con IA primero completame unos datos por privado por una actualización del bot del ISPC 🙂\nEscribime "hola" en privado.',
+  'Che, por una actualización del bot del ISPC necesito que completes tus datos por privado. Gracias 🙂\nEscribime por privado con un "!registrarse" y lo hacemos rápido.',
+  '¡Ey! Hubo actualización del bot del ISPC y me faltan tus datos. Mandame "!registrarse" por privado así los completamos 🙂',
+  'Amigo, para seguir con IA primero completame unos datos por privado por una actualización del bot del ISPC 🙂\nEscribime "!registrarse" en privado.',
 ];
 
 const NO_PENDING_APPROVAL_MESSAGES = [
@@ -479,6 +479,16 @@ export class VectoritoWhatsAppGateway {
           if (!shouldProcess) {
             console.warn(`⚠️ [Gateway] Mensaje de grupo descartado antes del router: chat=${chatId} sender=${senderJid} command=${isCommand} mentioned=${messageMentionsBot} menu=${hasPendingMenu} text="${incomingText}"`);
             continue;
+          }
+
+          if (!isAdmin) {
+            const commissionWarning = await this.privateChatWorkflow.getGroupCommissionMissingWarning(senderJid, chatId);
+            if (commissionWarning !== null) {
+              if (commissionWarning) {
+                await this.sendTextMessage(chatId, commissionWarning, senderJid, false);
+              }
+              continue;
+            }
           }
 
           const invokedByMention = messageMentionsBot;
