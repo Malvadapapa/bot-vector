@@ -5,6 +5,7 @@ import { VectorStorage } from './vector-storage.js';
 import { logTuiProcessTrace } from '../../../shared/config/tui-shared.js';
 
 export interface RagSearchResult {
+  id: string;
   text: string;
   sourceFile: string;
   pageNumber?: number;
@@ -29,7 +30,15 @@ export class RagQueryService {
 
   public async search(query: string, topK = 3, groupId?: string): Promise<RagSearchResult[]> {
     try {
+      const step2Msg = `[RAG-Pipeline] [Paso 2] Iniciando búsqueda semántica RAG para: "${query}" (Top K: ${topK}, Grupo: ${groupId || 'Ninguno'})`;
+      console.log(step2Msg);
+      logTuiProcessTrace(step2Msg);
+
       await this.ensureLoaded();
+
+      const step21Msg = `[RAG-Pipeline] [Paso 2.1] Generando embedding de consulta e inspeccionando bases de datos...`;
+      console.log(step21Msg);
+      logTuiProcessTrace(step21Msg);
 
       const queryVector = await this.embeddingProvider.generateEmbedding(query);
 
@@ -39,20 +48,36 @@ export class RagQueryService {
         generalRaw = await this.vectorStorage.searchSimilar(queryVector, topK);
       }
 
+      const genCandidatesMsg = `[RAG-Pipeline] [Paso 2.2] Resultados crudos en Base General (Total vectores: ${this.vectorStorage.getRecordCount()}):\n` +
+        (generalRaw.length === 0
+          ? `  - Ningún candidato encontrado.`
+          : generalRaw.map((r, i) => `  - Candidato #${i + 1} [ID: ${r.record.id}] [Score: ${r.score.toFixed(4)}] [Archivo: ${r.record.metadata.sourceFile}] [Pág: ${r.record.metadata.pageNumber || 'N/A'}]`).join('\n'));
+      console.log(genCandidatesMsg);
+      logTuiProcessTrace(genCandidatesMsg);
+
       // 2. Búsqueda en Grupo si corresponde
       let groupRaw: Array<{ record: any; score: number }> = [];
+      let groupVectorCount = 0;
       if (groupId) {
         const cleanGid = groupId.replace(/[^a-zA-Z0-9_-]/g, '_');
         const groupStoragePath = path.join(path.dirname(this.storageFilePath), 'groups', cleanGid, 'vector_store.json');
         const groupStorage = new VectorStorage(groupStoragePath);
         try {
           await groupStorage.load();
-          if (groupStorage.getRecordCount() > 0) {
+          groupVectorCount = groupStorage.getRecordCount();
+          if (groupVectorCount > 0) {
             groupRaw = await groupStorage.searchSimilar(queryVector, topK);
           }
         } catch (e) {
           // Ignorar si no existe
         }
+
+        const grpCandidatesMsg = `[RAG-Pipeline] [Paso 2.3] Resultados crudos en Base de Grupo "${groupId}" (Total vectores: ${groupVectorCount}):\n` +
+          (groupRaw.length === 0
+            ? `  - Ningún candidato encontrado.`
+            : groupRaw.map((r, i) => `  - Candidato #${i + 1} [ID: ${r.record.id}] [Score: ${r.score.toFixed(4)}] [Archivo: ${r.record.metadata.sourceFile}] [Pág: ${r.record.metadata.pageNumber || 'N/A'}]`).join('\n'));
+        console.log(grpCandidatesMsg);
+        logTuiProcessTrace(grpCandidatesMsg);
       }
 
       // 3. Fusionar y clasificar (prioridad a grupo)
@@ -61,22 +86,44 @@ export class RagQueryService {
 
       let finalResults: Array<{ record: any; score: number; weak: boolean }> = [];
 
+      const step3Msg = `[RAG-Pipeline] [Paso 3] Fusionando y filtrando resultados (Umbral Mínimo: ${this.minScore}, Umbral Débil: 0.15):\n` +
+        `  - Coincidencias fuertes (Grupo): ${groupStrong.length}\n` +
+        `  - Coincidencias fuertes (General): ${generalStrong.length}`;
+      console.log(step3Msg);
+      logTuiProcessTrace(step3Msg);
+
       if (groupStrong.length > 0 || generalStrong.length > 0) {
         finalResults = [...groupStrong, ...generalStrong];
+        const step31Msg = `[RAG-Pipeline] Usando coincidencias fuertes.`;
+        console.log(step31Msg);
+        logTuiProcessTrace(step31Msg);
       } else {
         const groupWeak = groupRaw.filter((r) => r.score >= 0.15).map((r) => ({ ...r, weak: true }));
         const generalWeak = generalRaw.filter((r) => r.score >= 0.15).map((r) => ({ ...r, weak: true }));
         finalResults = [...groupWeak, ...generalWeak];
+        const step32Msg = `[RAG-Pipeline] No hay coincidencias fuertes. Usando coincidencias débiles:\n` +
+          `  - Coincidencias débiles (Grupo): ${groupWeak.length}\n` +
+          `  - Coincidencias débiles (General): ${generalWeak.length}`;
+        console.log(step32Msg);
+        logTuiProcessTrace(step32Msg);
       }
 
       // Limitar a topK
       const filtered = finalResults.slice(0, topK).map((r) => ({
+        id: r.record.id,
         text: r.record.text,
         sourceFile: r.record.metadata.sourceFile,
         pageNumber: r.record.metadata.pageNumber,
         score: r.score,
         weak: r.weak,
       }));
+
+      const step4Msg = `[RAG-Pipeline] [Paso 4] Selección final de Chunks (Top ${topK}):\n` +
+        (filtered.length === 0
+          ? `  - Ningún chunk seleccionado.`
+          : filtered.map((r, i) => `  - Chunk #${i + 1} [ID: ${r.id}] [Score: ${r.score.toFixed(4)}] [Archivo: ${r.sourceFile}] [Pág: ${r.pageNumber || 'N/A'}] [Débil: ${r.weak}]`).join('\n'));
+      console.log(step4Msg);
+      logTuiProcessTrace(step4Msg);
 
       if (filtered.length > 0) {
         const msg = `Búsqueda exitosa (${groupId ? `grupo: ${groupId}` : 'solo general'}): ${filtered.length} chunks (scores: ${filtered.map((r) => r.score.toFixed(3)).join(', ')}${filtered[0].weak ? ' - DÉBIL' : ''})`;

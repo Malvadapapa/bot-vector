@@ -14,7 +14,8 @@
     "rag:check": "node dist/features/ai/rag/cli.js check",
     "rag:reindex": "node dist/features/ai/rag/cli.js reindex",
     "rag:status": "node dist/features/ai/rag/cli.js status",
-    "rag:test": "node dist/features/ai/rag/test-comparison.js"
+    "rag:test": "node dist/features/ai/rag/test-comparison.js",
+    "db:migrate-turso": "node scripts/migrate-to-turso.mjs"
   },
   "keywords": [],
   "author": "",
@@ -35,6 +36,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@libsql/client": "^0.17.3",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "dotenv": "^17.4.2",
     "imapflow": "^1.3.1",

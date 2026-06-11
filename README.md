@@ -57,7 +57,7 @@ Más que un bot de comandos, Vectorito actúa como un asistente académico autom
 
 | Característica | Descripción |
 | --- | --- |
-| 🤖 **Respuestas con IA** | Generación de respuestas con contexto académico + RAG sobre PDFs institucionales. |
+| 🤖 **Respuestas con IA** | Generación de respuestas con contexto académico + RAG. Rigurosa objetividad (sin especulaciones ni antropomorfismo) y trato personal obligatorio por nombre de usuario. |
 | 📅 **Automatización** | Recordatorios automáticos de clases, exámenes y avisos. |
 | 🗂️ **Contexto dinámico** | Perfiles, comisiones, profesores y agenda almacenados en base de datos. |
 | 🔐 **Gestión Privada** | Chat privado por código para completar perfiles y ejecutar flujos de administración. |

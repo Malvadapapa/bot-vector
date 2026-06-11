@@ -46,6 +46,14 @@ describe('Domain Guardrails (BUG-009) - Pruebas', () => {
     expect(DEFAULT_BOT_INSTRUCTIONS).toContain('cuentos, poemas, chistes, historias o juegos de rol');
   });
 
+  it('debería contener instrucciones de sistema que prohíben la especulación, opiniones personales y antropomorfismo (BUG-013)', () => {
+    expect(DEFAULT_BOT_INSTRUCTIONS).toContain('PROHIBICIÓN DE ESPECULACIÓN Y OPINIÓN');
+    expect(DEFAULT_BOT_INSTRUCTIONS).toContain('PROHIBICIÓN DE ANTROPOMORFISMO');
+    expect(DEFAULT_BOT_INSTRUCTIONS).toContain('opiniones personales, juicios de valor, interpretaciones subjetivas o especulaciones');
+    expect(DEFAULT_BOT_INSTRUCTIONS).toContain('simular autoconciencia, sentimientos, emociones o características humanas');
+    expect(DEFAULT_BOT_INSTRUCTIONS).toContain('OBLIGATORIO: Debés incluir y dirigirte al usuario por su nombre');
+  });
+
   it('debería configurar GeminiService con temperature 0.1 y topP 0.95', async () => {
     process.env.GEMINI_API_KEY = 'mock-api-key';
     const geminiService = new GeminiService();

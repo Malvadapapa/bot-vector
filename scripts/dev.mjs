@@ -1,11 +1,9 @@
 import { spawn } from 'node:child_process';
 
-const child = spawn(process.execPath, ['--loader', 'ts-node/esm', 'src/main.ts'], {
+const child = spawn('npx', ['tsx', 'src/main.ts'], {
   stdio: 'inherit',
-  env: {
-    ...process.env,
-    TS_NODE_PREFER_TS_EXTS: 'true',
-  },
+  shell: true,
+  env: process.env,
 });
 
 child.on('exit', (code, signal) => {

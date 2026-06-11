@@ -671,14 +671,18 @@ export class AcademicCalendarService {
     }
 
     const dayIcon = '📅';
+    const daysData = await Promise.all(
+      Array.from({ length: 7 }, async (_, i) => {
+        const dayDt = new Date(monday);
+        dayDt.setDate(monday.getDate() + i);
+        const { weekday: dayName } = getLocalDateParts(dayDt);
+        const dayClasses = await this.getClassesForWeekday(dayName, userId, groupId);
+        return { dayDt, dayName, dayClasses };
+      })
+    );
+
     const lines: string[] = [];
-    for (let i = 0; i < 7; i += 1) {
-      const dayDt = new Date(monday);
-      dayDt.setDate(monday.getDate() + i);
-      const { weekday: dayName } = getLocalDateParts(dayDt);
-
-      const dayClasses = await this.getClassesForWeekday(dayName, userId, groupId);
-
+    for (const { dayDt, dayName, dayClasses } of daysData) {
       const dayNotices = notices.filter((n) => this.isNoticeActiveOn(n, dayDt));
       const dayExams = exams.filter((e) => this.isSameCalendarDay(e.exam_date, dayDt));
       const remindersList = reminderByDate.get(dayDt.toISOString().slice(0, 10)) || [];

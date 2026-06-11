@@ -39,6 +39,11 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
       - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
 
 ### Corregido
+- **Respuestas Especulativas y Falta de Rigidez (BUG-013)**:
+  - Mitigación del comportamiento especulativo, giros subjetivos corporativos y simulación de autoconciencia o antropomorfismo en el chatbot.
+  - Actualización de las directivas en `src/shared/config/instructions.ts` (`DEFAULT_BOT_INSTRUCTIONS`) para prohibir terminantemente emitir opiniones personales, juicios de valor, o simular emociones/características humanas.
+  - Modificación del trato por nombre del usuario para ser **estrictamente obligatorio** en todas las respuestas cuando el nombre esté disponible en el perfil del usuario del contexto.
+  - Creación de pruebas unitarias en `src/features/ai/__tests__/domain-guardrails.spec.ts` para verificar la presencia de estas restricciones y la obligatoriedad de la inyección del nombre.
 - **Alucinación Creativa ante Prompts de Engaño (BUG-009)**:
   - Mitigación de la vulnerabilidad ante solicitudes de generación creativa (ej. historias de ficción, poemas, cuentos, chistes, juegos de rol) disfrazadas como ayuda de materias académicas.
   - Reducción de la temperatura del modelo a `0.1` tanto en Gemini (`GeminiService`) como en Groq (`GroqProvider`) para propiciar respuestas estructuradas, lógicas y no creativas.

@@ -268,6 +268,7 @@ export class TerminalTui {
     this.chatPanel.log(
       `[{white-fg}${time}{/white-fg}]${contextStr} {${color}-fg}{bold}${tag} (${sender}){/bold}{/${color}-fg}: ${text}`
     );
+    this.chatPanel.log('');
   }
 
   /**
@@ -275,10 +276,45 @@ export class TerminalTui {
    */
   public appendProcessTrace(trace: string): void {
     const time = new Date().toLocaleTimeString();
-    // Sangrado e indentación para diferenciar del chat y color amarillo suave
+    const styled = this.styleProcessTrace(trace);
     this.chatPanel.log(
-      `  [{white-fg}${time}{/white-fg}] {yellow-fg}⚙️ [PROCESO RAG]: ${trace}{/yellow-fg}`
+      `  [{white-fg}${time}{/white-fg}] {yellow-fg}⚙️ [PROCESO RAG]:{/yellow-fg} ${styled}`
     );
+    this.chatPanel.log('');
+  }
+
+  private styleProcessTrace(trace: string): string {
+    let formatted = trace;
+
+    // Colorize [RAG-Pipeline] -> Cyan claro y negrita
+    formatted = formatted.replace(/\[RAG-Pipeline\]/g, '{light-cyan-fg}{bold}[RAG-Pipeline]{/bold}{/light-cyan-fg}');
+
+    // Colorize [Paso X] o [Paso X.Y] -> Amarillo claro y negrita
+    formatted = formatted.replace(/\[(Paso \d+(?:\.\d+)?)\]/g, '{light-yellow-fg}{bold}[$1]{/bold}{/light-yellow-fg}');
+
+    // Colorize status: OK, OFFTOPIC, UNCLEAR, DÉBIL, FUERTE
+    formatted = formatted.replace(/(Estado: OK)/g, 'Estado: {light-green-fg}{bold}OK{/bold}{/light-green-fg}');
+    formatted = formatted.replace(/(Estado: OFFTOPIC)/g, 'Estado: {light-red-fg}{bold}OFFTOPIC{/bold}{/light-red-fg}');
+    formatted = formatted.replace(/(Estado: UNCLEAR)/g, 'Estado: {light-yellow-fg}{bold}UNCLEAR{/bold}{/light-yellow-fg}');
+    formatted = formatted.replace(/(FUERTE)/g, '{light-green-fg}{bold}FUERTE{/bold}{/light-green-fg}');
+    formatted = formatted.replace(/(DÉBIL)/g, '{light-red-fg}{bold}DÉBIL{/bold}{/light-red-fg}');
+
+    // Colorize metrics and limits
+    formatted = formatted.replace(/(Score: \d+\.\d+)/g, '{light-green-fg}$1{/light-green-fg}');
+    formatted = formatted.replace(/(scores: [\d\s.,]+)/g, '{light-green-fg}$1{/light-green-fg}');
+    formatted = formatted.replace(/(Umbral Mínimo: \d+\.\d+)/g, '{light-magenta-fg}$1{/light-magenta-fg}');
+    formatted = formatted.replace(/(Umbral Débil: \d+\.\d+)/g, '{light-magenta-fg}$1{/light-magenta-fg}');
+    formatted = formatted.replace(/(Top K: \d+)/g, '{light-blue-fg}$1{/light-blue-fg}');
+    formatted = formatted.replace(/(Top \d+)/g, '{light-blue-fg}$1{/light-blue-fg}');
+
+    // Highlight no candidates
+    formatted = formatted.replace(/(Ningún candidato encontrado|Ningún chunk seleccionado)/g, '{light-red-fg}$1{/light-red-fg}');
+    
+    // Highlight boolean flags
+    formatted = formatted.replace(/\[Débil: true\]/g, '[Débil: {light-red-fg}true{/light-red-fg}]');
+    formatted = formatted.replace(/\[Débil: false\]/g, '[Débil: {light-green-fg}false{/light-green-fg}]');
+
+    return formatted;
   }
 
   /**

@@ -85,11 +85,17 @@ export class AIQueryService {
     }
 
     if (effectiveIsAdmin) {
+      const adminLog = `[RAG-Pipeline] [Paso 1] Usuario es administrador. Omitiendo clasificación de intención.`;
+      console.log(adminLog);
+      logTuiProcessTrace(adminLog);
       return await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
     }
 
     // 1) Clasificar (heurística simple)
     const cls = await this.classifyPromptQualityAndTopic(prompt);
+    const intentLog = `[RAG-Pipeline] [Paso 1] Clasificación de intención para prompt: "${prompt}" -> Estado: ${cls.status.toUpperCase()}${cls.reason ? ` (Razón: ${cls.reason})` : ''}`;
+    console.log(intentLog);
+    logTuiProcessTrace(intentLog);
 
     if (cls.status === 'ok') {
       return await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
@@ -136,7 +142,7 @@ export class AIQueryService {
 
     if (this.ragQueryService) {
       logTuiProcessTrace(`Iniciando búsqueda semántica RAG para: "${prompt}"`);
-      const ragResults = await this.ragQueryService.search(prompt, 3, groupId);
+      const ragResults = await this.ragQueryService.search(prompt, 5, groupId);
       ragContext = this.ragQueryService.formatContext(ragResults);
 
       if (ragContext) {
@@ -148,10 +154,16 @@ export class AIQueryService {
       const msg = `Estrategia de contexto: RAG local (chunks inyectados) ${isWeakRag ? '[DÉBIL]' : ''}`;
       console.log(`[IA] ${msg}`);
       logTuiProcessTrace(msg);
+      const step5Msg = `[RAG-Pipeline] [Paso 5] Contexto RAG inyectado exitosamente (${isWeakRag ? 'DÉBIL' : 'FUERTE'}).`;
+      console.log(step5Msg);
+      logTuiProcessTrace(step5Msg);
     } else {
       const msg = 'Estrategia de contexto: contexto interno sin RAG relevante';
       console.log(`[IA] ${msg}`);
       logTuiProcessTrace(msg);
+      const step5Msg = '[RAG-Pipeline] [Paso 5] Ningún contexto RAG relevante inyectado en el prompt.';
+      console.log(step5Msg);
+      logTuiProcessTrace(step5Msg);
     }
 
     // 3. Construir el prompt enriquecido
@@ -171,7 +183,13 @@ export class AIQueryService {
       'Si la consulta del usuario requiere buscar información específica sobre materias, horarios de clase, agenda, exámenes o profesores, y el "Contexto relevante" provisto de la base de datos indica de forma explícita que dicha información NO está cargada (por ejemplo, "No hay materias ni horarios cargados", "No hay exámenes próximos cargados...", o "No hay profesores cargados..."),',
       'debés iniciar obligatoriamente tu respuesta con la etiqueta literal: `[ABSENT_DATA::<tipo>]` (donde <tipo> es uno de los siguientes: clases, examenes o profesores) y luego explicar de forma sintética qué información se intentó buscar pero no está disponible.',
       'Ejemplo: `[ABSENT_DATA::clases]` para agenda/horarios, `[ABSENT_DATA::examenes]` para exámenes, `[ABSENT_DATA::profesores]` para profesores.',
-      'Si la información solicitada sí está cargada y presente en el contexto, respondé normalmente sin anteponer ninguna etiqueta.'
+      'Si la información solicitada sí está cargada y presente en el contexto, respondé normalmente sin anteponer ninguna etiqueta.',
+      '',
+      '[REGLAS ADICIONALES DE RAG Y CONTEXTO ACADÉMICO]',
+      '- La sección "MATERIAS ACTIVAS (HORARIOS DE CURSADA)" representa el cronograma general del grupo de WhatsApp. NO asumas que el estudiante está cursando individualmente todas esas materias; es posible que deba recursar alguna correlativa anterior.',
+      '- Si el estudiante consulta sobre recursar una materia o quedar libre, explicá detalladamente las condiciones (p. ej., rendir libre dentro de las siguientes dos mesas examinadoras, rematricularse, etc.) basándote exclusivamente en el contexto RAG.',
+      '- Si en el contexto RAG se proveen enlaces específicos (de Google Drive, documentos, etc.) o correos de soporte técnico oficiales (como soporte.guarani@ispc.edu.ar), menciónalos explícitamente.',
+      '- NO delegues ni recomiendes comunicarse con la Coordinadora (Tatiana Manzanelli) a menos que el contexto RAG lo indique específicamente para ese trámite. Si la consulta se puede resolver con la información del RAG o de soporte de SIU Guaraní, brindá esa respuesta directa.'
     ].join('\n');
 
     const mergedPrompt = [

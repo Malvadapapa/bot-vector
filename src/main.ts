@@ -305,12 +305,15 @@ async function bootstrap() {
   const messageIntentParserService = new MessageIntentParserService();
   const rateLimitService = new RateLimitService(rateLimitRepository);
   const moderationService = new UserModerationService(userModerationRepository);
-  const geminiService = new GeminiService();
-  await geminiService.initialize();
 
   // --- IA Providers y Fallback ---
   const groqProvider = new GroqProvider(DEFAULT_BOT_INSTRUCTIONS);
-  // Cambiamos temporalmente el orden para que Groq sea el principal y Gemini el fallback
+  const geminiService = new GeminiService();
+
+  console.log('[IA] Inicializando proveedores de IA en orden de estrategia...');
+  await groqProvider.initialize();
+  await geminiService.initialize();
+
   const fallbackAiService = new FallbackAIService([groqProvider, geminiService]);
 
   const knowledgeContextService = new KnowledgeContextService(

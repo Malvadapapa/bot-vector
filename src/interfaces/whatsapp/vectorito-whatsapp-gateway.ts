@@ -173,31 +173,9 @@ export class VectoritoWhatsAppGateway {
           }
 
           if (isConnectionReplaced) {
-            this.consecutiveConnectionReplaced += 1;
-
-            if (!this.connectionReplacedResetAttempted) {
-              this.connectionReplacedResetAttempted = true;
-              console.log('\n[WhatsApp] Conflicto de sesión (440). Limpiando session y reintentando.');
-              try {
-                if (fs.existsSync('./session')) {
-                  fs.rmSync('./session', { recursive: true, force: true });
-                }
-              } catch (cleanupErr) {
-                const cleanupMsg = (cleanupErr as any)?.message || 'error desconocido';
-                console.log(`[WhatsApp] No se pudo limpiar session automáticamente: ${cleanupMsg}`);
-              }
-
-              this.isConnecting = false;
-              console.log('[WhatsApp] Reintentando con sesión limpia en 3 segundos...');
-              this.scheduleReconnect(3000);
-              return;
-            }
-
-            if (this.consecutiveConnectionReplaced >= 2) {
-              console.error('\n[WhatsApp] Otra sesión está reemplazando esta conexión (440).');
-              console.error('[WhatsApp] Cerrá otra instancia del bot y eliminá el dispositivo duplicado en WhatsApp > Dispositivos vinculados.');
-              process.exit(1);
-            }
+            console.log('\n[WhatsApp] 🛑 Conexión reemplazada: Otra instancia del bot ha iniciado sesión en otra PC.');
+            console.log('[WhatsApp] Cerrando esta instancia para evitar conflictos de escritura y asegurar la consistencia de los datos.');
+            process.exit(0);
           } else {
             this.consecutiveConnectionReplaced = 0;
           }
@@ -229,9 +207,24 @@ export class VectoritoWhatsAppGateway {
 
       this.whatsappSocket.ev.on('messages.upsert', async (event: any) => {
         try {
+          if (event.type === 'append') {
+            return;
+          }
+
           const incomingMessages = Array.isArray(event?.messages) ? event.messages : [];
           for (const incomingMessage of incomingMessages) {
             if (!incomingMessage?.message || incomingMessage?.key?.fromMe) continue;
+
+            // Ignorar mensajes enviados mientras el bot estaba desconectado (más de 2 minutos de antigüedad)
+            const timestamp = Number(incomingMessage?.messageTimestamp || 0);
+            if (timestamp > 0) {
+              const ageSeconds = Math.floor(Date.now() / 1000) - timestamp;
+              if (ageSeconds > 120) {
+                console.log(`[Gateway] Ignorando mensaje antiguo de ${incomingMessage.key.remoteJid} (antigüedad: ${ageSeconds}s)`);
+                continue;
+              }
+            }
+
             await this.markMessageAsRead(incomingMessage);
 
             const eventId = String(incomingMessage?.key?.id || '');
@@ -1151,6 +1144,29 @@ export class VectoritoWhatsAppGateway {
       }
 
       originalInfo(...args);
+    };
+
+    const originalWarn = console.warn.bind(console);
+    console.warn = (...args: any[]) => {
+      const first = args[0];
+
+      if (typeof first === 'string' && VectoritoWhatsAppGateway.noisySessionLogPatterns.some((p) => p.test(first))) {
+        this.suppressNextSessionDump = true;
+        return;
+      }
+
+      if (args.some((arg) => arg && typeof arg === 'object' && ('_chains' in arg || 'registrationId' in arg || 'currentRatchet' in arg || 'indexInfo' in arg))) {
+        return;
+      }
+
+      if (this.suppressNextSessionDump) {
+        this.suppressNextSessionDump = false;
+        if (first && typeof first === 'object' && ('_chains' in first || 'registrationId' in first || 'currentRatchet' in first || 'indexInfo' in first)) {
+          return;
+        }
+      }
+
+      originalWarn(...args);
     };
   }
 
