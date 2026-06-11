@@ -17,7 +17,7 @@ import { ExamMenuService } from '../exam-menu.service.js';
 import { EditExamMenuService } from '../edit-exam-menu.service.js';
 import { RemoveNotificationMenuService } from '../remove-notification-menu.service.js';
 import { AcademicCalendarService } from '../academic-calendar.service.js';
-import { UserProfileRepository } from '../../../infrastructure/persistence/db/repositories.js';
+import { UserProfileRepository, InstitutionalNoticeRepository } from '../../../infrastructure/persistence/db/repositories.js';
 
 describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () => {
   let db: sqlite3.Database;
@@ -547,5 +547,74 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
         expect(response).toContain('no hay clases programadas');
       });
     });
+
+    describe('Comando !responderid', () => {
+      let noticeRepo: InstitutionalNoticeRepository;
+      let mockOutboundEmailService: any;
+      let calendarWithReplies: AcademicCalendarService;
+
+      beforeEach(() => {
+        noticeRepo = new InstitutionalNoticeRepository(db);
+        mockOutboundEmailService = {
+          send: vi.fn().mockResolvedValue(undefined),
+        };
+        calendarWithReplies = new AcademicCalendarService(
+          mockDynamicMessageService,
+          reminderRepo,
+          classRepo,
+          teacherRepo,
+          userProfileRepo,
+          scheduleRepo,
+          commissionRepo,
+          contextRepo,
+          new ExamMenuService(examRepo),
+          new EditExamMenuService(examRepo),
+          new RemoveNotificationMenuService(reminderRepo, examRepo),
+          examRepo,
+          undefined, // loggingService
+          undefined, // groupMembershipRepository
+          undefined, // teacherMenuService
+          noticeRepo,
+          mockOutboundEmailService
+        );
+      });
+
+      it('debería rechazar si el usuario no es superadministrador', async () => {
+        const res = await calendarWithReplies.handleCommand('user123', '!responderid123 Mensaje de respuesta', new Date(), false, undefined, false, false);
+        expect(res).toBe('🔒 Este comando es solo para superadministradores.');
+      });
+
+      it('debería retornar error si el formato es inválido', async () => {
+        const res = await calendarWithReplies.handleCommand('superadmin_user', '!responderid', new Date(), true, undefined, false, true);
+        expect(res).toContain('❌ Formato inválido');
+      });
+
+      it('debería retornar error si el aviso no existe', async () => {
+        const res = await calendarWithReplies.handleCommand('superadmin_user', '!responderid999 Mensaje de respuesta', new Date(), true, undefined, false, true);
+        expect(res).toContain('❌ No se encontró ningún aviso con el ID 999.');
+      });
+
+      it('debería enviar la respuesta por correo si existe el aviso y tiene email de origen', async () => {
+        // Guardar un aviso
+        await noticeRepo.createIfNew({
+          title: 'Aviso de Prueba',
+          body: 'Cuerpo original',
+          source_email: 'profesor@test.com',
+          unique_hash: 'hash-test-responderid',
+        });
+        const justInserted = await noticeRepo.getByUniqueHashWithId('hash-test-responderid');
+        expect(justInserted).not.toBeNull();
+        const noticeId = justInserted!.id;
+
+        const res = await calendarWithReplies.handleCommand('superadmin_user', `!responderid${noticeId} Todo OK, aprobado`, new Date(), true, undefined, false, true);
+        expect(res).toContain('✅ Respuesta enviada por correo a profesor@test.com con éxito.');
+        expect(mockOutboundEmailService.send).toHaveBeenCalledWith(
+          'profesor@test.com',
+          'Respuesta a tu aviso: Aviso de Prueba',
+          expect.stringContaining('Todo OK, aprobado')
+        );
+      });
+    });
   });
 });
+

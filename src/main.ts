@@ -35,6 +35,7 @@ import {
   SchedulerRunRepository,
   UserProfileRepository,
   InboundEmailRejectionRepository,
+  AuthorizedEmailRepository,
 } from './infrastructure/persistence/db/repositories.js';
 import { ClassNotificationRepository, InstitutionalNoticeRepository } from './features/notifications/notifications.repository.js';
 import { DailyGreetingRepository, OutboxDedupRepository } from './features/messages/messages.repository.js';
@@ -239,6 +240,7 @@ async function bootstrap() {
   const cohortConfigRepository = new CohortConfigRepository(sqliteDb);
   const classCommissionScheduleRepository = new ClassCommissionScheduleRepository(sqliteDb);
   const inboundEmailRejectionRepository = new InboundEmailRejectionRepository(sqliteDb);
+  const authorizedEmailRepository = new AuthorizedEmailRepository(sqliteDb);
 
   // Repositorios de comisiones y contexto de grupo
   const commissionRepository = new CommissionRepository(sqliteDb);
@@ -295,6 +297,8 @@ async function bootstrap() {
     loggingService,
     groupMembershipRepository,
     teacherMenuService,
+    institutionalNoticeRepository,
+    outboundEmailService,
   );
   const classNotificationService = new ClassNotificationService(
     managedClassRepository,
@@ -378,6 +382,7 @@ async function bootstrap() {
     groupMembershipRepository,
     classCommissionScheduleRepository,
     rateLimitService,
+    authorizedEmailRepository,
   );
   const vectoritoWhatsAppGateway = new VectoritoWhatsAppGateway(
     messageRouter,
@@ -389,6 +394,17 @@ async function bootstrap() {
     groupRepository,
     groupMembershipRepository,
   );
+
+  privateChatWorkflow.setPublishCallback(async (text: string, groupId?: string) => {
+    if (groupId) {
+      await vectoritoWhatsAppGateway.sendTextMessage(groupId, text);
+      return;
+    }
+    const activeGroupIds = await groupRepository.getAllActiveIds();
+    for (const gid of activeGroupIds) {
+      await vectoritoWhatsAppGateway.sendTextMessage(gid, text);
+    }
+  });
 
   // Enlazar callbacks de moderación para notificaciones privadas
   moderationService.setPrivateChatCallback(async (userId: string, message: string) => {
@@ -432,6 +448,8 @@ async function bootstrap() {
       groupRepository,
       outboundEmailService,
       inboundEmailRejectionRepository,
+      adminRepository,
+      authorizedEmailRepository,
     )
     : undefined;
 
@@ -453,6 +471,7 @@ async function bootstrap() {
     managedExamRepository,
     ragPipeline,
     emailMonitor,
+    institutionalNoticeRepository,
   );
 
   await vectoritoWhatsAppGateway.startConnection();

@@ -16,6 +16,7 @@ import {
   CohortConfigRepository,
   ClassCommissionScheduleRepository,
   CommissionRepository,
+  AuthorizedEmailRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
 import { InstitutionalNoticeRepository } from '../../features/notifications/notifications.repository.js';
 import { UserModerationRepository } from '../../features/moderation/moderation.repository.js';
@@ -103,6 +104,12 @@ export class PrivateChatWorkflowService {
   // Return states for impersonation submenus
   private impersonationReturnStates = new Map<string, string>();
 
+  private publishCallback?: (text: string, groupId?: string) => Promise<void>;
+
+  public setPublishCallback(cb: (text: string, groupId?: string) => Promise<void>): void {
+    this.publishCallback = cb;
+  }
+
   public static getImpersonation(userId: string) {
     if (!this.impersonations.has(userId)) {
       this.impersonations.set(userId, { isActive: false, commissionId: null, maxQuestions: null });
@@ -184,6 +191,7 @@ export class PrivateChatWorkflowService {
     private groupMembershipRepository?: GroupMembershipRepository,
     private classCommissionScheduleRepository?: ClassCommissionScheduleRepository,
     private rateLimitService?: RateLimitService,
+    private authorizedEmailRepository?: AuthorizedEmailRepository,
   ) {}
 
   private isProfilePopulated(profile?: { name?: string; birthday_day_month?: string; email?: string; user_commission_id?: number } | null): boolean {
@@ -467,6 +475,30 @@ export class PrivateChatWorkflowService {
 
     if (currentState === 'await_notice_end_date') {
       return this.handleNoticeStep4(userId, cleaned);
+    }
+
+    if (currentState === 'await_notice_group_selector') {
+      return this.handleNoticeGroupSelector(userId, cleaned);
+    }
+
+    if (currentState === 'await_notice_frequency') {
+      return this.handleNoticeFrequency(userId, cleaned);
+    }
+
+    if (currentState === 'await_notice_frequency_days') {
+      return this.handleNoticeFrequencyDays(userId, cleaned);
+    }
+
+    if (currentState === 'submenu_authorized_emails') {
+      return this.handleAuthorizedEmailsSubmenu(userId, cleaned);
+    }
+
+    if (currentState === 'await_authorized_email_add') {
+      return this.handleAuthorizedEmailAdd(userId, cleaned);
+    }
+
+    if (currentState === 'await_authorized_email_remove') {
+      return this.handleAuthorizedEmailRemove(userId, cleaned);
     }
 
     if (currentState === 'await_notice_edit_id') {
@@ -2043,13 +2075,10 @@ export class PrivateChatWorkflowService {
     pending.start_date = startDate;
     this.pendingNoticeData.set(userId, pending);
     this.pendingAdminState.set(userId, 'await_notice_end_date');
-    return 'Excelente. ¿Fecha de vencimiento? (DD/MM)';
+    return 'Excelente. ¿Fecha de vencimiento? (DD/MM) o "0" para sin fecha límite:';
   }
 
   private async handleNoticeStep4(userId: string, cleaned: string): Promise<string> {
-    const endDate = this.parseDayMonth(cleaned);
-    if (!endDate) return 'No pude leer la fecha. Usa formato DD/MM.';
-
     const pending = this.pendingNoticeData.get(userId);
     if (!pending?.title || !pending.body || !pending.start_date) {
       this.pendingNoticeData.delete(userId);
@@ -2057,24 +2086,16 @@ export class PrivateChatWorkflowService {
       return 'Faltan datos para guardar el aviso. Volvé a intentarlo desde el submenú.';
     }
 
-    const uniqueHash = crypto
-      .createHash('sha256')
-      .update(`${pending.title}|${pending.body}|${pending.start_date.toISOString()}|${endDate.toISOString()}`)
-      .digest('hex');
+    if (cleaned.trim() === '0') {
+      pending.end_date = undefined;
+    } else {
+      const endDate = this.parseDayMonth(cleaned);
+      if (!endDate) return 'No pude leer la fecha. Usa formato DD/MM o 0 para sin fecha límite.';
+      pending.end_date = endDate;
+    }
 
-    await this.noticesRepository.createIfNew({
-      title: pending.title,
-      body: pending.body,
-      start_date: pending.start_date,
-      end_date: endDate,
-      event_time: undefined,
-      source_email: undefined,
-      unique_hash: uniqueHash,
-    });
-
-    this.pendingNoticeData.delete(userId);
-    this.pendingAdminState.delete(userId);
-    return 'Aviso cargado correctamente ✅';
+    this.pendingNoticeData.set(userId, pending);
+    return this.askNoticeGroupSelector(userId);
   }
 
   private async handleExamStep1(userId: string, cleaned: string): Promise<string> {
@@ -2834,6 +2855,7 @@ export class PrivateChatWorkflowService {
       '2 - Ver avisos',
       '3 - Forzar aviso institucional (prueba)',
       '4 - Editar aviso existente',
+      '5 - Gestionar remitentes de email autorizados',
       '',
       '0 - Volver',
     ].join('\n');
@@ -2993,6 +3015,11 @@ export class PrivateChatWorkflowService {
       if (!notices.length) return 'No hay avisos cargados para editar.';
       this.pendingAdminState.set(userId, 'await_notice_edit_id');
       return ['Elegí el aviso a editar:', ...notices.map((n) => `${n.id} - ${n.notice.title} (${this.formatNoticeDateRange(n.notice.start_date, n.notice.end_date)})`)].join('\n');
+    }
+
+    if (lowered === '5') {
+      this.pendingAdminState.set(userId, 'submenu_authorized_emails');
+      return this.authorizedEmailsSubmenuText();
     }
 
     return 'Opción inválida. Elegí un número del submenú o 0 para volver.';
@@ -4176,5 +4203,296 @@ export class PrivateChatWorkflowService {
     const date = new Date(year, month - 1, day);
     if (Number.isNaN(date.getTime())) return null;
     return date;
+  }
+
+  private async askNoticeGroupSelector(userId: string): Promise<string> {
+    const pending = this.pendingNoticeData.get(userId) || {};
+    const groups = this.groupRepository ? await this.groupRepository.getAllActiveGroupsWithEntryYear() : [];
+    
+    const optionsText: string[] = [
+      '¿A qué grupo está dirigido el aviso?',
+      '1 - Notificar a todos (todos los grupos de la técnicatura)',
+      '2 - Los grupos generales'
+    ];
+    
+    const mapping: string[] = ['todos', 'general'];
+    
+    const cohorts = Array.from(new Set(groups.map((g) => g.entry_year).filter((y): y is number => y !== null))).sort();
+    let optIndex = 3;
+    for (const c of cohorts) {
+      optionsText.push(`${optIndex} - Camada ${c}`);
+      mapping.push(`camada:${c}`);
+      optIndex++;
+    }
+    
+    for (const g of groups) {
+      optionsText.push(`${optIndex} - ${g.display_name || g.group_id}`);
+      mapping.push(g.group_id);
+      optIndex++;
+    }
+    
+    (pending as any).lastGroupList = mapping;
+    this.pendingNoticeData.set(userId, pending);
+    this.pendingAdminState.set(userId, 'await_notice_group_selector');
+    
+    return optionsText.join('\n');
+  }
+
+  private async handleNoticeGroupSelector(userId: string, cleaned: string): Promise<string> {
+    const choiceStr = cleaned.trim();
+    if (!/^\d+$/.test(choiceStr)) {
+      return 'Opción inválida. Mandá el número del destinatario de la lista.';
+    }
+
+    const pending = this.pendingNoticeData.get(userId);
+    if (!pending) {
+      this.pendingAdminState.delete(userId);
+      return 'Faltan datos. Volvé a empezar.';
+    }
+
+    const list = (pending as any).lastGroupList || [];
+    const idx = Number(choiceStr) - 1;
+    if (idx < 0 || idx >= list.length) {
+      return `Número inválido. Elegí entre 1 y ${list.length}.`;
+    }
+
+    const selectedSelector = list[idx];
+    (pending as any).grupo_selector = selectedSelector;
+    this.pendingNoticeData.set(userId, pending);
+
+    // Ask for frequency
+    this.pendingAdminState.set(userId, 'await_notice_frequency');
+    return [
+      'Elegí la frecuencia de envío:',
+      '1 - Envío único (instantáneo/en fecha de inicio)',
+      '2 - Repetir por cantidad de días (ej. cada 5 días)'
+    ].join('\n');
+  }
+
+  private async handleNoticeFrequency(userId: string, cleaned: string): Promise<string> {
+    const choice = cleaned.trim();
+    const pending = this.pendingNoticeData.get(userId);
+    if (!pending) {
+      this.pendingAdminState.delete(userId);
+      return 'Faltan datos. Volvé a empezar.';
+    }
+
+    if (choice === '1') {
+      (pending as any).frecuencia = 'unica';
+      this.pendingNoticeData.set(userId, pending);
+      return await this.saveNoticeAndFinish(userId);
+    } else if (choice === '2') {
+      this.pendingAdminState.set(userId, 'await_notice_frequency_days');
+      return 'Ingresá la cantidad de días para la frecuencia (ej: 5 para enviar cada 5 días):';
+    }
+
+    return 'Opción inválida. Elegí 1 o 2.';
+  }
+
+  private async handleNoticeFrequencyDays(userId: string, cleaned: string): Promise<string> {
+    const daysStr = cleaned.trim();
+    if (!/^\d+$/.test(daysStr) || Number(daysStr) <= 0) {
+      return 'Por favor ingresá un número positivo de días.';
+    }
+
+    const pending = this.pendingNoticeData.get(userId);
+    if (!pending) {
+      this.pendingAdminState.delete(userId);
+      return 'Faltan datos. Volvé a empezar.';
+    }
+
+    (pending as any).frecuencia = `${daysStr}d`;
+    this.pendingNoticeData.set(userId, pending);
+    return await this.saveNoticeAndFinish(userId);
+  }
+
+  private async saveNoticeAndFinish(userId: string): Promise<string> {
+    const pending = this.pendingNoticeData.get(userId);
+    if (!pending?.title || !pending.body || !pending.start_date) {
+      this.pendingNoticeData.delete(userId);
+      this.pendingAdminState.delete(userId);
+      return 'Faltan datos para guardar el aviso.';
+    }
+
+    const grupoSelector = (pending as any).grupo_selector || 'todos';
+    const frecuencia = (pending as any).frecuencia || 'unica';
+
+    const uniqueHash = crypto
+      .createHash('sha256')
+      .update(`${pending.title}|${pending.body}|${pending.start_date.toISOString()}|${pending.end_date ? pending.end_date.toISOString() : ''}|${grupoSelector}|${frecuencia}`)
+      .digest('hex');
+
+    await this.noticesRepository.createIfNew({
+      title: pending.title,
+      body: pending.body,
+      start_date: pending.start_date,
+      end_date: pending.end_date,
+      event_time: undefined,
+      source_email: undefined,
+      unique_hash: uniqueHash,
+      grupo_selector: grupoSelector,
+      frecuencia: frecuencia,
+    });
+
+    const justInserted = await this.noticesRepository.getByUniqueHashWithId(uniqueHash);
+    const insertedId = justInserted ? justInserted.id : undefined;
+
+    // Publish immediately on creation
+    const shouldPublishNow = true;
+
+    if (shouldPublishNow) {
+      const resolvedGroupIds = await this.resolveGroupIdsForSelector(grupoSelector);
+      
+      let grupoName = grupoSelector;
+      if (grupoSelector === 'todos') {
+        grupoName = 'todos los grupos de la técnicatura';
+      } else if (grupoSelector === 'general') {
+        grupoName = 'los grupos generales';
+      } else if (grupoSelector.startsWith('camada:')) {
+        grupoName = `la camada ${grupoSelector.split(':')[1]}`;
+      } else if (this.groupRepository) {
+        const matched = await this.groupRepository.findByGroupId(grupoSelector);
+        if (matched) {
+          grupoName = matched.display_name || matched.group_id;
+        }
+      }
+
+      const adminProfile = await this.userProfileRepository.get(userId);
+      const displayName = adminProfile?.name || 'Administrador';
+      const adminEmail = adminProfile?.email || 'N/A';
+
+      const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n` +
+        `El profe ${displayName} (ID: ${insertedId})  - e- mail ${adminEmail} dejo un aviso para ${grupoName}\n` +
+        `Título: ${pending.title}\n` +
+        `Mensaje:\n` +
+        `${pending.body}`;
+
+      if (this.publishCallback) {
+        try {
+          if (resolvedGroupIds.length) {
+            for (const gid of resolvedGroupIds) {
+              await this.publishCallback(formattedMessage, gid);
+            }
+          } else {
+            await this.publishCallback(formattedMessage);
+          }
+          if (insertedId) {
+            await this.noticesRepository.markSent(insertedId);
+          }
+        } catch (err) {
+          console.error('[PrivateChatWorkflow] Error publishing notice:', err);
+        }
+      }
+    }
+
+    this.pendingNoticeData.delete(userId);
+    this.pendingAdminState.delete(userId);
+    return 'Aviso cargado correctamente ✅';
+  }
+
+  private async resolveGroupIdsForSelector(selector: string): Promise<string[]> {
+    if (!this.groupRepository) return [];
+    const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
+    const sel = selector.trim().toLowerCase();
+    if (sel === 'todos') {
+      return groups.map((g) => g.group_id);
+    } else if (sel === 'general') {
+      return groups.filter((g) => g.entry_year === null).map((g) => g.group_id);
+    } else if (sel.startsWith('camada:')) {
+      const year = Number(sel.split(':')[1]);
+      return groups.filter((g) => g.entry_year === year).map((g) => g.group_id);
+    } else {
+      // Individual group
+      const matched = groups.find((g) => g.group_id.toLowerCase() === sel);
+      return matched ? [matched.group_id] : [];
+    }
+  }
+
+  private authorizedEmailsSubmenuText(): string {
+    return [
+      '📧 *Remitentes de email autorizados*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      'Nota: Los profesores y administradores registrados están autorizados automáticamente.',
+      '',
+      '1 - Ver remitentes autorizados',
+      '2 - Autorizar nuevo email',
+      '3 - Quitar autorización de email',
+      '',
+      '0 - Volver al menú de avisos',
+    ].join('\n');
+  }
+
+  private async handleAuthorizedEmailsSubmenu(userId: string, cleaned: string): Promise<string> {
+    const lowered = cleaned.trim().toLowerCase();
+    if (lowered === '0' || lowered === 'menu' || lowered === 'volver') {
+      this.pendingAdminState.set(userId, 'submenu_institutional_notices');
+      return this.institutionalNoticesSubmenuText();
+    }
+
+    if (!this.authorizedEmailRepository) {
+      return 'El repositorio de emails autorizados no está configurado.';
+    }
+
+    if (lowered === '1') {
+      const list = await this.authorizedEmailRepository.listAll();
+      if (!list.length) return 'No hay remitentes de email autorizados en la base de datos.';
+      return [
+        '📧 Remitentes autorizados:',
+        ...list.map((item) => `${item.id} - ${item.email} (${item.description || 'Sin descripción'})`),
+      ].join('\n');
+    }
+
+    if (lowered === '2') {
+      this.pendingAdminState.set(userId, 'await_authorized_email_add');
+      return 'Por favor, enviame el email y nombre/etiqueta con el formato:\nemail|nombre\n(ej: preceptor.perez@ispc.edu.ar|Preceptoría)';
+    }
+
+    if (lowered === '3') {
+      const list = await this.authorizedEmailRepository.listAll();
+      if (!list.length) return 'No hay remitentes autorizados para quitar.';
+      this.pendingAdminState.set(userId, 'await_authorized_email_remove');
+      return [
+        'Elegí el ID del remitente a quitar:',
+        ...list.map((item) => `${item.id} - ${item.email} (${item.description || 'Sin descripción'})`),
+      ].join('\n');
+    }
+
+    return 'Opción inválida. Elegí un número del submenú o 0 para volver.';
+  }
+
+  private async handleAuthorizedEmailAdd(userId: string, cleaned: string): Promise<string> {
+    if (!this.authorizedEmailRepository) return 'El repositorio de emails autorizados no está configurado.';
+    const parts = cleaned.split('|');
+    const email = parts[0]?.trim();
+    const description = parts[1]?.trim();
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return 'Ese email no parece válido. Formato esperado: email|nombre';
+    }
+
+    const added = await this.authorizedEmailRepository.add(email, description);
+    this.pendingAdminState.set(userId, 'submenu_authorized_emails');
+    if (added) {
+      return `¡Remitente autorizado correctamente! 🎉\n\n${this.authorizedEmailsSubmenuText()}`;
+    } else {
+      return `No se pudo agregar el email. Puede que ya esté registrado. ❌\n\n${this.authorizedEmailsSubmenuText()}`;
+    }
+  }
+
+  private async handleAuthorizedEmailRemove(userId: string, cleaned: string): Promise<string> {
+    if (!this.authorizedEmailRepository) return 'El repositorio de emails autorizados no está configurado.';
+    const idStr = cleaned.trim();
+    if (!/^\d+$/.test(idStr)) {
+      return 'Por favor ingresá un ID numérico válido.';
+    }
+
+    const id = Number(idStr);
+    const removed = await this.authorizedEmailRepository.remove(id);
+    this.pendingAdminState.set(userId, 'submenu_authorized_emails');
+    if (removed) {
+      return `Remitente con ID ${id} eliminado con éxito. ✅\n\n${this.authorizedEmailsSubmenuText()}`;
+    } else {
+      return `No se encontró ningún remitente con ID ${id}. ❌\n\n${this.authorizedEmailsSubmenuText()}`;
+    }
   }
 }

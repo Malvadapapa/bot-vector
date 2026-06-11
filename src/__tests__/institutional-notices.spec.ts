@@ -701,6 +701,7 @@ describe('InstitutionalEmailMonitor - group resolution', () => {
       createIfNew: vi.fn().mockResolvedValue(true),
       markPublished: vi.fn(),
       markConfirmed: vi.fn(),
+      markSent: vi.fn(),
       deleteById: vi.fn(),
     };
     mockReminderRepo = {
@@ -894,6 +895,7 @@ describe('InstitutionalEmailMonitor - atomic publication', () => {
       createIfNew: vi.fn().mockResolvedValue(true),
       markPublished: vi.fn(),
       markConfirmed: vi.fn(),
+      markSent: vi.fn(),
       deleteById: vi.fn(),
     };
     mockReminderRepo = {
@@ -926,7 +928,7 @@ describe('InstitutionalEmailMonitor - atomic publication', () => {
 
     expect(processed).toBe(0);
     expect(mockNoticeRepo.deleteById).toHaveBeenCalledWith(1);
-    expect(mockNoticeRepo.markPublished).not.toHaveBeenCalled();
+    expect(mockNoticeRepo.markSent).not.toHaveBeenCalled();
   });
 
   it('should not rollback if publication succeeds', async () => {
@@ -945,7 +947,7 @@ describe('InstitutionalEmailMonitor - atomic publication', () => {
     const processed = await monitor.pollOnce();
 
     expect(processed).toBe(1);
-    expect(mockNoticeRepo.markPublished).toHaveBeenCalledWith(1);
+    expect(mockNoticeRepo.markSent).toHaveBeenCalledWith(1);
     expect(mockNoticeRepo.deleteById).not.toHaveBeenCalled();
   });
 
@@ -982,7 +984,7 @@ describe('InstitutionalEmailMonitor - atomic publication', () => {
     const processed = await monitor.pollOnce();
 
     expect(processed).toBe(1);
-    expect(mockNoticeRepo.markPublished).toHaveBeenCalledTimes(1);
+    expect(mockNoticeRepo.markSent).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1006,6 +1008,8 @@ describe('InstitutionalEmailMonitor - confirmation email', () => {
       createIfNew: vi.fn().mockResolvedValue(true),
       markPublished: vi.fn(),
       markConfirmed: vi.fn(),
+      markSent: vi.fn(),
+      deleteById: vi.fn(),
     };
     mockReminderRepo = {
       create: vi.fn(),
@@ -1135,6 +1139,7 @@ describe('InstitutionalEmailMonitor - full workflow integration', () => {
       createIfNew: vi.fn().mockResolvedValue(true),
       markPublished: vi.fn(),
       markConfirmed: vi.fn(),
+      markSent: vi.fn(),
       deleteById: vi.fn(),
     };
     mockReminderRepo = {
@@ -1216,7 +1221,7 @@ frecuencia: unica`,
     expect(mockPublishCallback).toHaveBeenCalledWith(expect.any(String), 'group2');
 
     // Publishing
-    expect(mockNoticeRepo.markPublished).toHaveBeenCalledWith(1);
+    expect(mockNoticeRepo.markSent).toHaveBeenCalledWith(1);
 
     // Reminder creation
     expect(mockReminderRepo.create).toHaveBeenCalled();
@@ -1310,6 +1315,7 @@ describe('Improved Institutional Email Notices & TLS Config', () => {
       createIfNew: vi.fn().mockResolvedValue(true),
       markPublished: vi.fn(),
       markConfirmed: vi.fn(),
+      markSent: vi.fn(),
       deleteById: vi.fn(),
     };
     mockReminderRepo = {

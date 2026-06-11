@@ -3,6 +3,8 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { getSettings } from '../../shared/config/settings.js';
 import { DynamicMessageService } from '../messages/dynamic-message.service.js';
+import { formatLocalDateOnly, get } from '../../shared/db/db-utils.js';
+import { OutboundEmailService } from '../notifications/integrations/email.service.js';
 
 import { ModerationAdminCommandService } from '../moderation/moderation-admin-command.service.js';
 import { AdminLoggingCommandService } from '../../application/admin/admin-logging-command.service.js';
@@ -22,7 +24,7 @@ import {
   CommissionRepository,
   GroupContextRepository,
 } from './academic-calendar.repository.js';
-import { UserProfileRepository, GroupMembershipRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { UserProfileRepository, GroupMembershipRepository, InstitutionalNoticeRepository } from '../../infrastructure/persistence/db/repositories.js';
 import { LoggingService } from '../../shared/logging/logging.service.js';
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 
@@ -220,6 +222,8 @@ export class AcademicCalendarService {
     private loggingService?: LoggingService,
     private groupMembershipRepository?: GroupMembershipRepository,
     private teacherMenuService?: TeacherMenuService,
+    private noticeRepository?: InstitutionalNoticeRepository,
+    private outboundEmailService?: OutboundEmailService,
   ) {
     // Inicializar servicios
     if (this.loggingService) {
@@ -336,6 +340,80 @@ export class AcademicCalendarService {
       }
       // El mensaje de retorno será devuelto por handleGroupConfigStart en gateway
       return `config-grupo:${groupId}`;
+    }
+
+    // Comando !responderid
+    if (commandText.trim().toLowerCase().startsWith('!responderid')) {
+      if (!isSuperAdmin) {
+        return '🔒 Este comando es solo para superadministradores.';
+      }
+      
+      const restText = commandText.trim().slice('!responderid'.length).trim();
+      const match = restText.match(/^(\d+)\s+(.+)$/s);
+      if (!match) {
+        return '❌ Formato inválido. Usá: !responderid<ID> <mensaje> o !responderid <ID> <mensaje>';
+      }
+      
+      const id = Number(match[1]);
+      const message = match[2].trim();
+      
+      if (!this.noticeRepository) {
+        return '❌ Repositorio de avisos no disponible.';
+      }
+      
+      const notice = await this.noticeRepository.getById(id);
+      if (!notice) {
+        return `❌ No se encontró ningún aviso con el ID ${id}.`;
+      }
+      
+      if (!notice.source_email) {
+        return `❌ El aviso con ID ${id} no tiene un correo electrónico de origen asociado.`;
+      }
+      
+      if (!this.outboundEmailService) {
+        return '❌ Servicio de correo saliente no configurado.';
+      }
+      
+      // Resolve creator display name
+      let creatorName = notice.source_email;
+      const db = (this.noticeRepository as any).db;
+      if (db) {
+        const profile = await get<any>(
+          db,
+          'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+          [notice.source_email.toLowerCase()]
+        );
+        if (profile && profile.name) {
+          creatorName = profile.name;
+        } else {
+          const teacher = await get<any>(
+            db,
+            'SELECT name FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
+            [notice.source_email.toLowerCase()]
+          );
+          if (teacher && teacher.name) {
+            creatorName = teacher.name;
+          }
+        }
+      }
+      
+      const emailSubject = `Respuesta a tu aviso: ${notice.title}`;
+      const emailBody = `Hola ${creatorName}.\n\nUn superadministrador ha respondido a tu aviso "${notice.title}" con el siguiente mensaje:\n\n` +
+        `----------------------------------------\n` +
+        `${message}\n` +
+        `----------------------------------------\n\n` +
+        `Datos del emisor original:\n` +
+        `- Nombre: ${creatorName}\n` +
+        `- Correo: ${notice.source_email}\n` +
+        `- Título del aviso: ${notice.title}`;
+        
+      try {
+        await this.outboundEmailService.send(notice.source_email, emailSubject, emailBody);
+        return `✅ Respuesta enviada por correo a ${notice.source_email} con éxito.`;
+      } catch (err) {
+        console.error('[AcademicCalendarService] Error sending reply email:', err);
+        return `❌ Error al enviar la respuesta por correo.`;
+      }
     }
 
     // Comandos de menú para exámenes
@@ -627,7 +705,11 @@ export class AcademicCalendarService {
     for (let index = 0; index < notices.length; index += 1) {
       const notice = notices[index];
       const icon = icons[index % icons.length];
-      items.push(`${icon} ${notice.title}\n${notice.body}`);
+      let msg = `${icon} ${notice.title}\n${notice.body}`;
+      if (notice.end_date) {
+        msg += `\n⚠️ Tienes hasta el ${formatLocalDateOnly(notice.end_date)} para realizar esta actividad`;
+      }
+      items.push(msg);
     }
     return ['📢 Avisos vigentes:', ...items].join('|||SPLIT|||');
   }
@@ -683,7 +765,6 @@ export class AcademicCalendarService {
 
     const lines: string[] = [];
     for (const { dayDt, dayName, dayClasses } of daysData) {
-      const dayNotices = notices.filter((n) => this.isNoticeActiveOn(n, dayDt));
       const dayExams = exams.filter((e) => this.isSameCalendarDay(e.exam_date, dayDt));
       const remindersList = reminderByDate.get(dayDt.toISOString().slice(0, 10)) || [];
 
@@ -698,12 +779,19 @@ export class AcademicCalendarService {
         structured.push({ time: time || null, text });
       });
 
-      dayNotices.forEach((n) => {
+      for (const n of notices) {
         const title = String((n as any).title || 'Aviso');
         const m = title.match(/^(\d{1,2}:\d{2})\s*(.*)$/);
-        if (m) structured.push({ time: m[1], text: `Aviso ISPC: ${m[2]}` });
-        else structured.push({ time: null, text: `Aviso ISPC: ${title}` });
-      });
+        const time = m ? m[1] : null;
+        const cleanTitle = m ? m[2] : title;
+
+        if (n.start_date && this.isSameCalendarDay(n.start_date, dayDt)) {
+          structured.push({ time, text: `Aviso ISPC: Inicio: ${cleanTitle}` });
+        }
+        if (n.end_date && this.isSameCalendarDay(n.end_date, dayDt)) {
+          structured.push({ time, text: `Aviso ISPC: Límite: ${cleanTitle}` });
+        }
+      }
 
       remindersList.forEach((r) => {
         const textRaw = String(r);

@@ -10,6 +10,7 @@ export interface InstitutionalNotice {
   grupo_selector?: string;
   published_at?: Date;
   confirmed_at?: Date;
+  last_sent_at?: Date;
 }
 
 export interface ClassNotificationRecord {

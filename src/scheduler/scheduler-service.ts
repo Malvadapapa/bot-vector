@@ -4,13 +4,13 @@ import { ClassNotificationService } from '../features/notifications/class-notifi
 import { ExamNotificationService } from '../features/notifications/exam-notification.service.js';
 import { DynamicMessageService } from '../features/messages/dynamic-message.service.js';
 import { RateLimitService } from '../features/ai/rate-limit.service.js';
-import { GroupRepository, ManagedExamRepository, ReminderRepository, SchedulerRunRepository, UserProfileRepository } from '../infrastructure/persistence/db/repositories.js';
+import { GroupRepository, ManagedExamRepository, ReminderRepository, SchedulerRunRepository, UserProfileRepository, InstitutionalNoticeRepository } from '../infrastructure/persistence/db/repositories.js';
 import { OutboxDedupRepository } from '../features/messages/messages.repository.js';
 import { ConfirmationRepository } from '../features/conversation/conversation.repository.js';
 import { InstitutionalEmailMonitor } from '../features/notifications/integrations/institutional-email-monitor.js';
 import { VectoritoWhatsAppGateway } from '../interfaces/whatsapp/vectorito-whatsapp-gateway.js';
 import { RagPipelineService } from '../features/ai/rag/rag-pipeline.service.js';
-import { formatLocalDateOnly } from '../shared/db/db-utils.js';
+import { formatLocalDateOnly, get, all } from '../shared/db/db-utils.js';
 
 export class SchedulerService {
   private examNotificationService: ExamNotificationService;
@@ -29,6 +29,7 @@ export class SchedulerService {
     private managedExamRepository: ManagedExamRepository,
     private ragPipelineService: RagPipelineService,
     private emailMonitor?: InstitutionalEmailMonitor,
+    private noticesRepository?: InstitutionalNoticeRepository,
   ) {
     // ExamNotificationService will be initialized with active groups in startJobs()
     this.examNotificationService = new ExamNotificationService(
@@ -210,6 +211,106 @@ export class SchedulerService {
               await this.whatsappGateway.sendTextMessage(groupId, message);
             }
           }
+        }
+      });
+    });
+
+    cron.schedule('0 */12 * * *', async () => {
+      await this.safeRun('publish_frequency_notices', async () => {
+        if (!this.noticesRepository) return;
+        const activeNotices = await this.noticesRepository.listActivePeriodicNotices();
+        for (const item of activeNotices) {
+          const notice = item.notice;
+          if (!notice.frecuencia || notice.frecuencia === 'unica') continue;
+
+          const m = notice.frecuencia.match(/^(\d+)d$/);
+          if (!m) continue;
+          const days = Number(m[1]);
+
+          const lastSent = notice.last_sent_at || notice.published_at;
+          if (lastSent) {
+            const diffMs = new Date().getTime() - lastSent.getTime();
+            const diffDays = diffMs / (1000 * 60 * 60 * 24);
+            if (diffDays < days) continue;
+          }
+
+          // Resolve groups
+          const selector = notice.grupo_selector || 'todos';
+          const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
+          let resolvedGroupIds: string[] = [];
+          const sel = selector.trim().toLowerCase();
+          if (sel === 'todos') {
+            resolvedGroupIds = groups.map((g) => g.group_id);
+          } else if (sel === 'general') {
+            resolvedGroupIds = groups.filter((g) => g.entry_year === null).map((g) => g.group_id);
+          } else if (sel.startsWith('camada:')) {
+            const year = Number(sel.split(':')[1]);
+            resolvedGroupIds = groups.filter((g) => g.entry_year === year).map((g) => g.group_id);
+          } else {
+            const matched = groups.find((g) => g.group_id.toLowerCase() === sel);
+            if (matched) resolvedGroupIds = [matched.group_id];
+          }
+
+          if (resolvedGroupIds.length === 0) continue;
+
+          // Resolve sender name
+          let displayName = notice.source_email || 'Sistema';
+          if (notice.source_email) {
+            const db = (this.groupRepository as any).db;
+            if (db) {
+              const profile = await get<any>(
+                db,
+                'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+                [notice.source_email.toLowerCase()]
+              );
+              if (profile && profile.name) {
+                displayName = profile.name;
+              } else {
+                const teacher = await get<any>(
+                  db,
+                  'SELECT name FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
+                  [notice.source_email.toLowerCase()]
+                );
+                if (teacher && teacher.name) {
+                  displayName = teacher.name;
+                }
+              }
+            }
+          }
+
+          // Resolve group selector label
+          let grupoName = selector;
+          if (selector === 'todos') {
+            grupoName = 'todos los grupos de la técnicatura';
+          } else if (selector === 'general') {
+            grupoName = 'los grupos generales';
+          } else if (selector.startsWith('camada:')) {
+            grupoName = `la camada ${selector.split(':')[1]}`;
+          } else {
+            const matched = groups.find((g) => g.group_id.toLowerCase() === sel);
+            if (matched) {
+              grupoName = matched.display_name || matched.group_id;
+            }
+          }
+
+          const sourceEmailText = notice.source_email || 'N/A';
+          const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n` +
+            `El profe ${displayName} (ID: ${item.id})  - e- mail ${sourceEmailText} dejo un aviso para ${grupoName}\n` +
+            `Título: ${notice.title}\n` +
+            `Mensaje:\n` +
+            `${notice.body}`;
+
+          // Broadcast to groups
+          for (const gid of resolvedGroupIds) {
+            try {
+              await this.whatsappGateway.sendTextMessage(gid, formattedMessage);
+            } catch (err) {
+              console.error(`[Scheduler] Error sending periodic notice to group ${gid}:`, err);
+            }
+          }
+
+          // Mark sent
+          await this.noticesRepository.markSent(item.id);
         }
       });
     });

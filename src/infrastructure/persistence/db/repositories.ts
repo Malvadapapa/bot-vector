@@ -146,6 +146,17 @@ export class AdminRepository {
     return rows.map((r) => String(r.user_id));
   }
 
+  async listAdminEmails(): Promise<string[]> {
+    const rows = await all<any>(
+      this.db,
+      `SELECT DISTINCT LOWER(p.email) as email
+       FROM admin_users a
+       JOIN user_profiles p ON a.user_id = p.user_id
+       WHERE a.is_authenticated = 1 AND p.email IS NOT NULL AND p.email != ''`
+    );
+    return rows.map((r) => String(r.email));
+  }
+
   async listGroupAdmins(groupId: string): Promise<Array<{ user_id: string }>> {
     const rows = await all<any>(this.db, 'SELECT user_id FROM group_admins WHERE group_id = ? ORDER BY created_at ASC', [groupId]);
     return rows.map((r) => ({ user_id: String(r.user_id) }));
@@ -385,6 +396,6 @@ function rowToWhatsAppGroup(row: any): WhatsAppGroup {
   };
 }
 
-export { InstitutionalNoticeRepository, ClassNotificationRepository, InboundEmailRejectionRepository } from '../../../features/notifications/notifications.repository.js';
+export { InstitutionalNoticeRepository, ClassNotificationRepository, InboundEmailRejectionRepository, AuthorizedEmailRepository } from '../../../features/notifications/notifications.repository.js';
 export { DailyGreetingRepository, OutboxDedupRepository } from '../../../features/messages/messages.repository.js';
 export { ReminderRepository, ManagedExamRepository, ManagedClassRepository, ManagedTeacherRepository, CommissionRepository, GroupContextRepository, ClassCommissionScheduleRepository, CohortConfigRepository } from '../../../features/academic-calendar/academic-calendar.repository.js';

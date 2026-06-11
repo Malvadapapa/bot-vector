@@ -1,9 +1,9 @@
 import crypto from 'crypto';
 import { ParsedMail } from 'mailparser';
-import { InstitutionalNoticeRepository, InboundEmailRejectionRepository } from '../notifications.repository.js';
-import { ReminderRepository, ManagedTeacherRepository, GroupRepository } from '../../../infrastructure/persistence/db/repositories.js';
+import { InstitutionalNoticeRepository, InboundEmailRejectionRepository, AuthorizedEmailRepository } from '../notifications.repository.js';
+import { ReminderRepository, ManagedTeacherRepository, GroupRepository, AdminRepository } from '../../../infrastructure/persistence/db/repositories.js';
 import { EmailService, OutboundEmailService } from './email.service.js';
-import { formatLocalDateOnly } from '../../../shared/db/db-utils.js';
+import { formatLocalDateOnly, get, all } from '../../../shared/db/db-utils.js';
 
 export class InstitutionalEmailMonitor {
   private _polling = false;
@@ -19,6 +19,8 @@ export class InstitutionalEmailMonitor {
     private groupRepository?: GroupRepository,
     private outboundEmailService?: OutboundEmailService,
     private rejectionRepository?: InboundEmailRejectionRepository,
+    private adminRepository?: AdminRepository,
+    private authorizedEmailRepository?: AuthorizedEmailRepository,
   ) {}
 
   public async pollOnce(): Promise<number> {
@@ -35,7 +37,7 @@ export class InstitutionalEmailMonitor {
       console.log(`[EmailMonitor] Analizando email - De: ${email.from?.text || '?'} | Asunto: "${email.subject || '(sin asunto)'}"`);
       const notice = this.parseNoticeFromEmail(email);
       if (!notice) {
-        console.log(`[EmailMonitor] >> Email descartado: el asunto no contiene "!aviso".`);
+        console.log(`[EmailMonitor] >> Email descartado: el asunto no contiene "aviso".`);
         continue;
       }
       console.log(`[EmailMonitor] [OK] Email reconocido como aviso institucional: "${notice.title}"`);
@@ -45,29 +47,79 @@ export class InstitutionalEmailMonitor {
       const m = src.match(/<([^>]+)>/);
       const sourceAddr = m ? m[1].toLowerCase() : src.trim().toLowerCase();
 
-      // Validate sender: either superadmin or registered teacher
+      // Validate sender: either superadmin, db admin, registered teacher, or authorized email
       const superadminEmailsEnv = process.env.SUPERADMIN_EMAILS || '';
       const superadmins = superadminEmailsEnv
         .split(',')
         .map((email) => email.trim().toLowerCase())
         .filter(Boolean);
 
-      let teacherRecords: any[] = [];
       let isAuthorized = false;
-      if (superadmins.includes(sourceAddr)) {
+      let teacherRecords: any[] = [];
+      let displayName = sourceAddr; // Fallback to email
+
+      const hasRepositories = !!(this.managedTeacherRepository || this.adminRepository || this.authorizedEmailRepository);
+
+      if (!hasRepositories) {
         isAuthorized = true;
-      } else if (this.managedTeacherRepository) {
-        if (typeof (this.managedTeacherRepository as any).listByEmail === 'function') {
-          teacherRecords = await (this.managedTeacherRepository as any).listByEmail(sourceAddr);
-        } else {
-          const t = await this.managedTeacherRepository.getByEmail(sourceAddr);
-          teacherRecords = t ? [t] : [];
-        }
-        if (teacherRecords.length > 0) {
-          isAuthorized = true;
-        }
       } else {
-        isAuthorized = true;
+        if (superadmins.includes(sourceAddr)) {
+          isAuthorized = true;
+          if (this.adminRepository) {
+            const profile = await get<any>(
+              (this.adminRepository as any).db,
+              'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+              [sourceAddr]
+            );
+            if (profile && profile.name) {
+              displayName = profile.name;
+            }
+          }
+        }
+
+        if (!isAuthorized && this.adminRepository) {
+          const adminEmails = await this.adminRepository.listAdminEmails();
+          if (adminEmails.includes(sourceAddr)) {
+            isAuthorized = true;
+            const profile = await get<any>(
+              (this.adminRepository as any).db,
+              'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+              [sourceAddr]
+            );
+            if (profile && profile.name) {
+              displayName = profile.name;
+            }
+          }
+        }
+
+        if (!isAuthorized && this.managedTeacherRepository) {
+          if (typeof (this.managedTeacherRepository as any).listByEmail === 'function') {
+            teacherRecords = await (this.managedTeacherRepository as any).listByEmail(sourceAddr);
+          } else {
+            const t = await this.managedTeacherRepository.getByEmail(sourceAddr);
+            teacherRecords = t ? [t] : [];
+          }
+          if (teacherRecords.length > 0) {
+            isAuthorized = true;
+            const teacher = teacherRecords[0];
+            displayName = teacher.name || sourceAddr;
+          }
+        }
+
+        if (!isAuthorized && this.authorizedEmailRepository) {
+          const customEmailExists = await this.authorizedEmailRepository.exists(sourceAddr);
+          if (customEmailExists) {
+            isAuthorized = true;
+            const row = await get<any>(
+              (this.authorizedEmailRepository as any).db,
+              'SELECT description FROM authorized_emails WHERE LOWER(email) = ? LIMIT 1',
+              [sourceAddr]
+            );
+            if (row && row.description) {
+              displayName = row.description;
+            }
+          }
+        }
       }
 
       if (!isAuthorized) {
@@ -107,6 +159,69 @@ export class InstitutionalEmailMonitor {
         continue;
       }
       console.log(`[EmailMonitor] [OK] Remitente autorizado: ${sourceAddr}`);
+
+      // Validate structure: at least 'cuerpo' or 'mensaje' is mandatory.
+      if (!notice.body || notice.body.trim() === '') {
+        console.log(`[EmailMonitor] [RECHAZADO] Email no estructurado (falta cuerpo/mensaje) de: ${sourceAddr}`);
+        const messageId = email.messageId;
+        let fingerprint = '';
+        if (messageId) {
+          fingerprint = messageId.trim();
+        } else {
+          const fromStr = email.from?.text || '';
+          const subjectStr = email.subject || '';
+          const dateStr = email.date ? email.date.toISOString() : '';
+          const bodyStr = email.text || '';
+          const rawInput = [fromStr, subjectStr, dateStr, bodyStr].join('|');
+          fingerprint = crypto.createHash('sha256').update(rawInput).digest('hex');
+        }
+
+        if (this.rejectionRepository) {
+          const alreadyNotified = await this.rejectionRepository.exists(fingerprint);
+          if (alreadyNotified) {
+            continue;
+          }
+          await this.rejectionRepository.markIfNew(fingerprint, sourceAddr, email.subject || '');
+        }
+
+        if (this.outboundEmailService) {
+          let cohortsList = '';
+          let groupsList = '';
+          if (this.groupRepository) {
+            const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
+            const cohorts = Array.from(new Set(groups.map((g) => g.entry_year).filter((y): y is number => y !== null))).sort();
+            cohortsList = cohorts.map((c) => `  * camada: ${c}`).join('\n');
+            groupsList = groups.map((g) => `  * ${g.display_name || g.group_id}`).join('\n');
+          }
+
+          const subject = 'Formato de aviso inválido o incompleto';
+          const body = `Hola.\n\nNo pudimos procesar tu aviso institucional porque el mensaje no tiene la estructura correcta o le faltan campos obligatorios. Para publicar un aviso, por favor envía un correo que cumpla con el siguiente formato (completando los campos después del signo de dos puntos):\n\n` +
+            `Asunto: aviso (o el título de tu aviso)\n` +
+            `Cuerpo del mensaje:\n` +
+            `nombre: [Nombre del Profesor / Emisor] (opcional)\n` +
+            `inicia: [Fecha de inicio, ej. DD/MM/AAAA] (opcional)\n` +
+            `termina: [Fecha límite/fin, ej. DD/MM/AAAA] (opcional)\n` +
+            `hora: [Hora del evento, ej. 18:30] (opcional)\n` +
+            `frecuencia: [Intervalo en días, ej: "unica" o "5d", "7d"] (opcional)\n` +
+            `grupo: [Destinatario del aviso] (obligatorio. Ver opciones más abajo)\n` +
+            `cuerpo: [Mensaje/Cuerpo del aviso] (obligatorio)\n\n` +
+            `---\n` +
+            `Opciones disponibles para el campo "grupo":\n` +
+            `- "todos" (para notificar a todos los grupos de la tecnicatura)\n` +
+            `- "general" (para notificar a los grupos generales de la tecnicatura)\n` +
+            `- Camadas:\n${cohortsList || '  (no hay camadas activas)'}\n` +
+            `- Grupos específicos (puedes poner el nombre exacto del grupo o su ID):\n${groupsList || '  (no hay grupos activos)'}\n\n` +
+            `---\n` +
+            `Si tenés alguna duda, por favor contactá al administrador.`;
+
+          try {
+            await this.outboundEmailService.send(sourceAddr, subject, body);
+          } catch (e) {
+            /* ignore */
+          }
+        }
+        continue;
+      }
 
       // Preventive duplicate check
       const existing = await this.noticeRepository.getByUniqueHashWithId(notice.uniqueHash);
@@ -191,13 +306,26 @@ export class InstitutionalEmailMonitor {
               resolvedGroupIds = resolvedGroupIds.filter((gid) => allowedGroupIdsForTeacher.includes(gid));
             }
           } else {
-            // unknown selector
-            if (this.outboundEmailService) {
-              const subject = 'Error al procesar tu aviso institucional';
-              const body = `Hola.\n\nNo pudimos procesar tu aviso institucional.\n\nError: Selector de grupos inválido (${notice.grupo_selector}).`;
-              try { await this.outboundEmailService.send(notice.sourceEmail || sourceAddr, subject, body); } catch (e) { /* ignore */ }
+            // Let's also support matching by individual group ID or display name!
+            const matchedGroup = groups.find(
+              (g) =>
+                g.group_id.toLowerCase() === selector ||
+                (g.display_name && g.display_name.toLowerCase() === selector)
+            );
+            if (matchedGroup) {
+              resolvedGroupIds = [matchedGroup.group_id];
+              if (hasGroupRestriction && !allowedGroupIdsForTeacher.includes(matchedGroup.group_id)) {
+                resolvedGroupIds = [];
+              }
+            } else {
+              // unknown selector
+              if (this.outboundEmailService) {
+                const subject = 'Error al procesar tu aviso institucional';
+                const body = `Hola.\n\nNo pudimos procesar tu aviso institucional.\n\nError: Selector de grupos inválido (${notice.grupo_selector}).`;
+                try { await this.outboundEmailService.send(notice.sourceEmail || sourceAddr, subject, body); } catch (e) { /* ignore */ }
+              }
+              continue;
             }
-            continue;
           }
         }
 
@@ -218,7 +346,7 @@ export class InstitutionalEmailMonitor {
         start_date: notice.startDate,
         end_date: notice.endDate,
         event_time: notice.eventTime,
-        source_email: notice.sourceEmail,
+        source_email: sourceAddr,
         unique_hash: notice.uniqueHash,
         frecuencia: notice.frecuencia,
         grupo_selector: notice.grupo_selector,
@@ -229,23 +357,55 @@ export class InstitutionalEmailMonitor {
       const justInserted = await this.noticeRepository.getByUniqueHashWithId(notice.uniqueHash);
       const insertedId = justInserted ? justInserted.id : undefined;
 
-      // Publish per resolved group if any, otherwise fallback to publishCallback default behavior
-      const message = this.buildNaturalMessage(notice.title, notice.body, notice.endDate, notice.eventTime);
-      try {
-        if (resolvedGroupIds.length) {
-          for (const gid of resolvedGroupIds) {
-            await this.publishCallback(message, gid);
+      // Construct grupoName for WhatsApp message template
+      let grupoName = selector;
+      if (selector === 'todos') {
+        grupoName = 'todos los grupos de la técnicatura';
+      } else if (selector === 'general') {
+        grupoName = 'los grupos generales';
+      } else {
+        const m = selector.match(/^camada\s*:\s*(\d{4}(?:\s*,\s*\d{4})*)$/i);
+        if (m) {
+          grupoName = `la camada ${m[1]}`;
+        } else if (this.groupRepository) {
+          const matchedGroup = (await this.groupRepository.getAllActiveGroupsWithEntryYear()).find(
+            (g) =>
+              g.group_id.toLowerCase() === selector ||
+              (g.display_name && g.display_name.toLowerCase() === selector)
+          );
+          if (matchedGroup) {
+            grupoName = matchedGroup.display_name || matchedGroup.group_id;
           }
-        } else {
-          await this.publishCallback(message);
         }
-        // mark published
-        if (insertedId) await this.noticeRepository.markPublished(insertedId);
-      } catch (e) {
-        // rollback insertion if publishing failed
-        if (insertedId) await this.noticeRepository.deleteById(insertedId);
-        console.error('[EmailMonitor] Error al publicar en grupos de WhatsApp, aviso revertido:', e);
-        continue;
+      }
+
+      // Build the WhatsApp notice message using the requested template
+      const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n` +
+        `El profe ${displayName} (ID: ${insertedId})  - e- mail ${sourceAddr} dejo un aviso para ${grupoName}\n` +
+        `Título: ${notice.title}\n` +
+        `Mensaje:\n` +
+        `${notice.body}`;
+
+      // Publish immediately on insertion
+      const shouldPublishNow = true;
+
+      if (shouldPublishNow) {
+        try {
+          if (resolvedGroupIds.length) {
+            for (const gid of resolvedGroupIds) {
+              await this.publishCallback(formattedMessage, gid);
+            }
+          } else {
+            await this.publishCallback(formattedMessage);
+          }
+          // mark published and sent
+          if (insertedId) await this.noticeRepository.markSent(insertedId);
+        } catch (e) {
+          // rollback insertion if publishing failed
+          if (insertedId) await this.noticeRepository.deleteById(insertedId);
+          console.error('[EmailMonitor] Error al publicar en grupos de WhatsApp, aviso revertido:', e);
+          continue;
+        }
       }
 
       // Create reminder
@@ -283,7 +443,7 @@ export class InstitutionalEmailMonitor {
 
   private parseNoticeFromEmail(email: ParsedMail): {
     title: string;
-    body: string;
+    body?: string;
     startDate?: Date;
     endDate?: Date;
     eventTime?: string;
@@ -293,14 +453,14 @@ export class InstitutionalEmailMonitor {
     grupo_selector?: string;
   } | null {
     const subject = (email.subject || '').trim();
-    if (!subject.toLowerCase().includes('!aviso')) return null;
+    if (!subject.toLowerCase().includes('aviso')) return null;
 
     const sourceEmail = email.from?.text || undefined;
     const body = (email.text || '').trim();
     const fields = this.parseStructuredFields(body);
 
-    const title = fields.nombre || subject.replace(/!aviso/gi, '').trim() || 'Aviso institucional';
-    const bodyText = fields.cuerpo || body;
+    const title = fields.nombre || subject.replace(/aviso/gi, '').trim() || 'Aviso institucional';
+    const bodyText = fields.cuerpo || fields.mensaje;
     const startDate = this.parseDate(fields.inicia);
     const endDate = this.parseDate(fields.termina);
     const eventTime = fields.hora;
@@ -314,7 +474,7 @@ export class InstitutionalEmailMonitor {
       startDate?.toISOString() || '',
       endDate?.toISOString() || '',
       eventTime || '',
-      bodyText,
+      bodyText || '',
     ].join('|');
 
     const uniqueHash = crypto.createHash('sha256').update(uniqueInput).digest('hex');
@@ -334,7 +494,7 @@ export class InstitutionalEmailMonitor {
 
   private parseStructuredFields(body: string): Record<string, string> {
     const out: Record<string, string> = {};
-    const fieldPattern = /^(nombre|inicia|termina|hora|cuerpo|frecuencia|grupo)\s*:\s*(.+)$/i;
+    const fieldPattern = /^(nombre|inicia|termina|hora|cuerpo|mensaje|frecuencia|grupo)\s*:\s*(.+)$/i;
 
     for (const line of body.split('\n')) {
       const match = line.trim().match(fieldPattern);
@@ -360,12 +520,6 @@ export class InstitutionalEmailMonitor {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed;
     return undefined;
-  }
-
-  private buildNaturalMessage(title: string, body: string, endDate?: Date, eventTime?: string): string {
-    const endText = endDate ? ` hasta ${formatLocalDateOnly(endDate)}` : '';
-    const timeText = eventTime ? ` a las ${eventTime}` : '';
-    return `Aviso institucional: ${title}. ${body}${endText}${timeText}.`.trim();
   }
 
   public startListening(): void {

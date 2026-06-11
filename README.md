@@ -310,19 +310,40 @@ npm run cleanup:data  # ⚠️ Limpia la BD y vectores
 
 ---
 
-## 📬 Configuración Avanzada de Avisos por Email
+## 📬 Configuración y Autorización Avanzada de Avisos por Email
 
 El bot incluye un flujo robusto para procesar correos electrónicos y publicarlos como avisos institucionales en los grupos correspondientes de WhatsApp.
 
-### 👑 Autorización de Superadministradores por Email
-Para permitir que usuarios además de los profesores registrados envíen correos de avisos, puedes definir la variable de entorno `SUPERADMIN_EMAILS` en tu archivo `.env` con una lista de correos separados por comas:
-```env
-SUPERADMIN_EMAILS=admin@instituto.edu.ar, director@instituto.edu.ar
+### 📧 Asunto del Correo y Formato Estructurado
+El monitor de correos procesa cualquier email que contenga la palabra **"aviso"** (de forma insensible a mayúsculas/minúsculas, ej: "aviso", "Aviso", "AVISO") en su asunto.
+- Si el cuerpo del email posee formato estructurado con el campo `cuerpo:` o `mensaje:` obligatorio, se publica de inmediato en WhatsApp.
+- Si el correo carece de estructura o faltan campos obligatorios, el bot responde de forma automática al emisor enviándole una plantilla explicativa detallada que contiene el listado dinámico de grupos y camadas/cohortes disponibles para seleccionar en el campo `grupo:`.
+
+### 👑 Autorización de Remitentes por Email
+El bot valida y autoriza la publicación de avisos desde correos electrónicos bajo las siguientes condiciones:
+1. El remitente es un **Superadministrador** definido en la variable de entorno `SUPERADMIN_EMAILS` (lista separada por comas):
+   ```env
+   SUPERADMIN_EMAILS=admin@instituto.edu.ar, director@instituto.edu.ar
+   ```
+2. El remitente es un **Administrador** registrado en la base de datos (con email en su perfil de usuario).
+3. El remitente es un **Profesor** registrado en la base de datos (tabla `managed_teachers`).
+4. El remitente es un **Correo Autorizado Personalizado** registrado en la tabla `authorized_emails`. Los administradores pueden gestionar esta lista desde WhatsApp en el submenú de gestión de avisos.
+
+Todos los correos son normalizados (eliminando espacios y comparando en minúsculas) para una validación segura y robusta.
+
+### 💬 Respuesta a Avisos desde WhatsApp (`!responderid`)
+Cuando un aviso es publicado en WhatsApp, se incluye su ID único autoincremental en el mensaje (ej: `(ID: 42)`). Los superadministradores pueden responder al emisor original del aviso enviando el comando:
+```text
+!responderid[ID] [mensaje]
 ```
-Los correos electrónicos recibidos desde estas direcciones serán automáticamente autorizados y publicados sin necesidad de que el remitente esté registrado en la tabla de profesores (`managed_teachers`). Todos los correos son normalizados (eliminando espacios y comparando en minúsculas) para una validación segura y robusta.
+o
+```text
+!responderid [ID] [mensaje]
+```
+El bot enviará de inmediato un correo electrónico al emisor original del aviso conteniendo la respuesta del superadministrador junto con los datos de contexto del aviso original.
 
 ### 🔒 Solución de Errores de Certificado TLS Auto-firmado (`SELF_SIGNED_CERT_IN_CHAIN`)
-Si tu servidor de correo IMAP corporativo o proxy local utiliza certificados auto-firmados, **nunca deshabilites** la seguridad global de Node (`NODE_TLS_REJECT_UNAUTHORIZED=0`). En su lugar, el bot provee variables dedicadas para configurar una conexión TLS segura y específica para IMAP:
+Si tu servidor de correo IMAP corporativo o proxy local utiliza certificados auto-firmados, **nunca deshabilites** la seguridad global de Node (`NODE_TLS_REJECT_UNAUTHORIZED=0`). En su lugar, el bot permite configurar una conexión TLS segura y específica para IMAP:
 
 1. **Permitir certificados auto-firmados en el buzón IMAP:**
    Si confías plenamente en la red y deseas omitir la validación de la firma en la cadena de conexión IMAP, puedes configurar:

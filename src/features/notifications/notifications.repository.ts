@@ -49,6 +49,10 @@ export class InstitutionalNoticeRepository {
     await run(this.db, 'UPDATE institutional_notices SET published_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
   }
 
+  async markSent(id: number): Promise<void> {
+    await run(this.db, 'UPDATE institutional_notices SET published_at = CURRENT_TIMESTAMP, last_sent_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  }
+
   async listRecent(limit = 5): Promise<InstitutionalNotice[]> {
     const rows = await all<any>(
       this.db,
@@ -109,6 +113,20 @@ export class InstitutionalNoticeRepository {
     const result = await run(this.db, sql, values);
     return result.changes > 0;
   }
+
+  async listActivePeriodicNotices(): Promise<Array<{ id: number; notice: InstitutionalNotice }>> {
+    const today = formatLocalDateOnly(new Date());
+    const rows = await all<any>(
+      this.db,
+      `SELECT * FROM institutional_notices 
+       WHERE (start_date IS NULL OR start_date <= ?) 
+         AND (end_date IS NULL OR end_date >= ?) 
+         AND frecuencia IS NOT NULL 
+         AND frecuencia != 'unica'`,
+      [today, today]
+    );
+    return rows.map((row) => ({ id: Number(row.id), notice: rowToNotice(row) }));
+  }
 }
 
 export class ClassNotificationRepository {
@@ -155,6 +173,7 @@ function rowToNotice(row: any): InstitutionalNotice {
     frecuencia: row.frecuencia ? String(row.frecuencia) : undefined,
     published_at: row.published_at ? new Date(String(row.published_at)) : undefined,
     confirmed_at: row.confirmed_at ? new Date(String(row.confirmed_at)) : undefined,
+    last_sent_at: row.last_sent_at ? new Date(String(row.last_sent_at)) : undefined,
   };
 }
 
@@ -179,6 +198,55 @@ export class InboundEmailRejectionRepository {
       this.db,
       'SELECT id FROM inbound_email_rejections WHERE fingerprint = ? LIMIT 1',
       [fingerprint]
+    );
+    return !!row;
+  }
+}
+
+export class AuthorizedEmailRepository {
+  constructor(private db: sqlite3.Database) {}
+
+  async add(email: string, description?: string): Promise<boolean> {
+    try {
+      await run(
+        this.db,
+        `INSERT INTO authorized_emails(email, description) VALUES (?, ?)`,
+        [email.trim().toLowerCase(), description?.trim() || null]
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async remove(id: number): Promise<boolean> {
+    const result = await run(this.db, 'DELETE FROM authorized_emails WHERE id = ?', [id]);
+    return result.changes > 0;
+  }
+
+  async removeByEmail(email: string): Promise<boolean> {
+    const result = await run(
+      this.db,
+      'DELETE FROM authorized_emails WHERE LOWER(email) = ?',
+      [email.trim().toLowerCase()]
+    );
+    return result.changes > 0;
+  }
+
+  async listAll(): Promise<Array<{ id: number; email: string; description?: string }>> {
+    const rows = await all<any>(this.db, 'SELECT * FROM authorized_emails ORDER BY email ASC');
+    return rows.map((r) => ({
+      id: Number(r.id),
+      email: String(r.email),
+      description: r.description ? String(r.description) : undefined,
+    }));
+  }
+
+  async exists(email: string): Promise<boolean> {
+    const row = await get<any>(
+      this.db,
+      'SELECT id FROM authorized_emails WHERE LOWER(email) = ? LIMIT 1',
+      [email.trim().toLowerCase()]
     );
     return !!row;
   }

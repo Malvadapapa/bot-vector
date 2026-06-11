@@ -492,6 +492,20 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_managed_teachers_commission_id ON managed_teachers(commission_id)`
     ]
   },
+  {
+    version: 30,
+    description: 'Create authorized_emails table and add last_sent_at to institutional_notices',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS authorized_emails (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE,
+        description TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_authorized_emails_email ON authorized_emails(email)`,
+      `ALTER TABLE institutional_notices ADD COLUMN last_sent_at TEXT`
+    ]
+  },
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {

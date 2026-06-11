@@ -5,6 +5,16 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 ## [0.2.1-alpha.3] - Unreleased
 
 ### Agregado
+- **Sistema de Avisos Cohesivo, Autorización por Email y Frecuencias**:
+  - Unificación del sistema de avisos institucionales para admitir creación tanto desde correos electrónicos (con asunto que contenga la palabra "aviso") como desde el chat privado de WhatsApp de administradores.
+  - Creación de la tabla `authorized_emails` y del repositorio `AuthorizedEmailRepository` para gestionar remitentes autorizados personalizados, con submenú interactivo en WhatsApp para listar, agregar y remover correos.
+  - Optimización de la plantilla de WhatsApp para avisos, mostrando el ID autoincremental del aviso, nombre del emisor (resuelto desde profesores, administradores o remitentes personalizados) y correo.
+  - Respuestas automáticas por correo explicativas con la plantilla estructurada de aviso y la lista dinámica de grupos/camadas disponibles cuando el email recibido no posee formato estructurado.
+  - Emisión de recordatorios recurrentes según frecuencia en días programada para el aviso, controlados por una tarea periódica del planificador (`SchedulerService`).
+  - Comando administrativo `!responderid` para que los superadministradores de WhatsApp puedan responder al emisor de un aviso vía correo electrónico directamente desde el chat.
+- **Visualización Depurada de Calendario y Avisos**:
+  - El comando `!semana` ahora muestra los avisos únicamente en su fecha exacta de inicio (marcado como `Inicio:`) y finalización (marcado como `Límite:`).
+  - El comando `!avisos` resalta dinámicamente la fecha de vencimiento del aviso con una advertencia `⚠️ Tienes hasta el [end_date] para realizar esta actividad`.
 - **Modo Simulación Alumno para Administradores**:
   - Incorporación de una nueva funcionalidad que permite a los Administradores y Super-Administradores simular ser alumnos desde el chat privado y probar de forma idéntica todas las features del bot en grupos y privado (como cuotas, agendas y comisiones).
   - Creación del submenú de simulación interactivo (`submenu_impersonation`) accesible desde el menú de Super-Admin (Opción 4) y el menú de Admin normal/scoped (Opción 9).
@@ -39,6 +49,8 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
       - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
 
 ### Corregido
+- **Corrección en Consulta de Perfiles de Usuario**: Corrección del error `no such column: display_name` en las consultas de la tabla `user_profiles`. Se cambió el campo a `name` para alinearlo con la definición de esquema real del sistema.
+- **Publicación Inmediata de Avisos Futuros**: Corrección de la lógica de publicación para que los avisos con fecha de inicio en el futuro se publiquen inmediatamente por WhatsApp al ser recibidos o creados (sirviendo como primer anuncio), delegando la periodicidad al planificador Scheduler.
 - **Respuestas Especulativas y Falta de Rigidez (BUG-013)**:
   - Mitigación del comportamiento especulativo, giros subjetivos corporativos y simulación de autoconciencia o antropomorfismo en el chatbot.
   - Actualización de las directivas en `src/shared/config/instructions.ts` (`DEFAULT_BOT_INSTRUCTIONS`) para prohibir terminantemente emitir opiniones personales, juicios de valor, o simular emociones/características humanas.
