@@ -57,14 +57,19 @@ export class InstitutionalEmailMonitor {
       let isAuthorized = false;
       let teacherRecords: any[] = [];
       let displayName = sourceAddr; // Fallback to email
+      let senderLabel = 'profe'; // Default fallback
 
       const hasRepositories = !!(this.managedTeacherRepository || this.adminRepository || this.authorizedEmailRepository);
 
       if (!hasRepositories) {
         isAuthorized = true;
+        if (superadmins.includes(sourceAddr)) {
+          senderLabel = 'super-admin';
+        }
       } else {
         if (superadmins.includes(sourceAddr)) {
           isAuthorized = true;
+          senderLabel = 'super-admin';
           if (this.adminRepository) {
             const profile = await get<any>(
               (this.adminRepository as any).db,
@@ -81,6 +86,7 @@ export class InstitutionalEmailMonitor {
           const adminEmails = await this.adminRepository.listAdminEmails();
           if (adminEmails.includes(sourceAddr)) {
             isAuthorized = true;
+            senderLabel = 'admin';
             const profile = await get<any>(
               (this.adminRepository as any).db,
               'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
@@ -101,6 +107,7 @@ export class InstitutionalEmailMonitor {
           }
           if (teacherRecords.length > 0) {
             isAuthorized = true;
+            senderLabel = 'profe';
             const teacher = teacherRecords[0];
             displayName = teacher.name || sourceAddr;
           }
@@ -110,6 +117,7 @@ export class InstitutionalEmailMonitor {
           const customEmailExists = await this.authorizedEmailRepository.exists(sourceAddr);
           if (customEmailExists) {
             isAuthorized = true;
+            senderLabel = 'colaborador';
             const row = await get<any>(
               (this.authorizedEmailRepository as any).db,
               'SELECT description FROM authorized_emails WHERE LOWER(email) = ? LIMIT 1',
@@ -161,8 +169,12 @@ export class InstitutionalEmailMonitor {
       console.log(`[EmailMonitor] [OK] Remitente autorizado: ${sourceAddr}`);
 
       // Validate structure: at least 'cuerpo' or 'mensaje' is mandatory.
-      if (!notice.body || notice.body.trim() === '') {
-        console.log(`[EmailMonitor] [RECHAZADO] Email no estructurado (falta cuerpo/mensaje) de: ${sourceAddr}`);
+      const isPlaceholderBody = notice.body && (notice.body.includes('[Mensaje') || notice.body.includes('(obligatorio)'));
+      const isPlaceholderGroup = notice.grupo_selector && (notice.grupo_selector.includes('[Destinatario') || notice.grupo_selector.includes('(obligatorio)'));
+      const isMissingBody = !notice.body || notice.body.trim() === '';
+
+      if (isMissingBody || isPlaceholderBody || isPlaceholderGroup) {
+        console.log(`[EmailMonitor] [RECHAZADO] Email no estructurado o incompleto de: ${sourceAddr}`);
         const messageId = email.messageId;
         let fingerprint = '';
         if (messageId) {
@@ -185,37 +197,132 @@ export class InstitutionalEmailMonitor {
         }
 
         if (this.outboundEmailService) {
-          let cohortsList = '';
-          let groupsList = '';
+          let reasonText = '';
+          if (isMissingBody) {
+            reasonText = 'No se detectó la estructura requerida del aviso (falta el campo obligatorio "cuerpo:").';
+          } else if (isPlaceholderBody) {
+            reasonText = 'No has completado el campo obligatorio "cuerpo" (dejaste el texto de ejemplo de la plantilla).';
+          } else if (isPlaceholderGroup) {
+            reasonText = 'No has completado el campo obligatorio "grupo" (dejaste el texto de ejemplo de la plantilla).';
+          }
+
+          let cohortsHtml = '';
+          let groupsHtml = '';
+          let plainCohortsText = '';
+          let plainGroupsText = '';
+          
           if (this.groupRepository) {
             const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
             const cohorts = Array.from(new Set(groups.map((g) => g.entry_year).filter((y): y is number => y !== null))).sort();
-            cohortsList = cohorts.map((c) => `  * camada: ${c}`).join('\n');
-            groupsList = groups.map((g) => `  * ${g.display_name || g.group_id}`).join('\n');
+            
+            cohortsHtml = cohorts.map(c => `                <li style="margin-bottom: 4px;"><code>camada: ${c}</code></li>`).join('\n');
+            groupsHtml = groups.map(g => `                <li style="margin-bottom: 4px;"><code>${g.display_name || g.group_id}</code></li>`).join('\n');
+            
+            plainCohortsText = cohorts.map(c => `      * camada: ${c}`).join('\n');
+            plainGroupsText = groups.map(g => `      * ${g.display_name || g.group_id}`).join('\n');
           }
 
-          const subject = 'Formato de aviso inválido o incompleto';
-          const body = `Hola.\n\nNo pudimos procesar tu aviso institucional porque el mensaje no tiene la estructura correcta o le faltan campos obligatorios. Para publicar un aviso, por favor envía un correo que cumpla con el siguiente formato (completando los campos después del signo de dos puntos):\n\n` +
-            `Asunto: aviso (o el título de tu aviso)\n` +
+          if (!cohortsHtml) {
+            cohortsHtml = '                <li style="margin-bottom: 4px; color: #6c757d; font-style: italic;">No hay camadas activas registradas</li>';
+          }
+          if (!groupsHtml) {
+            groupsHtml = '                <li style="margin-bottom: 4px; color: #6c757d; font-style: italic;">No hay grupos específicos activos registrados</li>';
+          }
+          if (!plainCohortsText) plainCohortsText = '      (No hay camadas activas)';
+          if (!plainGroupsText) plainGroupsText = '      (No hay grupos específicos activos)';
+
+          const subject = 'Formato de aviso institucional inválido o incompleto';
+          
+          const plainBody = `No se pudo procesar tu aviso institucional\n\n` +
+            `Hola.\n\n` +
+            `Te informamos que tu mensaje no ha podido ser procesado debido al siguiente motivo:\n` +
+            `❌ ${reasonText}\n\n` +
+            `Para publicar tu aviso correctamente, por favor envía un nuevo correo completando los campos requeridos después de los dos puntos (:) siguiendo este formato:\n\n` +
+            `---------------------------------------------------\n` +
+            `Asunto: aviso (o el título de tu aviso)\n\n` +
             `Cuerpo del mensaje:\n` +
             `nombre: [Nombre del Profesor / Emisor] (opcional)\n` +
             `inicia: [Fecha de inicio, ej. DD/MM/AAAA] (opcional)\n` +
             `termina: [Fecha límite/fin, ej. DD/MM/AAAA] (opcional)\n` +
             `hora: [Hora del evento, ej. 18:30] (opcional)\n` +
-            `frecuencia: [Intervalo en días, ej: "unica" o "5d", "7d"] (opcional)\n` +
-            `grupo: [Destinatario del aviso] (obligatorio. Ver opciones más abajo)\n` +
-            `cuerpo: [Mensaje/Cuerpo del aviso] (obligatorio)\n\n` +
-            `---\n` +
-            `Opciones disponibles para el campo "grupo":\n` +
-            `- "todos" (para notificar a todos los grupos de la tecnicatura)\n` +
-            `- "general" (para notificar a los grupos generales de la tecnicatura)\n` +
-            `- Camadas:\n${cohortsList || '  (no hay camadas activas)'}\n` +
-            `- Grupos específicos (puedes poner el nombre exacto del grupo o su ID):\n${groupsList || '  (no hay grupos activos)'}\n\n` +
-            `---\n` +
+            `frecuencia: [Intervalo en días, ej: "unica" o "5d"] (opcional)\n` +
+            `grupo: [Destinatario del aviso] (OBLIGATORIO)\n` +
+            `cuerpo: [Mensaje/Cuerpo del aviso] (OBLIGATORIO)\n` +
+            `---------------------------------------------------\n\n` +
+            `💡 Sugerencia: Copia el bloque de arriba, pégalo en un nuevo correo y reemplaza el texto entre corchetes respetando los saltos de línea. También puedes pedirle a cualquier IA (como ChatGPT, Gemini o Claude) que lo complete por ti.\n\n` +
+            `👥 Opciones válidas para el campo "grupo":\n` +
+            `- "todos" (notifica a todos los grupos de la tecnicatura)\n` +
+            `- "general" (notifica a los grupos generales)\n` +
+            `- Camadas:\n` +
+            `${plainCohortsText}\n` +
+            `- Grupos específicos (Nombre exacto o ID):\n` +
+            `${plainGroupsText}\n\n` +
             `Si tenés alguna duda, por favor contactá al administrador.`;
 
+          const htmlBody = `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+    
+    <h2 style="color: #d9534f; margin-top: 0; margin-bottom: 20px;">⚠️ No se pudo procesar tu aviso institucional</h2>
+    
+    <p style="margin-bottom: 15px;">Hola,</p>
+    <p style="margin-bottom: 15px;">Te informamos que tu mensaje no ha podido ser procesado debido al siguiente motivo:</p>
+    
+    <div style="background-color: #fdf2f2; border-left: 4px solid #f05252; color: #9b1c1c; padding: 12px 16px; border-radius: 4px; margin-bottom: 20px; font-weight: bold;">
+        ❌ ${reasonText}
+    </div>
+    
+    <p style="margin-bottom: 20px;">Para publicar tu aviso correctamente, por favor envía un nuevo correo completando los campos requeridos después de los dos puntos (<strong>:</strong>) siguiendo este formato:</p>
+    
+    <!-- Bloque de Plantilla Ampliado -->
+    <div style="background-color: #f8f9fa; border-left: 4px solid #0275d8; padding: 20px; margin: 25px 0; font-family: 'Courier New', Courier, monospace; font-size: 15px;">
+        <p style="margin: 0 0 25px 0;"><strong>Asunto:</strong> aviso (o el título de tu aviso)</p>
+        
+        <p style="margin: 0 0 18px 0;"><strong>Cuerpo del mensaje:</strong></p>
+        
+        <p style="margin: 0 0 18px 0;"><strong>nombre:</strong> [Nombre del Profesor / Emisor] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        
+        <p style="margin: 0 0 18px 0;"><strong>inicia:</strong> [Fecha de inicio, ej. DD/MM/AAAA] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        
+        <p style="margin: 0 0 18px 0;"><strong>termina:</strong> [Fecha límite/fin, ej. DD/MM/AAAA] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        
+        <p style="margin: 0 0 18px 0;"><strong>hora:</strong> [Hora del evento, ej. 18:30] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        
+        <p style="margin: 0 0 18px 0;"><strong>frecuencia:</strong> [Intervalo en días, ej: "unica" o "5d"] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        
+        <p style="margin: 0 0 18px 0; color: #d9534f;"><strong>grupo:</strong> [Destinatario del aviso] <strong>(OBLIGATORIO)</strong></p>
+        
+        <p style="margin: 0; color: #d9534f;"><strong>cuerpo:</strong> [Mensaje/Cuerpo del aviso] <strong>(OBLIGATORIO)</strong></p>
+    </div>
+    
+    <hr style="border: 0; border-top: 1px solid #e0e0e0; margin: 25px 0;">
+    
+    <!-- Opciones de Grupo -->
+    <h3 style="color: #0275d8; margin-top: 0; margin-bottom: 15px;">👥 Opciones válidas para el campo "grupo":</h3>
+    <ul style="padding-left: 20px; line-height: 1.8;">
+        <li style="margin-bottom: 8px;"><code>"todos"</code> (notifica a todos los grupos de la tecnicatura)</li>
+        <li style="margin-bottom: 8px;"><code>"general"</code> (notifica a los grupos generales)</li>
+        <li style="margin-bottom: 8px;"><strong>Camadas:</strong>
+            <ul style="padding-left: 20px; margin-top: 5px;">
+                ${cohortsHtml}
+            </ul>
+        </li>
+        <li style="margin-bottom: 8px;"><strong>Grupos específicos</strong> (Nombre exacto o ID):
+            <ul style="padding-left: 20px; margin-top: 5px;">
+                ${groupsHtml}
+            </ul>
+        </li>
+    </ul>
+    
+    <hr style="border: 0; border-top: 1px solid #e0e0e0; margin: 25px 0;">
+    
+    <p style="font-size: 0.9em; color: #6c757d; font-style: italic; background-color: #fdf7e3; padding: 12px; border-radius: 4px; margin-bottom: 20px;">
+        💡 <strong>Sugerencia:</strong> Copia el bloque gris de arriba, pégalo en un nuevo correo y reemplaza el texto entre corchetes respetando los saltos de línea. También puedes pedirle a cualquier IA (como ChatGPT, Gemini o Claude) que lo complete por ti.
+    </p>
+    
+    <p style="margin-bottom: 0;">Si tenés alguna duda, por favor contactá al administrador.</p>
+</div>`;
+
           try {
-            await this.outboundEmailService.send(sourceAddr, subject, body);
+            await this.outboundEmailService.send(sourceAddr, subject, plainBody, htmlBody);
           } catch (e) {
             /* ignore */
           }
@@ -268,8 +375,15 @@ export class InstitutionalEmailMonitor {
 
       // Resolve groups atomically if groupRepository provided
       let resolvedGroupIds: string[] = [];
-      const selector = (notice.grupo_selector || 'todos').trim().toLowerCase();
+      let selector = (notice.grupo_selector || 'todos').trim().toLowerCase();
       if (this.groupRepository) {
+        if (/^\d+$/.test(selector)) {
+          const index = Number(selector) - 1;
+          const opts = await this.getGroupOptionsList();
+          if (index >= 0 && index < opts.length) {
+            selector = opts[index].id;
+          }
+        }
         const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
         const allowedGroupIdsForTeacher = teacherRecords.map((t) => t.group_id).filter(Boolean);
         const isSenderTeacher = teacherRecords.length > 0;
@@ -342,7 +456,7 @@ export class InstitutionalEmailMonitor {
       // Insert notice
       const inserted = await this.noticeRepository.createIfNew({
         title: notice.title,
-        body: notice.body,
+        body: notice.body ?? '',
         start_date: notice.startDate,
         end_date: notice.endDate,
         event_time: notice.eventTime,
@@ -379,11 +493,22 @@ export class InstitutionalEmailMonitor {
         }
       }
 
+      const roleMap: Record<string, string> = {
+        'super-admin': 'Super Admin',
+        'admin': 'Admin',
+        'profe': 'Profe',
+        'colaborador': 'Colaborador'
+      };
+      const roleText = roleMap[senderLabel] || senderLabel;
+
       // Build the WhatsApp notice message using the requested template
-      const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n` +
-        `El profe ${displayName} (ID: ${insertedId})  - e- mail ${sourceAddr} dejo un aviso para ${grupoName}\n` +
-        `Título: ${notice.title}\n` +
-        `Mensaje:\n` +
+      const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n\n` +
+        `*ID de mensaje:* ID: ${insertedId}  \n` +
+        `*El/La* ${roleText} ${displayName} \n` +
+        `*E- mail:* ${sourceAddr} \n` +
+        `*Dejo un aviso para:* ${grupoName}\n\n` +
+        `*Título:* ${notice.title}\n\n` +
+        `*Mensaje:* \n` +
         `${notice.body}`;
 
       // Publish immediately on insertion
@@ -520,6 +645,23 @@ export class InstitutionalEmailMonitor {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed;
     return undefined;
+  }
+
+  private async getGroupOptionsList(): Promise<{ id: string; label: string }[]> {
+    if (!this.groupRepository) return [];
+    const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
+    const cohorts = Array.from(new Set(groups.map((g) => g.entry_year).filter((y): y is number => y !== null))).sort();
+    
+    const options: { id: string; label: string }[] = [
+      { id: 'todos', label: 'todos (Todos los grupos de la tecnicatura)' },
+      { id: 'general', label: 'general (Grupos generales/sin cohorte)' }
+    ];
+    
+    for (const c of cohorts) {
+      options.push({ id: `camada:${c}`, label: `camada:${c} (Toda la cohorte/camada ${c})` });
+    }
+    
+    return options;
   }
 
   public startListening(): void {

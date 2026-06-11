@@ -9,7 +9,10 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - Unificación del sistema de avisos institucionales para admitir creación tanto desde correos electrónicos (con asunto que contenga la palabra "aviso") como desde el chat privado de WhatsApp de administradores.
   - Creación de la tabla `authorized_emails` y del repositorio `AuthorizedEmailRepository` para gestionar remitentes autorizados personalizados, con submenú interactivo en WhatsApp para listar, agregar y remover correos.
   - Optimización de la plantilla de WhatsApp para avisos, mostrando el ID autoincremental del aviso, nombre del emisor (resuelto desde profesores, administradores o remitentes personalizados) y correo.
-  - Respuestas automáticas por correo explicativas con la plantilla estructurada de aviso y la lista dinámica de grupos/camadas disponibles cuando el email recibido no posee formato estructurado.
+  - Soporte dinámico de etiquetas de rol (`super-admin`, `admin`, `profe`, `colaborador`) en la plantilla de aviso de WhatsApp en lugar de forzar siempre "El profe".
+  - Registro automático del correo de administradores como `source_email` al crear avisos por WhatsApp para posibilitar el correcto reconocimiento de su rol y nombre en emisiones y planificaciones programadas.
+  - Respuestas automáticas por correo electrónico en formato HTML estilizado y texto alternativo con la plantilla estructurada de aviso al tope y sugerencia interactiva de uso de Inteligencia Artificial (ChatGPT, Gemini, Claude) ante formatos inválidos.
+  - Simplificación de las opciones de grupo listadas en el correo de error, reduciendo el ruido visual al listar únicamente camadas y opciones generales.
   - Emisión de recordatorios recurrentes según frecuencia en días programada para el aviso, controlados por una tarea periódica del planificador (`SchedulerService`).
   - Comando administrativo `!responderid` para que los superadministradores de WhatsApp puedan responder al emisor de un aviso vía correo electrónico directamente desde el chat.
 - **Visualización Depurada de Calendario y Avisos**:

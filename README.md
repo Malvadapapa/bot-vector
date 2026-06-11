@@ -317,19 +317,19 @@ El bot incluye un flujo robusto para procesar correos electrónicos y publicarlo
 ### 📧 Asunto del Correo y Formato Estructurado
 El monitor de correos procesa cualquier email que contenga la palabra **"aviso"** (de forma insensible a mayúsculas/minúsculas, ej: "aviso", "Aviso", "AVISO") en su asunto.
 - Si el cuerpo del email posee formato estructurado con el campo `cuerpo:` o `mensaje:` obligatorio, se publica de inmediato en WhatsApp.
-- Si el correo carece de estructura o faltan campos obligatorios, el bot responde de forma automática al emisor enviándole una plantilla explicativa detallada que contiene el listado dinámico de grupos y camadas/cohortes disponibles para seleccionar en el campo `grupo:`.
+- Si el correo carece de estructura o tiene placeholders vacíos, el bot responde de forma automática al emisor enviando una plantilla interactiva en **formato HTML y texto plano**. Dicha respuesta coloca la plantilla al inicio para fácil copia, sugiere el uso de Inteligencia Artificial (ChatGPT, Gemini, Claude) para completarla y simplifica la lista de opciones para el campo `grupo:` mostrando únicamente las cohortes (camadas) y selectores generales disponibles para evitar ruido visual.
 
-### 👑 Autorización de Remitentes por Email
-El bot valida y autoriza la publicación de avisos desde correos electrónicos bajo las siguientes condiciones:
-1. El remitente es un **Superadministrador** definido en la variable de entorno `SUPERADMIN_EMAILS` (lista separada por comas):
+### 👑 Autorización de Remitentes y Roles Dinámicos
+El bot valida y autoriza la publicación de avisos desde correos electrónicos o flujos de WhatsApp y asigna dinámicamente el rol del remitente (`super-admin`, `admin`, `profe`, o `colaborador`) en el mensaje final publicado en WhatsApp (ej: *El/La super-admin [Nombre] dejo un aviso...*):
+1. El remitente es un **Superadministrador** definido en la variable de entorno `SUPERADMIN_EMAILS` (lista separada por comas) -> Rol: `super-admin`.
    ```env
    SUPERADMIN_EMAILS=admin@instituto.edu.ar, director@instituto.edu.ar
    ```
-2. El remitente es un **Administrador** registrado en la base de datos (con email en su perfil de usuario).
-3. El remitente es un **Profesor** registrado en la base de datos (tabla `managed_teachers`).
-4. El remitente es un **Correo Autorizado Personalizado** registrado en la tabla `authorized_emails`. Los administradores pueden gestionar esta lista desde WhatsApp en el submenú de gestión de avisos.
+2. El remitente es un **Administrador** registrado en la base de datos (con email en su perfil de usuario) -> Rol: `admin`.
+3. El remitente es un **Profesor** registrado en la base de datos (tabla `managed_teachers`) -> Rol: `profe`.
+4. El remitente es un **Correo Autorizado Personalizado** registrado en la tabla `authorized_emails` -> Rol: `colaborador`. Los administradores pueden gestionar esta lista desde WhatsApp en el submenú de gestión de avisos.
 
-Todos los correos son normalizados (eliminando espacios y comparando en minúsculas) para una validación segura y robusta.
+Todos los correos son normalizados (eliminando espacios y comparando en minúsculas) para una validación segura y robusta. Al crear avisos desde WhatsApp, el bot registra automáticamente el correo del administrador como `source_email` para asegurar la correcta resolución de su rol y nombre en envíos programados periódicos.
 
 ### 💬 Respuesta a Avisos desde WhatsApp (`!responderid`)
 Cuando un aviso es publicado en WhatsApp, se incluye su ID único autoincremental en el mensaje (ej: `(ID: 42)`). Los superadministradores pueden responder al emisor original del aviso enviando el comando:

@@ -253,26 +253,65 @@ export class SchedulerService {
 
           if (resolvedGroupIds.length === 0) continue;
 
-          // Resolve sender name
+          // Resolve sender name and role label
           let displayName = notice.source_email || 'Sistema';
+          let senderLabel = 'profe'; // Default role label if not matched
           if (notice.source_email) {
+            const emailLower = notice.source_email.toLowerCase();
+            const superadminEmailsEnv = process.env.SUPERADMIN_EMAILS || '';
+            const superadmins = superadminEmailsEnv
+              .split(',')
+              .map((email) => email.trim().toLowerCase())
+              .filter(Boolean);
+
             const db = (this.groupRepository as any).db;
-            if (db) {
+
+            if (superadmins.includes(emailLower)) {
+              senderLabel = 'super-admin';
+              if (db) {
+                const profile = await get<any>(
+                  db,
+                  'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+                  [emailLower]
+                );
+                if (profile && profile.name) {
+                  displayName = profile.name;
+                }
+              }
+            } else if (db) {
               const profile = await get<any>(
                 db,
                 'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
-                [notice.source_email.toLowerCase()]
+                [emailLower]
               );
-              if (profile && profile.name) {
-                displayName = profile.name;
+              if (profile) {
+                senderLabel = 'admin';
+                if (profile.name) {
+                  displayName = profile.name;
+                }
               } else {
                 const teacher = await get<any>(
                   db,
                   'SELECT name FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
-                  [notice.source_email.toLowerCase()]
+                  [emailLower]
                 );
-                if (teacher && teacher.name) {
-                  displayName = teacher.name;
+                if (teacher) {
+                  senderLabel = 'profe';
+                  if (teacher.name) {
+                    displayName = teacher.name;
+                  }
+                } else {
+                  const row = await get<any>(
+                    db,
+                    'SELECT description FROM authorized_emails WHERE LOWER(email) = ? LIMIT 1',
+                    [emailLower]
+                  );
+                  if (row) {
+                    senderLabel = 'colaborador';
+                    if (row.description) {
+                      displayName = row.description;
+                    }
+                  }
                 }
               }
             }
@@ -293,11 +332,22 @@ export class SchedulerService {
             }
           }
 
+          const roleMap: Record<string, string> = {
+            'super-admin': 'Super Admin',
+            'admin': 'Admin',
+            'profe': 'Profe',
+            'colaborador': 'Colaborador'
+          };
+          const roleText = roleMap[senderLabel] || senderLabel;
+
           const sourceEmailText = notice.source_email || 'N/A';
-          const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n` +
-            `El profe ${displayName} (ID: ${item.id})  - e- mail ${sourceEmailText} dejo un aviso para ${grupoName}\n` +
-            `Título: ${notice.title}\n` +
-            `Mensaje:\n` +
+          const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n\n` +
+            `*ID de mensaje:* ID: ${item.id}  \n` +
+            `*El/La* ${roleText} ${displayName} \n` +
+            `*E- mail:* ${sourceEmailText} \n` +
+            `*Dejo un aviso para:* ${grupoName}\n\n` +
+            `*Título:* ${notice.title}\n\n` +
+            `*Mensaje:* \n` +
             `${notice.body}`;
 
           // Broadcast to groups

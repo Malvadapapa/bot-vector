@@ -1510,4 +1510,78 @@ describe('Improved Institutional Email Notices & TLS Config', () => {
       fsSpy.mockRestore();
     }
   });
+
+  it('should reject email with placeholder content and reply with clear explanation', async () => {
+    const email = {
+      subject: '!aviso: Test Placeholder',
+      from: { text: 'profesor@example.com' },
+      text: 'grupo: general\ncuerpo: [Mensaje/Cuerpo del aviso] (obligatorio)',
+    } as any;
+
+    const mockRejectionRepo = {
+      exists: vi.fn().mockResolvedValue(false),
+      markIfNew: vi.fn().mockResolvedValue(true),
+    };
+
+    const localMonitor = new InstitutionalEmailMonitor(
+      mockEmailService,
+      mockNoticeRepo,
+      mockReminderRepo,
+      vi.fn(),
+      undefined,
+      undefined, // no teacher repository -> defaults to authorized
+      undefined,
+      mockOutboundEmailService,
+      mockRejectionRepo as any
+    );
+
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    await localMonitor.pollOnce();
+
+    expect(mockOutboundEmailService.send).toHaveBeenCalledWith(
+      'profesor@example.com',
+      'Formato de aviso institucional inválido o incompleto',
+      expect.stringContaining('❌ No has completado el campo obligatorio "cuerpo"'),
+      expect.any(String)
+    );
+  });
+
+  it('should resolve group selector by number correctly', async () => {
+    const email = {
+      subject: '!aviso: Test Number Option',
+      from: { text: 'profesor@example.com' },
+      text: 'grupo: 2\ncuerpo: Mensaje de aviso real',
+    } as any;
+
+    const mockGroupRepo = {
+      getAllActiveGroupsWithEntryYear: vi.fn().mockResolvedValue([
+        { group_id: 'group1', display_name: 'Group 1', entry_year: null },
+        { group_id: 'group2', display_name: 'Group 2', entry_year: 2025 },
+      ]),
+    };
+
+    const mockPublishCallback = vi.fn().mockResolvedValue(undefined);
+
+    const localMonitor = new InstitutionalEmailMonitor(
+      mockEmailService,
+      mockNoticeRepo,
+      mockReminderRepo,
+      mockPublishCallback,
+      undefined,
+      undefined, // no teacher repository -> defaults to authorized
+      mockGroupRepo as any,
+      mockOutboundEmailService
+    );
+
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    mockNoticeRepo.getByUniqueHashWithId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 1, notice: { title: 'Test Number Option' } as any });
+
+    await localMonitor.pollOnce();
+
+    // Option 2 maps to 'general' which targets groups with entry_year=null (group1)
+    expect(mockPublishCallback).toHaveBeenCalledTimes(1);
+    expect(mockPublishCallback).toHaveBeenCalledWith(expect.any(String), 'group1');
+  });
 });

@@ -274,6 +274,8 @@ async function bootstrap() {
     console.log(`[ADMIN] Sistema ya inicializado con ${existingAdmins.length} admin(s). Códigos seed desactivados.`);
   }
 
+  const emailService = new EmailService();
+  const outboundEmailService = new OutboundEmailService();
   const rssParserService = new RssParserService();
   const dynamicMessageService = new DynamicMessageService(reminderRepository, institutionalNoticeRepository, managedExamRepository, rssParserService);
   const examMenuService = new ExamMenuService(managedExamRepository);
@@ -422,8 +424,6 @@ async function bootstrap() {
     }
   });
 
-  const emailService = new EmailService();
-  const outboundEmailService = new OutboundEmailService();
   const emailMonitor = settings.imapHost && settings.imapUser && settings.imapPassword
     ? new InstitutionalEmailMonitor(
       emailService,

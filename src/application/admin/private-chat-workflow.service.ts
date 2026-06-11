@@ -1576,13 +1576,15 @@ export class PrivateChatWorkflowService {
       const year = Number(data?.groupId);
       const titlePref = `[Cohorte ${year}] ${pending.title}`;
       const uniqueHash = crypto.createHash('sha256').update(`${titlePref}|${pending.body}|${pending.start_date?.toISOString()||''}|${pending.end_date?.toISOString()||''}`).digest('hex');
+      
+      const adminProfile = await this.userProfileRepository.get(userId);
       await this.noticesRepository.createIfNew({
         title: titlePref,
         body: pending.body,
         start_date: pending.start_date,
         end_date: pending.end_date,
         event_time: undefined,
-        source_email: undefined,
+        source_email: adminProfile?.email || undefined,
         unique_hash: uniqueHash,
       } as any);
       this.pendingNoticeData.delete(userId);
@@ -4317,6 +4319,19 @@ export class PrivateChatWorkflowService {
     const grupoSelector = (pending as any).grupo_selector || 'todos';
     const frecuencia = (pending as any).frecuencia || 'unica';
 
+    const adminProfile = await this.userProfileRepository.get(userId);
+    const displayName = adminProfile?.name || 'Administrador';
+    const adminEmail = adminProfile?.email || undefined;
+
+    const superadminEmailsEnv = process.env.SUPERADMIN_EMAILS || '';
+    const superadmins = superadminEmailsEnv
+      .split(',')
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+
+    const isSuperadmin = adminEmail ? superadmins.includes(adminEmail.toLowerCase()) : false;
+    const senderLabel = isSuperadmin ? 'super-admin' : 'admin';
+
     const uniqueHash = crypto
       .createHash('sha256')
       .update(`${pending.title}|${pending.body}|${pending.start_date.toISOString()}|${pending.end_date ? pending.end_date.toISOString() : ''}|${grupoSelector}|${frecuencia}`)
@@ -4328,7 +4343,7 @@ export class PrivateChatWorkflowService {
       start_date: pending.start_date,
       end_date: pending.end_date,
       event_time: undefined,
-      source_email: undefined,
+      source_email: adminEmail,
       unique_hash: uniqueHash,
       grupo_selector: grupoSelector,
       frecuencia: frecuencia,
@@ -4357,14 +4372,21 @@ export class PrivateChatWorkflowService {
         }
       }
 
-      const adminProfile = await this.userProfileRepository.get(userId);
-      const displayName = adminProfile?.name || 'Administrador';
-      const adminEmail = adminProfile?.email || 'N/A';
+      const roleMap: Record<string, string> = {
+        'super-admin': 'Super Admin',
+        'admin': 'Admin',
+        'profe': 'Profe',
+        'colaborador': 'Colaborador'
+      };
+      const roleText = roleMap[senderLabel] || senderLabel;
 
-      const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n` +
-        `El profe ${displayName} (ID: ${insertedId})  - e- mail ${adminEmail} dejo un aviso para ${grupoName}\n` +
-        `Título: ${pending.title}\n` +
-        `Mensaje:\n` +
+      const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n\n` +
+        `*ID de mensaje:* ID: ${insertedId}  \n` +
+        `*El/La* ${roleText} ${displayName} \n` +
+        `*E- mail:* ${adminEmail || 'N/A'} \n` +
+        `*Dejo un aviso para:* ${grupoName}\n\n` +
+        `*Título:* ${pending.title}\n\n` +
+        `*Mensaje:* \n` +
         `${pending.body}`;
 
       if (this.publishCallback) {

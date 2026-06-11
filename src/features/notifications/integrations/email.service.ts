@@ -214,7 +214,7 @@ export class OutboundEmailService {
     });
   }
 
-  async send(to: string, subject: string, body: string): Promise<void> {
+  async send(to: string, subject: string, body: string, html?: string): Promise<void> {
     if (!to) throw new Error('Falta el destinatario');
     const from = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@example.com';
     try {
@@ -223,6 +223,7 @@ export class OutboundEmailService {
         to,
         subject,
         text: body,
+        html,
       });
     } catch (err) {
       console.error('[OutboundEmailService] Error enviando email:', err);
