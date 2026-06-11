@@ -4,6 +4,7 @@ import { RateLimitService } from './rate-limit.service.js';
 import { RagQueryService } from './rag/rag-query.service.js';
 import { UserModerationService } from '../moderation/user-moderation.service.js';
 import { logTuiProcessTrace } from '../../shared/config/tui-shared.js';
+import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 
 export class AIQueryService {
   private static readonly RESPONSE_TIMEOUT_MS = 25_000;
@@ -39,8 +40,12 @@ export class AIQueryService {
   public async answer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin = false, groupId?: string): Promise<string> {
     const nowResolved = now || new Date();
 
+    const impersonation = PrivateChatWorkflowService.getImpersonation(userId);
+    const effectiveIsAdmin = impersonation.isActive ? false : isAdmin;
+    const customLimit = impersonation.isActive ? impersonation.maxQuestions ?? undefined : undefined;
+
     // 0) Compruebo bloqueo a través del servicio de moderación (envía notificación privada si corresponde)
-    const evalResult = await this.userModerationService.evaluate(userId, prompt, isAdmin, nowResolved);
+    const evalResult = await this.userModerationService.evaluate(userId, prompt, effectiveIsAdmin, nowResolved);
     if (evalResult.blocked) {
       logTuiProcessTrace(`Acceso denegado: El usuario ${userId} se encuentra suspendido por moderación.`);
       return '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.';
@@ -53,15 +58,19 @@ export class AIQueryService {
     }
 
     // 0.2) Comprobar límite de preguntas diario (cláusula guarda)
-    const isExhausted = await this.rateLimitService.isQuotaExhausted(userId, nowResolved, isAdmin);
+    const isExhausted = impersonation.isActive
+      ? await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin, customLimit)
+      : await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin);
     if (isExhausted) {
       logTuiProcessTrace(`Acceso denegado por cuota (cláusula guarda): El usuario ${userId} no tiene preguntas disponibles.`);
-      const decision = await this.rateLimitService.checkAndConsume(userId, nowResolved, isAdmin);
+      const decision = impersonation.isActive
+        ? await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin, customLimit)
+        : await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin);
       const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
       return `${prefix} ${decision.message}`;
     }
 
-    if (!isAdmin && this.isAcademicScheduleOrLinkQuery(prompt)) {
+    if (!effectiveIsAdmin && this.isAcademicScheduleOrLinkQuery(prompt)) {
       logTuiProcessTrace(`Validando comisión de cursado para el usuario ${userId} en grupo ${groupId}...`);
       const validation = await this.knowledgeContextService.validateUserCommission(userId, groupId);
       if (!validation.valid) {
@@ -74,15 +83,15 @@ export class AIQueryService {
       logTuiProcessTrace(`Comisión válida detectada.`);
     }
 
-    if (isAdmin) {
-      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin, groupId);
+    if (effectiveIsAdmin) {
+      return await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
     }
 
     // 1) Clasificar (heurística simple)
     const cls = await this.classifyPromptQualityAndTopic(prompt);
 
     if (cls.status === 'ok') {
-      return await this.generateAnswer(userId, prompt, nowResolved, isAdmin, groupId);
+      return await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
     }
 
     if (cls.status === 'unclear') {
@@ -101,9 +110,11 @@ export class AIQueryService {
     return 'No pude procesar tu pedido.';
   }
 
-  private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string): Promise<string> {
+  private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string, customDailyLimit?: number): Promise<string> {
     // ✅ Consumir cuota al inicio para evitar condiciones de carrera y llamadas innecesarias a la API de la IA
-    const decision = await this.rateLimitService.checkAndConsume(userId, now, isAdmin);
+    const decision = customDailyLimit !== undefined
+      ? await this.rateLimitService.checkAndConsume(userId, now, isAdmin, customDailyLimit)
+      : await this.rateLimitService.checkAndConsume(userId, now, isAdmin);
     if (!decision.allowed) {
       logTuiProcessTrace(`Acceso denegado por cuota: El usuario ${userId} superó su límite diario de consultas.`);
       const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';

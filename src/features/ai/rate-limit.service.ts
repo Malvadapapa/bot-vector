@@ -54,7 +54,7 @@ export class RateLimitService {
     };
   }
 
-  public async isQuotaExhausted(userId: string, now?: Date, isAdmin = false): Promise<boolean> {
+  public async isQuotaExhausted(userId: string, now?: Date, isAdmin = false, customDailyLimit?: number): Promise<boolean> {
     if (isAdmin) {
       return false;
     }
@@ -74,13 +74,14 @@ export class RateLimitService {
         return false;
       }
 
-      return current.question_count >= RateLimitService.DAILY_LIMIT && current.bonus_questions_remaining <= 0;
+      const effectiveLimit = customDailyLimit ?? RateLimitService.DAILY_LIMIT;
+      return current.question_count >= effectiveLimit && current.bonus_questions_remaining <= 0;
     } finally {
       release();
     }
   }
 
-  public async checkAndConsume(userId: string, now?: Date, isAdmin = false): Promise<RateLimitDecision> {
+  public async checkAndConsume(userId: string, now?: Date, isAdmin = false, customDailyLimit?: number): Promise<RateLimitDecision> {
     if (isAdmin) {
       return {
         allowed: true,
@@ -116,18 +117,20 @@ export class RateLimitService {
         current.last_reset_date = localDate;
       }
 
-      if (current.question_count < RateLimitService.DAILY_LIMIT) {
+      const effectiveLimit = customDailyLimit ?? RateLimitService.DAILY_LIMIT;
+
+      if (current.question_count < effectiveLimit) {
         current.question_count += 1;
         await this.repository.save(current);
 
-        const remaining = RateLimitService.DAILY_LIMIT - current.question_count;
+        const remaining = effectiveLimit - current.question_count;
         return {
           allowed: true,
           remaining_after_request: remaining,
           message: '',
           quota_message: remaining > 0
-            ? `Por recursos limitados hoy te puedo responder hasta ${RateLimitService.DAILY_LIMIT} preguntas. Te quedan ${remaining}.`
-            : `Llegaste al tope diario de ${RateLimitService.DAILY_LIMIT} preguntas. Si necesitás seguir, tu próxima consulta registrará automáticamente un pedido de aprobación para obtener preguntas extra.`,
+            ? `Por recursos limitados hoy te puedo responder hasta ${effectiveLimit} preguntas. Te quedan ${remaining}.`
+            : `Llegaste al tope diario de ${effectiveLimit} preguntas. Si necesitás seguir, tu próxima consulta registrará automáticamente un pedido de aprobación para obtener preguntas extra.`,
           approval_pending: false,
         };
       }
@@ -158,7 +161,7 @@ export class RateLimitService {
         newlyPending = true;
       }
 
-      const hasConsumedBonus = current.question_count > RateLimitService.DAILY_LIMIT;
+      const hasConsumedBonus = current.question_count > effectiveLimit;
 
       return {
         allowed: false,
@@ -175,6 +178,27 @@ export class RateLimitService {
     } finally {
       release();
     }
+  }
+
+  public async resetUserQuota(userId: string): Promise<void> {
+    const release = await this.acquireLock(userId);
+    try {
+      const current = await this.repository.get(userId);
+      if (current) {
+        current.question_count = 0;
+        current.bonus_questions_remaining = 0;
+        current.approval_pending = false;
+        current.approval_requested_at = null;
+        current.approval_expires_at = null;
+        await this.repository.save(current);
+      }
+    } finally {
+      release();
+    }
+  }
+
+  public async getUserRecord(userId: string) {
+    return this.repository.get(userId);
   }
 
   public async resetDaily(now?: Date): Promise<void> {

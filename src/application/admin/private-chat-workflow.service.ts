@@ -18,6 +18,7 @@ import {
 } from '../../infrastructure/persistence/db/repositories.js';
 import { InstitutionalNoticeRepository } from '../../features/notifications/notifications.repository.js';
 import { UserModerationRepository } from '../../features/moderation/moderation.repository.js';
+import { RateLimitService } from '../../features/ai/rate-limit.service.js';
 
 interface PendingProfile {
   name?: string;
@@ -91,6 +92,23 @@ interface PendingGroupContextData {
 }
 
 export class PrivateChatWorkflowService {
+  // Impersonations state
+  public static impersonations = new Map<string, {
+    isActive: boolean;
+    commissionId: number | null;
+    maxQuestions: number | null;
+  }>();
+
+  // Return states for impersonation submenus
+  private impersonationReturnStates = new Map<string, string>();
+
+  public static getImpersonation(userId: string) {
+    if (!this.impersonations.has(userId)) {
+      this.impersonations.set(userId, { isActive: false, commissionId: null, maxQuestions: null });
+    }
+    return this.impersonations.get(userId)!;
+  }
+
   private static readonly PROFILE_STATES = new Set([
     'await_user_profile_welcome',
     'await_user_profile_name',
@@ -163,6 +181,7 @@ export class PrivateChatWorkflowService {
     private groupRepository?: GroupRepository,
     private groupMembershipRepository?: GroupMembershipRepository,
     private classCommissionScheduleRepository?: ClassCommissionScheduleRepository,
+    private rateLimitService?: RateLimitService,
   ) {}
 
   private isProfilePopulated(profile?: { name?: string; birthday_day_month?: string; email?: string; user_commission_id?: number } | null): boolean {
@@ -634,6 +653,123 @@ export class PrivateChatWorkflowService {
       return await this.handleGroupContextEmails(userId, cleaned);
     }
 
+    // Impersonation workflow handlers
+    if (currentState === 'submenu_impersonation') {
+      const imp = PrivateChatWorkflowService.getImpersonation(userId);
+      if (lowered === '1') {
+        imp.isActive = !imp.isActive;
+        return `Simulación ${imp.isActive ? 'ACTIVADA' : 'DESACTIVADA'} ✅\n\n${await this.impersonationMenuText(userId)}`;
+      }
+      if (lowered === '2') {
+        if (!this.commissionRepository) return 'Repositorio de comisiones no disponible.';
+        const commissions = await this.commissionRepository.findAll();
+        if (!commissions.length) return 'No hay comisiones cargadas en el sistema.';
+        const list = commissions.map((c: any, i: number) => `${i + 1} - ${c.name} (ID: ${c.id})`);
+        this.pendingGroupContextData.set(userId, { ...(this.pendingGroupContextData.get(userId) || {}), lastCommissionList: commissions } as any);
+        this.pendingAdminState.set(userId, 'await_impersonation_commission');
+        return [
+          'Elegí el número de la comisión que querés simular (o escribí 0 para cancelar/quitar):',
+          ...list
+        ].join('\n');
+      }
+      if (lowered === '3') {
+        this.pendingAdminState.set(userId, 'await_impersonation_max_questions');
+        return 'Ingresá el número de consultas máximas diarias para la simulación (o 0 para usar el valor por defecto del sistema):';
+      }
+      if (lowered === '4') {
+        if (this.rateLimitService) {
+          await this.rateLimitService.resetUserQuota(userId);
+          return `Contador de consultas diarias reiniciado a 0 para tu usuario ✅\n\n${await this.impersonationMenuText(userId)}`;
+        } else {
+          return `Error: RateLimitService no está inyectado en el workflow ❌\n\n${await this.impersonationMenuText(userId)}`;
+        }
+      }
+      if (lowered === '5') {
+        this.pendingAdminState.set(userId, 'await_impersonation_profile_view');
+        const profile = await this.userProfileRepository.get(userId);
+        const record = this.rateLimitService ? await this.rateLimitService.getUserRecord(userId) : null;
+        const activeText = imp.isActive ? 'ACTIVADA' : 'DESACTIVADA';
+        const commName = imp.commissionId !== null ? (this.commissionRepository ? (await this.commissionRepository.getById(imp.commissionId))?.name || `ID: ${imp.commissionId}` : `ID: ${imp.commissionId}`) : 'Sin simular';
+        const maxQ = imp.maxQuestions !== null ? `${imp.maxQuestions} consultas` : 'Por defecto del sistema';
+        const consumed = record ? record.question_count : 0;
+        const bonus = record ? record.bonus_questions_remaining : 0;
+        const pendingApproval = record && record.approval_pending ? 'Sí' : 'No';
+
+        return [
+          '📝 *Perfil Simulado y Estado de Consumos:*',
+          '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+          `• *Tu Teléfono (JID):* ${userId}`,
+          `• *Nombre real de perfil:* ${profile?.name || 'No registrado'}`,
+          `• *Email real de perfil:* ${profile?.email || 'No registrado'}`,
+          ``,
+          `• *Simulación:* ${activeText}`,
+          `• *Comisión simulada:* ${commName}`,
+          `• *Límite de consultas simulado:* ${maxQ}`,
+          ``,
+          `• *Consultas consumidas hoy:* ${consumed}`,
+          `• *Consultas extras aprobadas hoy:* ${bonus}`,
+          `• *Solicitud de aprobación pendiente:* ${pendingApproval}`,
+          '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+          '',
+          'Escribí cualquier mensaje para volver al menú de simulación.'
+        ].join('\n');
+      }
+      if (lowered === '0' || lowered === 'menu' || lowered === 'volver') {
+        const retState = this.impersonationReturnStates.get(userId) || 'super_admin_main';
+        this.pendingAdminState.set(userId, retState);
+        if (retState === 'super_admin_main') {
+          return await this.superAdminMenuText(userId);
+        } else {
+          return await this.adminMenuText(userId);
+        }
+      }
+      return await this.impersonationMenuText(userId);
+    }
+
+    if (currentState === 'await_impersonation_commission') {
+      if (lowered === '0' || lowered === 'cancelar') {
+        const imp = PrivateChatWorkflowService.getImpersonation(userId);
+        imp.commissionId = null;
+        this.pendingAdminState.set(userId, 'submenu_impersonation');
+        return `Comisión simulada quitada (se usarán datos reales) ✅\n\n${await this.impersonationMenuText(userId)}`;
+      }
+      const data = this.pendingGroupContextData.get(userId);
+      const list = data?.lastCommissionList || [];
+      if (!/^\d+$/.test(cleaned)) {
+        return 'Por favor, ingresá un número de la lista (o 0 para quitar la comisión).';
+      }
+      const idx = Number(cleaned) - 1;
+      if (idx < 0 || idx >= list.length) {
+        return `Número inválido. Elegí un número entre 1 y ${list.length}.`;
+      }
+      const selected = list[idx];
+      const imp = PrivateChatWorkflowService.getImpersonation(userId);
+      imp.commissionId = selected.id;
+      this.pendingAdminState.set(userId, 'submenu_impersonation');
+      return `Comisión simulada actualizada a: ${selected.name} ✅\n\n${await this.impersonationMenuText(userId)}`;
+    }
+
+    if (currentState === 'await_impersonation_max_questions') {
+      if (!/^\d+$/.test(cleaned)) {
+        return 'Por favor, ingresá un número válido.';
+      }
+      const val = Number(cleaned);
+      const imp = PrivateChatWorkflowService.getImpersonation(userId);
+      if (val === 0) {
+        imp.maxQuestions = null;
+        this.pendingAdminState.set(userId, 'submenu_impersonation');
+        return `Límite diario personalizado desactivado (se usará el del sistema) ✅\n\n${await this.impersonationMenuText(userId)}`;
+      }
+      imp.maxQuestions = val;
+      this.pendingAdminState.set(userId, 'submenu_impersonation');
+      return `Límite diario simulado actualizado a ${val} consultas ✅\n\n${await this.impersonationMenuText(userId)}`;
+    }
+
+    if (currentState === 'await_impersonation_profile_view') {
+      this.pendingAdminState.set(userId, 'submenu_impersonation');
+      return await this.impersonationMenuText(userId);
+    }
+
     // Super Admin menu handlers
     if (currentState === 'super_admin_main') {
       if (lowered === '1') {
@@ -682,6 +818,12 @@ export class PrivateChatWorkflowService {
       if (lowered === '0' || lowered === 'menu') {
         this.pendingAdminState.delete(userId);
         return this.adminMenuText(userId);
+      }
+
+      if (lowered === '4') {
+        this.impersonationReturnStates.set(userId, 'super_admin_main');
+        this.pendingAdminState.set(userId, 'submenu_impersonation');
+        return await this.impersonationMenuText(userId);
       }
 
       return this.superAdminMenuText(userId);
@@ -766,7 +908,13 @@ export class PrivateChatWorkflowService {
         return '🚫 Banear usuario\n\nPasáme el número de teléfono (solo números, ej: 5493512345678):';
       }
 
-      return 'Opción inválida. Escribí 0 para volver o seleccioná una opción del 1 al 8.';
+      if (lowered === '9') {
+        this.impersonationReturnStates.set(userId, 'super_admin_scoped_admin_main');
+        this.pendingAdminState.set(userId, 'submenu_impersonation');
+        return await this.impersonationMenuText(userId);
+      }
+
+      return 'Opción inválida. Escribí 0 para volver o seleccioná una opción del 1 al 9.';
     }
 
     if (currentState === 'super_admin_await_select_group') {
@@ -1676,8 +1824,43 @@ export class PrivateChatWorkflowService {
       '1 - Listar y seleccionar grupo',
       '2 - Gestionar cohortes (por entry_year)',
       '3 - Auditar grupos sin cohorte',
+      '4 - Modo Simulación Alumno',
       '',
       '0 - Volver al menú admin normal',
+    ].join('\n');
+  }
+
+  private async impersonationMenuText(userId: string): Promise<string> {
+    const imp = PrivateChatWorkflowService.getImpersonation(userId);
+    const activeText = imp.isActive ? '✅ ACTIVO' : '❌ INACTIVO';
+    
+    let commissionText = 'No configurada (Sin forzar)';
+    if (imp.commissionId !== null) {
+      if (this.commissionRepository) {
+        const comm = await this.commissionRepository.getById(imp.commissionId);
+        commissionText = comm ? `${comm.name} (ID: ${imp.commissionId})` : `ID: ${imp.commissionId}`;
+      } else {
+        commissionText = `ID: ${imp.commissionId}`;
+      }
+    }
+    
+    const maxQText = imp.maxQuestions !== null ? `${imp.maxQuestions} consultas diarias` : 'Por defecto del sistema';
+    
+    return [
+      '🎓 *Modo Simulación Alumno*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `• *Estado:* ${activeText}`,
+      `• *Comisión simulada:* ${commissionText}`,
+      `• *Límite diario simulado:* ${maxQText}`,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
+      '1 - Activar / Desactivar simulación',
+      '2 - Cambiar comisión simulada',
+      '3 - Cambiar límite diario de consultas',
+      '4 - Reiniciar cuota diaria (poner a 0)',
+      '5 - Ver información del perfil simulado',
+      '',
+      '0 - Volver al menú anterior',
     ].join('\n');
   }
 
@@ -2535,6 +2718,7 @@ export class PrivateChatWorkflowService {
         '6 - Ver/generar código secreto para nuevos admins',
         '7 - Moderación de usuarios (desbaneo)',
         '8 - Banear usuario',
+        '9 - Modo Simulación Alumno',
         '',
         '0 - Volver al menú de gestión de grupo',
         '',
@@ -2554,6 +2738,7 @@ export class PrivateChatWorkflowService {
       '6 - Ver/generar código secreto para nuevos admins',
       '7 - Moderación de usuarios (desbaneo)',
       '8 - Banear usuario',
+      '9 - Modo Simulación Alumno',
       '',
       '0 - Volver al menú principal',
       '',

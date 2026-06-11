@@ -9,6 +9,7 @@ import {
   CommissionRepository
 } from '../../infrastructure/persistence/db/repositories.js';
 import { GroupContextRepository } from '../academic-calendar/academic-calendar.repository.js';
+import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 
 function compact(text: string, limit = 180): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
@@ -137,6 +138,11 @@ export class KnowledgeContextService {
   }
 
   private async resolveCommissionId(userId: string, fallbackCommissionId: number | null, groupId?: string): Promise<number | null> {
+    const impersonation = PrivateChatWorkflowService.getImpersonation(userId);
+    if (impersonation.isActive && impersonation.commissionId !== null) {
+      return impersonation.commissionId;
+    }
+
     if (groupId) {
       // 1. Check group membership commission first
       if (this.groupMembershipRepository) {
@@ -176,6 +182,23 @@ export class KnowledgeContextService {
   }
 
   public async validateUserCommission(userId: string, groupId?: string): Promise<{ valid: boolean; reason: 'incomplete_profile' | 'missing_commission' | 'invalid_commission' | null }> {
+    const impersonation = PrivateChatWorkflowService.getImpersonation(userId);
+    if (impersonation.isActive && impersonation.commissionId !== null) {
+      if (groupId && this.groupContextRepository) {
+        const groupContext = await this.groupContextRepository.getByGroupId(groupId);
+        if (groupContext && typeof groupContext.id === 'number') {
+          const commissions = await this.groupContextRepository.listCommissionsForGroupContext(groupContext.id);
+          if (commissions.length > 1) {
+            const belongs = commissions.some((c) => c.id === impersonation.commissionId);
+            if (!belongs) {
+              return { valid: false, reason: 'invalid_commission' };
+            }
+          }
+        }
+      }
+      return { valid: true, reason: null };
+    }
+
     if (groupId && this.groupContextRepository) {
       const groupContext = await this.groupContextRepository.getByGroupId(groupId);
       if (groupContext && typeof groupContext.id === 'number') {

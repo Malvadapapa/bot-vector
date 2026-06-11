@@ -5,6 +5,13 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 ## [0.2.1-alpha.3] - Unreleased
 
 ### Agregado
+- **Modo Simulación Alumno para Administradores**:
+  - Incorporación de una nueva funcionalidad que permite a los Administradores y Super-Administradores simular ser alumnos desde el chat privado y probar de forma idéntica todas las features del bot en grupos y privado (como cuotas, agendas y comisiones).
+  - Creación del submenú de simulación interactivo (`submenu_impersonation`) accesible desde el menú de Super-Admin (Opción 4) y el menú de Admin normal/scoped (Opción 9).
+  - Opciones de simulación interactiva: Activar/desactivar simulación, cambiar comisión simulada, personalizar el límite diario de consultas, reiniciar la cuota diaria en base de datos para pruebas rápidas y ver la información del perfil simulado.
+  - Intercepción a nivel de Gateway de WhatsApp para anular los privilegios de administración (`isSuperAdmin`, `isGlobalAdmin`, `isGroupAdmin`) cuando la simulación está activa para el usuario emisor.
+  - Adaptación de `RateLimitService`, `AIQueryService`, `KnowledgeContextService` y `AcademicCalendarService` para usar la comisión y límites diarios simulados en lugar de los reales del usuario.
+  - Suite de pruebas unitarias (`impersonation.spec.ts`) cubriendo la persistencia de simulación, la aplicación de límites personalizados y reinicio de cuotas.
 - **Protección contra Prompt Leakage (BUG-001)**:
   - Implementación de un filtro por expresiones regulares a nivel de código (`AIQueryService.answer`) que intercepta intentos maliciosos de extraer directivas, instrucciones, system prompts o configuraciones internas del bot, retornando un mensaje neutral de fallback sin consumir cuota de API ni llamar al modelo.
   - Consolidación y robustecimiento de las instrucciones del sistema (`DEFAULT_BOT_INSTRUCTIONS`) en un único archivo compartido (`src/shared/config/instructions.ts`), agregando guardrails restrictivos para evitar la divulgación de las directivas ante solicitudes indirectas o juegos de rol.
@@ -38,6 +45,8 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - Refuerzo en las directivas de comportamiento del sistema (`DEFAULT_BOT_INSTRUCTIONS`) con reglas prioritarias de restricción de dominio y no-creatividad.
   - Corrección de la importación y tipado de `ParsedMessage` en las pruebas unitarias de conversación (`conversation.spec.ts`).
   - Creación de un suite de pruebas de guardrails de dominio (`domain-guardrails.spec.ts`) para verificar la configuración de temperaturas y directivas.
+  - Intercepción de `console.info` en `vectorito-whatsapp-gateway.ts` para silenciar el volcado de sesiones (`SessionEntry`) de `libsignal` que ensuciaba la consola TUI.
+  - Eliminación de la advertencia `console.warn` para mensajes de grupo sin texto reconocible (como stickers o reacciones), reduciendo ruido visual.
 - **Bypass e Inconsistencia en el Contador del Límite Diario (BUG-005)**:
   - Se resolvió la condición de carrera en solicitudes simultáneas serializando las consultas y actualizaciones del límite por cada usuario mediante un mecanismo de cola/bloqueo basado en promesas en `RateLimitService`.
   - Se movió el descuento de la cuota (`checkAndConsume`) al inicio del proceso de generación en `AIQueryService.generateAnswer` para evitar el procesamiento innecesario de prompts e inyecciones a la IA cuando el cupo ya está agotado.

@@ -374,6 +374,7 @@ async function bootstrap() {
     groupRepository,
     groupMembershipRepository,
     classCommissionScheduleRepository,
+    rateLimitService,
   );
   const vectoritoWhatsAppGateway = new VectoritoWhatsAppGateway(
     messageRouter,

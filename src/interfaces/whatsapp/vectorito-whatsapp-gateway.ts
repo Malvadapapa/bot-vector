@@ -246,20 +246,19 @@ export class VectoritoWhatsAppGateway {
             const senderJid = rawSenderJid.split(' ')[0];
 
             const incomingText = this.extractMessageText(incomingMessage).trim();
-            const isSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+            const impersonation = PrivateChatWorkflowService.getImpersonation(senderJid);
+            const isSuperAdmin = impersonation.isActive ? false : (typeof (this.adminRepository as any).isSuperAdmin === 'function'
               ? await (this.adminRepository as any).isSuperAdmin(senderJid)
-              : !!(await this.adminRepository.get(senderJid))?.is_super_admin;
-            const isGlobalAdmin = typeof (this.adminRepository as any).isGlobalAdmin === 'function'
+              : !!(await this.adminRepository.get(senderJid))?.is_super_admin);
+            const isGlobalAdmin = impersonation.isActive ? false : (typeof (this.adminRepository as any).isGlobalAdmin === 'function'
               ? await (this.adminRepository as any).isGlobalAdmin(senderJid)
-              : (await this.adminRepository.isAuthenticated(senderJid)) && !isSuperAdmin;
-            const isAdmin = isGlobalAdmin || isSuperAdmin;
-            const isGroupAdmin = isGroup ? await this.adminRepository.isGroupAdmin(senderJid, chatId) : false;
+              : (await this.adminRepository.isAuthenticated(senderJid)) && !isSuperAdmin);
+            const isAdmin = impersonation.isActive ? false : (isGlobalAdmin || isSuperAdmin);
+            const isGroupAdmin = impersonation.isActive ? false : (isGroup ? await this.adminRepository.isGroupAdmin(senderJid, chatId) : false);
             const isActiveGroup = !isGroup ? true : await this.groupRepository.isActive(chatId);
 
             if (incomingText) {
               this.logIncoming(chatId, senderJid, incomingText, isGroup, isAdmin, incomingMessage);
-            } else if (isGroup) {
-              console.warn(`⚠️ [Gateway] Mensaje de grupo sin texto reconocible: chat=${chatId} sender=${senderJid}`);
             }
 
             // Dynamic display_name update for active groups if currently generic
@@ -1119,6 +1118,29 @@ export class VectoritoWhatsAppGateway {
       }
 
       originalLog(...args);
+    };
+
+    const originalInfo = console.info.bind(console);
+    console.info = (...args: any[]) => {
+      const first = args[0];
+
+      if (typeof first === 'string' && VectoritoWhatsAppGateway.noisySessionLogPatterns.some((p) => p.test(first))) {
+        this.suppressNextSessionDump = true;
+        return;
+      }
+
+      if (args.some((arg) => arg && typeof arg === 'object' && ('_chains' in arg || 'registrationId' in arg || 'currentRatchet' in arg || 'indexInfo' in arg))) {
+        return;
+      }
+
+      if (this.suppressNextSessionDump) {
+        this.suppressNextSessionDump = false;
+        if (first && typeof first === 'object' && ('_chains' in first || 'registrationId' in first || 'currentRatchet' in first || 'indexInfo' in first)) {
+          return;
+        }
+      }
+
+      originalInfo(...args);
     };
   }
 
