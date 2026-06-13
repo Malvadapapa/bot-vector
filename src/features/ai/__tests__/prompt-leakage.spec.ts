@@ -1,6 +1,45 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AIQueryService } from '../ai-query.service.js';
 
+vi.mock('../academic-guardrail.js', () => {
+  return {
+    AcademicGuardrail: {
+      getInstance: vi.fn(() => ({
+        initialize: vi.fn(async () => {}),
+        validatePrompt: vi.fn(async (prompt: string) => {
+          const lower = prompt.toLowerCase();
+          // Simular comportamiento del guardrail en base a palabras clave para los tests
+          if (
+            lower.includes('inscribir') ||
+            lower.includes('siu') ||
+            lower.includes('guarani') ||
+            lower.includes('rindo') ||
+            lower.includes('cronograma') ||
+            lower.includes('link') ||
+            lower.includes('soporte') ||
+            lower.includes('certificado') ||
+            lower.includes('calificaciones') ||
+            lower.includes('plan') ||
+            lower.includes('horario') ||
+            lower.includes('examen') ||
+            lower.includes('programación') ||
+            lower.includes('clase') ||
+            lower.includes('matemática') ||
+            lower.includes('regularidad') ||
+            lower.includes('correlatividades')
+          ) {
+            return { isValid: true, similarity: 0.85 };
+          }
+          if (lower.includes('como andas') || lower.includes('tengo una pregunta')) {
+            return { isValid: false, similarity: 0.35 }; // Unclear/medium range
+          }
+          return { isValid: false, similarity: 0.15 }; // Off-topic/low range
+        })
+      }))
+    }
+  };
+});
+
 describe('Prompt Leakage Guardrails (BUG-001) - Pruebas', () => {
   let aiQueryService: AIQueryService;
   let mockAiProvider: any;
@@ -169,6 +208,53 @@ describe('Prompt Leakage Guardrails (BUG-001) - Pruebas', () => {
 
       expect(response).toContain('Admin Response');
       expect(mockAiProvider.generateContent).toHaveBeenCalled();
+    });
+  });
+
+  describe('classifyPromptQualityAndTopic', () => {
+    beforeEach(() => {
+      mockKnowledgeContextService.validateUserCommission = vi.fn(async () => ({ valid: true, reason: null }));
+    });
+
+    it('debería clasificar como OK consultas válidas sobre ISPC con diferentes variantes de palabras clave y acentos', async () => {
+      const validAcademicPrompts = [
+        'Inscribirme para rendir',
+        'cuáles son los pasos para inscribirme en el siu guaraní',
+        'necesito anotarme al siu guarani',
+        'cuándo rindo el examen final?',
+        'dónde encuentro el cronograma de clases?',
+        'me pasas el link de la clase?',
+        'cómo me contacto con soporte?',
+        'dónde pido mi certificado de alumno regular?',
+        'necesito ver mis calificaciones',
+        'cuál es el plan de estudios de la tecnicatura?'
+      ];
+
+      for (const prompt of validAcademicPrompts) {
+        vi.clearAllMocks();
+        mockAiProvider.generateContent.mockResolvedValue('Mocked AI Response');
+
+        const response = await aiQueryService.answer('user-1', prompt, undefined, false);
+        // Debería responder con la respuesta de la IA (clasificación OK), no con la pregunta aclaratoria
+        expect(response).toBe('Mocked AI Response');
+        expect(mockAiProvider.generateContent).toHaveBeenCalled();
+      }
+    });
+
+    it('debería clasificar como UNCLEAR consultas demasiado genéricas o cortas que no parecen ser de ISPC', async () => {
+      const unclearPrompts = [
+        'duda', // muy corto (< 5)
+        'tengo una pregunta', // >= 5 pero sin palabras clave académicas
+        'como andas'
+      ];
+
+      for (const prompt of unclearPrompts) {
+        vi.clearAllMocks();
+        const response = await aiQueryService.answer('user-1', prompt, undefined, false);
+        // Debería devolver la pregunta aclaratoria (unclear)
+        expect(response).toBe('Perdón, no entendí bien tu pregunta: ¿podés dar más detalles o decir exactamente qué necesitas sobre el ISPC?');
+        expect(mockAiProvider.generateContent).not.toHaveBeenCalled();
+      }
     });
   });
 });

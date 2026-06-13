@@ -206,30 +206,46 @@ export class InstitutionalEmailMonitor {
             reasonText = 'No has completado el campo obligatorio "grupo" (dejaste el texto de ejemplo de la plantilla).';
           }
 
-          let cohortsHtml = '';
-          let groupsHtml = '';
-          let plainCohortsText = '';
-          let plainGroupsText = '';
+          let catalogPlain = '';
+          let catalogHtml = '';
           
           if (this.groupRepository) {
-            const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
-            const cohorts = Array.from(new Set(groups.map((g) => g.entry_year).filter((y): y is number => y !== null))).sort();
+            const catalog = await this.getGroupOptionsList();
+            const cohortEntries = catalog.filter((o) => o.id.startsWith('camada:'));
+            const groupEntries = catalog.filter((o) => !o.id.startsWith('camada:'));
             
-            cohortsHtml = cohorts.map(c => `                <li style="margin-bottom: 4px;"><code>camada: ${c}</code></li>`).join('\n');
-            groupsHtml = groups.map(g => `                <li style="margin-bottom: 4px;"><code>${g.display_name || g.group_id}</code></li>`).join('\n');
+            // Plain text catalog
+            if (cohortEntries.length) {
+              catalogPlain += `- Cohortes/Camadas:\n`;
+              for (const e of cohortEntries) catalogPlain += `      (${e.shortcut}) ${e.label}\n`;
+            }
+            if (groupEntries.length) {
+              catalogPlain += `- Grupos específicos:\n`;
+              for (const e of groupEntries) catalogPlain += `      (${e.shortcut}) ${e.label}\n`;
+            }
             
-            plainCohortsText = cohorts.map(c => `      * camada: ${c}`).join('\n');
-            plainGroupsText = groups.map(g => `      * ${g.display_name || g.group_id}`).join('\n');
+            // HTML catalog
+            let cohortsLi = '';
+            for (const e of cohortEntries) {
+              cohortsLi += `                <li style="margin-bottom: 4px;"><code>(${e.shortcut})</code> ${e.label}</li>\n`;
+            }
+            let groupsLi = '';
+            for (const e of groupEntries) {
+              groupsLi += `                <li style="margin-bottom: 4px;"><code>(${e.shortcut})</code> ${e.label}</li>\n`;
+            }
+            
+            catalogHtml = `
+        <li style="margin-bottom: 8px;"><strong>Cohortes/Camadas</strong> (escribí la letra):
+            <ul style="padding-left: 20px; margin-top: 5px;">
+                ${cohortsLi || '<li style="color: #6c757d; font-style: italic;">No hay camadas activas</li>'}
+            </ul>
+        </li>
+        <li style="margin-bottom: 8px;"><strong>Grupos específicos</strong> (escribí el número):
+            <ul style="padding-left: 20px; margin-top: 5px;">
+                ${groupsLi || '<li style="color: #6c757d; font-style: italic;">No hay grupos activos</li>'}
+            </ul>
+        </li>`;
           }
-
-          if (!cohortsHtml) {
-            cohortsHtml = '                <li style="margin-bottom: 4px; color: #6c757d; font-style: italic;">No hay camadas activas registradas</li>';
-          }
-          if (!groupsHtml) {
-            groupsHtml = '                <li style="margin-bottom: 4px; color: #6c757d; font-style: italic;">No hay grupos específicos activos registrados</li>';
-          }
-          if (!plainCohortsText) plainCohortsText = '      (No hay camadas activas)';
-          if (!plainGroupsText) plainGroupsText = '      (No hay grupos específicos activos)';
 
           const subject = 'Formato de aviso institucional inválido o incompleto';
           
@@ -246,17 +262,15 @@ export class InstitutionalEmailMonitor {
             `termina: [Fecha límite/fin, ej. DD/MM/AAAA] (opcional)\n` +
             `hora: [Hora del evento, ej. 18:30] (opcional)\n` +
             `frecuencia: [Intervalo en días, ej: "unica" o "5d"] (opcional)\n` +
-            `grupo: [Destinatario del aviso] (OBLIGATORIO)\n` +
+            `grupo: [Letra, número, "todos" o "general"] (OBLIGATORIO)\n` +
             `cuerpo: [Mensaje/Cuerpo del aviso] (OBLIGATORIO)\n` +
             `---------------------------------------------------\n\n` +
-            `💡 Sugerencia: Copia el bloque de arriba, pégalo en un nuevo correo y reemplaza el texto entre corchetes respetando los saltos de línea. También puedes pedirle a cualquier IA (como ChatGPT, Gemini o Claude) que lo complete por ti.\n\n` +
+            `💡 Sugerencia: Copia el bloque de arriba, pégalo en un nuevo correo y reemplaza el texto entre corchetes. También puedes pedirle a cualquier IA (ChatGPT, Gemini, Claude) que lo complete por ti con esta estructura.\n\n` +
             `👥 Opciones válidas para el campo "grupo":\n` +
-            `- "todos" (notifica a todos los grupos de la tecnicatura)\n` +
-            `- "general" (notifica a los grupos generales)\n` +
-            `- Camadas:\n` +
-            `${plainCohortsText}\n` +
-            `- Grupos específicos (Nombre exacto o ID):\n` +
-            `${plainGroupsText}\n\n` +
+            `- "todos" — Notifica a TODOS los grupos\n` +
+            `- "general" — Notifica solo a grupos generales\n` +
+            `${catalogPlain}\n` +
+            `Solo debes ingresar la letra o el número (con o sin comillas) del grupo al que quieres dirigir el mensaje.\n\n` +
             `Si tenés alguna duda, por favor contactá al administrador.`;
 
           const htmlBody = `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
@@ -272,25 +286,25 @@ export class InstitutionalEmailMonitor {
     
     <p style="margin-bottom: 20px;">Para publicar tu aviso correctamente, por favor envía un nuevo correo completando los campos requeridos después de los dos puntos (<strong>:</strong>) siguiendo este formato:</p>
     
-    <!-- Bloque de Plantilla Ampliado -->
+    <!-- Bloque de Plantilla -->
     <div style="background-color: #f8f9fa; border-left: 4px solid #0275d8; padding: 20px; margin: 25px 0; font-family: 'Courier New', Courier, monospace; font-size: 15px;">
         <p style="margin: 0 0 25px 0;"><strong>Asunto:</strong> aviso (o el título de tu aviso)</p>
         
         <p style="margin: 0 0 18px 0;"><strong>Cuerpo del mensaje:</strong></p>
         
-        <p style="margin: 0 0 18px 0;"><strong>nombre:</strong> [Nombre del Profesor / Emisor] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        <p style="margin: 0 0 18px 0;"><strong>nombre:</strong> [Tu nombre] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
         
-        <p style="margin: 0 0 18px 0;"><strong>inicia:</strong> [Fecha de inicio, ej. DD/MM/AAAA] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        <p style="margin: 0 0 18px 0;"><strong>inicia:</strong> [DD/MM/AAAA] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
         
-        <p style="margin: 0 0 18px 0;"><strong>termina:</strong> [Fecha límite/fin, ej. DD/MM/AAAA] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        <p style="margin: 0 0 18px 0;"><strong>termina:</strong> [DD/MM/AAAA] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
         
-        <p style="margin: 0 0 18px 0;"><strong>hora:</strong> [Hora del evento, ej. 18:30] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        <p style="margin: 0 0 18px 0;"><strong>hora:</strong> [HH:MM] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
         
-        <p style="margin: 0 0 18px 0;"><strong>frecuencia:</strong> [Intervalo en días, ej: "unica" o "5d"] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
+        <p style="margin: 0 0 18px 0;"><strong>frecuencia:</strong> [unica / 5d] <span style="color: #6c757d; font-style: italic; font-size: 13px;">(opcional)</span></p>
         
-        <p style="margin: 0 0 18px 0; color: #d9534f;"><strong>grupo:</strong> [Destinatario del aviso] <strong>(OBLIGATORIO)</strong></p>
+        <p style="margin: 0 0 18px 0; color: #d9534f;"><strong>grupo:</strong> [letra, número, "todos" o "general"] <strong>(OBLIGATORIO)</strong></p>
         
-        <p style="margin: 0; color: #d9534f;"><strong>cuerpo:</strong> [Mensaje/Cuerpo del aviso] <strong>(OBLIGATORIO)</strong></p>
+        <p style="margin: 0; color: #d9534f;"><strong>cuerpo:</strong> [Tu mensaje aquí] <strong>(OBLIGATORIO)</strong></p>
     </div>
     
     <hr style="border: 0; border-top: 1px solid #e0e0e0; margin: 25px 0;">
@@ -298,28 +312,25 @@ export class InstitutionalEmailMonitor {
     <!-- Opciones de Grupo -->
     <h3 style="color: #0275d8; margin-top: 0; margin-bottom: 15px;">👥 Opciones válidas para el campo "grupo":</h3>
     <ul style="padding-left: 20px; line-height: 1.8;">
-        <li style="margin-bottom: 8px;"><code>"todos"</code> (notifica a todos los grupos de la tecnicatura)</li>
-        <li style="margin-bottom: 8px;"><code>"general"</code> (notifica a los grupos generales)</li>
-        <li style="margin-bottom: 8px;"><strong>Camadas:</strong>
-            <ul style="padding-left: 20px; margin-top: 5px;">
-                ${cohortsHtml}
-            </ul>
-        </li>
-        <li style="margin-bottom: 8px;"><strong>Grupos específicos</strong> (Nombre exacto o ID):
-            <ul style="padding-left: 20px; margin-top: 5px;">
-                ${groupsHtml}
-            </ul>
-        </li>
+        <li style="margin-bottom: 8px;"><code>"todos"</code> — Notifica a TODOS los grupos de la tecnicatura</li>
+        <li style="margin-bottom: 8px;"><code>"general"</code> — Notifica solo a los grupos generales</li>
+        ${catalogHtml}
     </ul>
+    
+    <div style="background-color: #e8f5e9; border-left: 4px solid #4caf50; padding: 12px 16px; border-radius: 4px; margin: 20px 0;">
+        <strong>📝 Solo debes ingresar la letra o el número</strong> (con o sin comillas) del grupo al que querés dirigir el mensaje.
+    </div>
     
     <hr style="border: 0; border-top: 1px solid #e0e0e0; margin: 25px 0;">
     
     <p style="font-size: 0.9em; color: #6c757d; font-style: italic; background-color: #fdf7e3; padding: 12px; border-radius: 4px; margin-bottom: 20px;">
-        💡 <strong>Sugerencia:</strong> Copia el bloque gris de arriba, pégalo en un nuevo correo y reemplaza el texto entre corchetes respetando los saltos de línea. También puedes pedirle a cualquier IA (como ChatGPT, Gemini o Claude) que lo complete por ti.
+        💡 <strong>Sugerencia:</strong> Copia el bloque gris de arriba, pégalo en un nuevo correo y reemplaza el texto entre corchetes. También puedes pedirle a cualquier IA (ChatGPT, Gemini, Claude) que lo complete por ti con esta estructura.
     </p>
     
     <p style="margin-bottom: 0;">Si tenés alguna duda, por favor contactá al administrador.</p>
 </div>`;
+
+
 
           try {
             await this.outboundEmailService.send(sourceAddr, subject, plainBody, htmlBody);
@@ -375,15 +386,18 @@ export class InstitutionalEmailMonitor {
 
       // Resolve groups atomically if groupRepository provided
       let resolvedGroupIds: string[] = [];
-      let selector = (notice.grupo_selector || 'todos').trim().toLowerCase();
+      let selector = (notice.grupo_selector || 'todos').trim().toLowerCase().replace(/^["']+|["']+$/g, '');
       if (this.groupRepository) {
-        if (/^\d+$/.test(selector)) {
-          const index = Number(selector) - 1;
-          const opts = await this.getGroupOptionsList();
-          if (index >= 0 && index < opts.length) {
-            selector = opts[index].id;
-          }
+        // Resolve shortcut (letter for cohort, number for group)
+        const opts = await this.getGroupOptionsList();
+        const shortcutMatch = opts.find((o) => o.shortcut.toLowerCase() === selector);
+        if (shortcutMatch) {
+          selector = shortcutMatch.id.toLowerCase();
+        } else if (/^\d{4}$/.test(selector)) {
+          // Plain year → treat as camada
+          selector = `camada:${selector}`;
         }
+
         const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
         const allowedGroupIdsForTeacher = teacherRecords.map((t) => t.group_id).filter(Boolean);
         const isSenderTeacher = teacherRecords.length > 0;
@@ -420,11 +434,15 @@ export class InstitutionalEmailMonitor {
               resolvedGroupIds = resolvedGroupIds.filter((gid) => allowedGroupIdsForTeacher.includes(gid));
             }
           } else {
-            // Let's also support matching by individual group ID or display name!
+            // Match by exact group_id, exact display_name, or partial (includes) display_name
             const matchedGroup = groups.find(
               (g) =>
                 g.group_id.toLowerCase() === selector ||
                 (g.display_name && g.display_name.toLowerCase() === selector)
+            ) || groups.find(
+              (g) =>
+                (g.display_name && g.display_name.toLowerCase().includes(selector)) ||
+                selector.includes(g.display_name?.toLowerCase() ?? '\x00')
             );
             if (matchedGroup) {
               resolvedGroupIds = [matchedGroup.group_id];
@@ -432,10 +450,11 @@ export class InstitutionalEmailMonitor {
                 resolvedGroupIds = [];
               }
             } else {
-              // unknown selector
+              // unknown selector — send error with the catalog
               if (this.outboundEmailService) {
+                const catalogLines = opts.map((o) => `  (${o.shortcut}) ${o.label}`).join('\n');
                 const subject = 'Error al procesar tu aviso institucional';
-                const body = `Hola.\n\nNo pudimos procesar tu aviso institucional.\n\nError: Selector de grupos inválido (${notice.grupo_selector}).`;
+                const body = `Hola.\n\nNo pudimos procesar tu aviso institucional.\n\nError: Selector de grupos inválido (${notice.grupo_selector}).\n\nOpciones válidas para el campo \"grupo\":\n  \"todos\" — Todos los grupos de la tecnicatura\n  \"general\" — Grupos generales\n${catalogLines}\n\nEscribí solo la letra o el número correspondiente. También podés escribir \"todos\" o \"general\".`;
                 try { await this.outboundEmailService.send(notice.sourceEmail || sourceAddr, subject, body); } catch (e) { /* ignore */ }
               }
               continue;
@@ -619,12 +638,43 @@ export class InstitutionalEmailMonitor {
 
   private parseStructuredFields(body: string): Record<string, string> {
     const out: Record<string, string> = {};
-    const fieldPattern = /^(nombre|inicia|termina|hora|cuerpo|mensaje|frecuencia|grupo)\s*:\s*(.+)$/i;
+    const validKeys = new Set(['nombre', 'inicia', 'termina', 'hora', 'cuerpo', 'mensaje', 'frecuencia', 'grupo']);
+    const fieldPattern = /^[\s*_~]*([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)[\s*_~]*\s*:\s*(.+)$/i;
+
+    let currentKey: string | null = null;
 
     for (const line of body.split('\n')) {
-      const match = line.trim().match(fieldPattern);
-      if (!match) continue;
-      out[match[1].toLowerCase()] = match[2].trim();
+      const trimmedLine = line.trim();
+      
+      // Stop parsing if we hit email signature or quoted thread dividers
+      if (
+        /^-{3,}\s*$/.test(trimmedLine) ||
+        /^[Ee]l\s+.+ escribió:/i.test(trimmedLine) ||
+        /^[Oo]n\s+.+ wrote:/i.test(trimmedLine) ||
+        /^[-_=+]*\s*(Original Message|Mensaje Original)\s*[-_=+]*/i.test(trimmedLine) ||
+        trimmedLine.startsWith('>')
+      ) {
+        break;
+      }
+
+      const match = trimmedLine.match(fieldPattern);
+      if (match) {
+        const key = match[1].toLowerCase();
+        if (validKeys.has(key)) {
+          currentKey = key;
+          out[currentKey] = match[2].trim();
+        } else {
+          currentKey = null;
+        }
+      } else {
+        if (currentKey === 'cuerpo' || currentKey === 'mensaje') {
+          out[currentKey] = out[currentKey] ? `${out[currentKey]}\n${line}` : line;
+        }
+      }
+    }
+
+    for (const k of Object.keys(out)) {
+      out[k] = out[k].trim();
     }
 
     return out;
@@ -647,18 +697,36 @@ export class InstitutionalEmailMonitor {
     return undefined;
   }
 
-  private async getGroupOptionsList(): Promise<{ id: string; label: string }[]> {
+  /**
+   * Build a labeled catalog of all available group targets.
+   * Special keywords: "todos", "general"
+   * Cohorts get uppercase letters: A, B, C...
+   * Individual groups get numbers: 1, 2, 3...
+   */
+  private async getGroupOptionsList(): Promise<{ id: string; shortcut: string; label: string }[]> {
     if (!this.groupRepository) return [];
     const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
     const cohorts = Array.from(new Set(groups.map((g) => g.entry_year).filter((y): y is number => y !== null))).sort();
     
-    const options: { id: string; label: string }[] = [
-      { id: 'todos', label: 'todos (Todos los grupos de la tecnicatura)' },
-      { id: 'general', label: 'general (Grupos generales/sin cohorte)' }
-    ];
+    const options: { id: string; shortcut: string; label: string }[] = [];
     
-    for (const c of cohorts) {
-      options.push({ id: `camada:${c}`, label: `camada:${c} (Toda la cohorte/camada ${c})` });
+    // Cohorts → letters A, B, C...
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    for (let i = 0; i < cohorts.length && i < letters.length; i++) {
+      options.push({
+        id: `camada:${cohorts[i]}`,
+        shortcut: letters[i],
+        label: `Cohorte/Camada ${cohorts[i]}`,
+      });
+    }
+    
+    // Individual groups → numbers 1, 2, 3...
+    for (let i = 0; i < groups.length; i++) {
+      options.push({
+        id: groups[i].group_id,
+        shortcut: String(i + 1),
+        label: groups[i].display_name || groups[i].group_id,
+      });
     }
     
     return options;

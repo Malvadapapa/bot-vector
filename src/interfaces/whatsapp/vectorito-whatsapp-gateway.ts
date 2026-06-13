@@ -823,17 +823,49 @@ export class VectoritoWhatsAppGateway {
       console.log(`${color}📤 ${scopeLabel}${ANSI.reset}${replyTo} ${ANSI.dim}destino=${jid}${ANSI.reset} -> "${msg}"`);
     }
     
-    if (isGroup) {
-      this.groupRepository.findByGroupId(jid).then((group) => {
-        const entryYear = group?.entry_year != null ? `Camada ${group.entry_year}` : 'General';
-        const contextLabel = `[Grupo: ${group?.display_name || jid} | ${entryYear}]`;
-        logTuiChatMessage('Vectorito', text, 'bot', contextLabel);
-      }).catch(() => {
-        logTuiChatMessage('Vectorito', text, 'bot', `[Grupo: ${jid}]`);
-      });
-    } else {
-      logTuiChatMessage('Vectorito', text, 'bot', '[Privado]');
-    }
+    const phone = senderId ? senderId.split('@')[0]?.split(':')[0] || '' : '';
+    const realPhoneJid = senderId
+      ? (senderId.endsWith('@s.whatsapp.net') || senderId.endsWith('@lid') ? senderId : `${phone}@s.whatsapp.net`)
+      : null;
+
+    const getRecipientInfo = async (): Promise<string | undefined> => {
+      if (!senderId) return undefined;
+      try {
+        let profile = await this.userProfileRepository.get(senderId);
+        if (!profile && realPhoneJid && realPhoneJid !== senderId) {
+          profile = await this.userProfileRepository.get(realPhoneJid);
+        }
+        return profile?.name ? `${profile.name}: ${phone}` : phone;
+      } catch {
+        return phone || undefined;
+      }
+    };
+
+    getRecipientInfo().then((recipientInfo) => {
+      if (isGroup) {
+        this.groupRepository.findByGroupId(jid).then((group) => {
+          const entryYear = group?.entry_year != null ? `Camada ${group.entry_year}` : 'General';
+          const contextLabel = `[Grupo: ${group?.display_name || jid} | ${entryYear}]`;
+          logTuiChatMessage('Vectorito', text, 'bot', contextLabel, recipientInfo);
+        }).catch(() => {
+          logTuiChatMessage('Vectorito', text, 'bot', `[Grupo: ${jid}]`, recipientInfo);
+        });
+      } else {
+        logTuiChatMessage('Vectorito', text, 'bot', '[Privado]', recipientInfo);
+      }
+    }).catch(() => {
+      if (isGroup) {
+        this.groupRepository.findByGroupId(jid).then((group) => {
+          const entryYear = group?.entry_year != null ? `Camada ${group.entry_year}` : 'General';
+          const contextLabel = `[Grupo: ${group?.display_name || jid} | ${entryYear}]`;
+          logTuiChatMessage('Vectorito', text, 'bot', contextLabel);
+        }).catch(() => {
+          logTuiChatMessage('Vectorito', text, 'bot', `[Grupo: ${jid}]`);
+        });
+      } else {
+        logTuiChatMessage('Vectorito', text, 'bot', '[Privado]');
+      }
+    });
   }
 
   private compactText(text: string): string {

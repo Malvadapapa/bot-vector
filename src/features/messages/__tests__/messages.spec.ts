@@ -5,6 +5,8 @@ import { DailyGreetingRepository, OutboxDedupRepository } from '../messages.repo
 import { MessageIntentParserService } from '../message-intent-parser.service.js';
 import { DynamicMessageService } from '../dynamic-message.service.js';
 import { MessageRouter } from '../message-router.service.js';
+import { OptionsStateService } from '../../conversation/options-state.service.js';
+
 
 describe('Slice de Mensajes - Pruebas Unitarias', () => {
   let db: sqlite3.Database;
@@ -157,5 +159,170 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
         'groupA@g.us',
       );
     });
+
+    it('debería procesar flujo de opciones cuando la IA retorna [OPTIONS_MENU] en grupos', async () => {
+      const mockIntentParser = {
+        parseMessage: vi.fn().mockReturnValue({ intent: 'none', normalized_text: 'que tramites' }),
+      } as any;
+
+      const mockCalendarService = {
+        hasActiveMenuState: vi.fn().mockReturnValue(false),
+        handleMenuInput: vi.fn().mockResolvedValue(null),
+      } as any;
+
+      const mockConversationService = {
+        processMessage: vi.fn().mockResolvedValue({ action_type: 'none', response_text: '' }),
+      } as any;
+
+      const mockAIQueryService = {
+        answer: vi.fn().mockResolvedValue('[OPTIONS_MENU]\nElige un trámite:\n1. Equivalencias\n2. Regularidad'),
+        answerSelectedOption: vi.fn().mockResolvedValue('Detalle de Equivalencias'),
+      } as any;
+
+      const optionsStateService = new OptionsStateService();
+
+      const router = new MessageRouter(
+        mockIntentParser,
+        mockCalendarService,
+        mockConversationService,
+        mockAIQueryService,
+        dailyGreetingRepo,
+        optionsStateService
+      );
+
+      // 1. Enviar consulta amplia en grupo -> Debe detectar el menú y guardar opciones
+      const step1Result = await router.route(
+        'userA',
+        'que tramites',
+        new Date(),
+        true,
+        false,
+        false,
+        false,
+        'groupA@g.us',
+        false,
+      );
+
+      expect(step1Result).toContain('Elige un trámite:');
+      expect(step1Result).toContain('1️⃣ Equivalencias');
+      expect(step1Result).toContain('2️⃣ Regularidad');
+      expect(optionsStateService.hasPendingOptions('userA')).toBe(true);
+
+      // 2. Enviar número válido '1' -> Debe llamar a answerSelectedOption
+      const step2Result = await router.route(
+        'userA',
+        '1',
+        new Date(),
+        true,
+        false,
+        false,
+        false,
+        'groupA@g.us',
+        false,
+      );
+
+      expect(step2Result).toBe('Detalle de Equivalencias');
+      expect(mockAIQueryService.answerSelectedOption).toHaveBeenCalledWith(
+        'userA',
+        'Equivalencias',
+        'que tramites',
+        false,
+        'groupA@g.us'
+      );
+      expect(optionsStateService.hasPendingOptions('userA')).toBe(false);
+    });
+
+    it('debería limpiar opciones pendientes si se recibe un input no numérico', async () => {
+      const mockIntentParser = {
+        parseMessage: vi.fn().mockReturnValue({ intent: 'none', normalized_text: 'otra cosa' }),
+      } as any;
+
+      const mockCalendarService = {
+        hasActiveMenuState: vi.fn().mockReturnValue(false),
+        handleMenuInput: vi.fn().mockResolvedValue(null),
+      } as any;
+
+      const mockConversationService = {
+        processMessage: vi.fn().mockResolvedValue({ action_type: 'none', response_text: '' }),
+      } as any;
+
+      const mockAIQueryService = {
+        answer: vi.fn().mockResolvedValue('respuesta nueva'),
+      } as any;
+
+      const optionsStateService = new OptionsStateService();
+      optionsStateService.saveOptions('userA', 'que tramites', ['Equivalencias', 'Regularidad']);
+
+      const router = new MessageRouter(
+        mockIntentParser,
+        mockCalendarService,
+        mockConversationService,
+        mockAIQueryService,
+        dailyGreetingRepo,
+        optionsStateService
+      );
+
+      const result = await router.route(
+        'userA',
+        'otra cosa',
+        new Date(),
+        true,
+        false,
+        false,
+        false,
+        'groupA@g.us',
+        false,
+      );
+
+      expect(result).toBe('respuesta nueva');
+      expect(optionsStateService.hasPendingOptions('userA')).toBe(false);
+    });
+
+    it('no debería activar opciones de menú si se está en privado (sin groupId)', async () => {
+      const mockIntentParser = {
+        parseMessage: vi.fn().mockReturnValue({ intent: 'none', normalized_text: 'que tramites' }),
+      } as any;
+
+      const mockCalendarService = {
+        hasActiveMenuState: vi.fn().mockReturnValue(false),
+        handleMenuInput: vi.fn().mockResolvedValue(null),
+      } as any;
+
+      const mockConversationService = {
+        processMessage: vi.fn().mockResolvedValue({ action_type: 'none', response_text: '' }),
+      } as any;
+
+      const mockAIQueryService = {
+        answer: vi.fn().mockResolvedValue('[OPTIONS_MENU]\nIntro:\n1. Opcion A'),
+      } as any;
+
+      const optionsStateService = new OptionsStateService();
+
+      const router = new MessageRouter(
+        mockIntentParser,
+        mockCalendarService,
+        mockConversationService,
+        mockAIQueryService,
+        dailyGreetingRepo,
+        optionsStateService
+      );
+
+      const result = await router.route(
+        'userA',
+        'que tramites',
+        new Date(),
+        true,
+        false,
+        false,
+        false,
+        undefined, // privado
+        false,
+      );
+
+      // En privado no debe formatear con emojis ni guardar en el servicio
+      expect(result).toBe('[OPTIONS_MENU]\nIntro:\n1. Opcion A');
+      expect(optionsStateService.hasPendingOptions('userA')).toBe(false);
+    });
   });
 });
+

@@ -259,10 +259,15 @@ export class TerminalTui {
   /**
    * Imprime un mensaje de WhatsApp en el panel de conversación
    */
-  public appendChatMessage(sender: string, text: string, type: 'user' | 'bot', contextLabel?: string): void {
+  public appendChatMessage(sender: string, text: string, type: 'user' | 'bot', contextLabel?: string, recipientInfo?: string): void {
     const time = new Date().toLocaleTimeString();
     const color = type === 'user' ? 'cyan' : 'green';
-    const tag = type === 'user' ? '👤 STUDENT' : '🤖 BOT';
+    
+    let tag = type === 'user' ? '👤 STUDENT' : '🤖 BOT';
+    if (type === 'bot' && recipientInfo) {
+      tag = `🤖 Respondiendo a: ${recipientInfo}`;
+    }
+
     const contextStr = contextLabel ? ` {yellow-fg}${contextLabel}{/yellow-fg}` : '';
 
     this.chatPanel.log(

@@ -56,6 +56,7 @@ import { RagQueryService } from './features/ai/rag/rag-query.service.js';
 import { RagPipelineService } from './features/ai/rag/rag-pipeline.service.js';
 import { TerminalTui } from './interfaces/tui/terminal-tui.js';
 import { setTerminalTui } from './shared/config/tui-shared.js';
+import { AcademicGuardrail } from './features/ai/academic-guardrail.js';
 
 // Las instrucciones se importan desde ./shared/config/instructions.js
 
@@ -321,6 +322,10 @@ async function bootstrap() {
   await geminiService.initialize();
 
   const fallbackAiService = new FallbackAIService([groqProvider, geminiService]);
+
+  // --- Inicializar AcademicGuardrail semántico local ---
+  console.log('[Guardrail] Inicializando filtro semántico local (Hugging Face)...');
+  await AcademicGuardrail.getInstance().initialize();
 
   const knowledgeContextService = new KnowledgeContextService(
     userProfileRepository,

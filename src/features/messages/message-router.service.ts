@@ -1,6 +1,7 @@
 import { AcademicCalendarService } from '../academic-calendar/academic-calendar.service.js';
 import { AIQueryService } from '../ai/ai-query.service.js';
 import { ConversationStateService } from '../conversation/conversation-state.service.js';
+import { OptionsStateService } from '../conversation/options-state.service.js';
 import { MessageIntentParserService } from './message-intent-parser.service.js';
 import { DailyGreetingRepository } from './messages.repository.js';
 import { getSettings } from '../../shared/config/settings.js';
@@ -41,6 +42,7 @@ export class MessageRouter {
     private conversationService: ConversationStateService,
     private aiQueryService: AIQueryService,
     private dailyGreetingRepository: DailyGreetingRepository,
+    private optionsStateService: OptionsStateService = new OptionsStateService(),
   ) {}
 
   private helloAttemptsByUserDay = new Map<string, number>();
@@ -71,7 +73,16 @@ export class MessageRouter {
 
     // Si el mensaje llega por arroba, forzamos IA (excepto comandos explícitos).
     if (forceAI && !isCommand) {
-      return this.aiQueryService.answer(userId, routedText, now, isAdmin, groupId);
+      // En grupos con mención: verificar opciones pendientes primero
+      if (groupId && this.optionsStateService.hasPendingOptions(userId)) {
+        const selected = this.optionsStateService.getSelectedOption(userId, normalized);
+        if (selected) {
+          return this.aiQueryService.answerSelectedOption(userId, selected.selectedOption, selected.originalPrompt, isAdmin, groupId);
+        }
+        // Si no es un número válido, limpiar opciones y procesar normalmente
+        this.optionsStateService.clear(userId);
+      }
+      return this.handleAIResponseWithOptions(userId, routedText, now, isAdmin, groupId);
     }
 
     if (normalized === '!hola') {
@@ -80,6 +91,8 @@ export class MessageRouter {
 
     const menuResponse = await this.calendarService.handleMenuInput(userId, routedText, groupId);
     if (menuResponse !== null) {
+      // Si el usuario entra al menú estático, limpiar opciones de IA pendientes
+      this.optionsStateService.clear(userId);
       return menuResponse;
     }
 
@@ -94,7 +107,21 @@ export class MessageRouter {
       return stateAction.response_text;
     }
 
+    // En grupos: verificar si hay opciones de IA pendientes y el usuario respondió con un número
+    if (groupId && this.optionsStateService.hasPendingOptions(userId)) {
+      const selected = this.optionsStateService.getSelectedOption(userId, normalized);
+      if (selected) {
+        return this.aiQueryService.answerSelectedOption(userId, selected.selectedOption, selected.originalPrompt, isAdmin, groupId);
+      }
+      // Si envió texto libre (no un número), limpiar opciones y continuar con IA
+      this.optionsStateService.clear(userId);
+    }
+
     if (!allowAI) return null;
+    // En grupos: manejar respuesta con posible [OPTIONS_MENU]
+    if (groupId) {
+      return this.handleAIResponseWithOptions(userId, routedText, now, isAdmin, groupId);
+    }
     return this.aiQueryService.answer(userId, routedText, now, isAdmin, groupId);
   }
 
@@ -163,5 +190,34 @@ export class MessageRouter {
 
   private pickOne(options: string[]): string {
     return options[Math.floor(Math.random() * options.length)];
+  }
+
+  /**
+   * Envuelve la llamada a la IA y detecta si la respuesta contiene [OPTIONS_MENU].
+   * Si es así, guarda las opciones en el OptionsStateService y formatea la respuesta.
+   * Solo se usa en contexto de grupo.
+   */
+  private async handleAIResponseWithOptions(
+    userId: string,
+    prompt: string,
+    now?: Date,
+    isAdmin = false,
+    groupId?: string,
+  ): Promise<string> {
+    const response = await this.aiQueryService.answer(userId, prompt, now, isAdmin, groupId);
+
+    // Solo procesar [OPTIONS_MENU] en grupos
+    if (!groupId) return response;
+
+    const parsed = AIQueryService.parseOptionsMenu(response);
+    if (!parsed || parsed.options.length === 0) {
+      return response;
+    }
+
+    // Guardar opciones para este usuario
+    this.optionsStateService.saveOptions(userId, prompt, parsed.options);
+
+    // Formatear la respuesta con emojis numéricos para WhatsApp
+    return AIQueryService.formatOptionsForWhatsApp(parsed.intro, parsed.options);
   }
 }

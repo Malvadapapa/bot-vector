@@ -235,6 +235,74 @@ inicia: 15/06/2026`;
     expect(fields.inicia).toBe('15/06/2026');
     expect(Object.keys(fields).length).toBe(2);
   });
+
+  it('should parse fields with markdown bold or decorator characters', () => {
+    const body = `**nombre**: Test Notice
+*inicia*: 15/06/2026
+__termina__: 20/06/2026
+_cuerpo_: Real body text`;
+
+    const fields = monitor['parseStructuredFields'](body);
+
+    expect(fields.nombre).toBe('Test Notice');
+    expect(fields.inicia).toBe('15/06/2026');
+    expect(fields.termina).toBe('20/06/2026');
+    expect(fields.cuerpo).toBe('Real body text');
+  });
+
+  it('should parse multiline cuerpo fields and ignore quoted reply content', () => {
+    const body = `nombre: Test Notice
+cuerpo: ¡Buenas tardes!
+
+Esta es una línea adicional de mi aviso.
+Y otra más.
+
+El jue, 11 jun 2026 a las 8:17, <bot.vectoritotsds@gmail.com> escribió:
+> cuerpo: [Escribe aquí el cuerpo del aviso]`;
+
+    const fields = monitor['parseStructuredFields'](body);
+
+    expect(fields.nombre).toBe('Test Notice');
+    expect(fields.cuerpo).toBe('¡Buenas tardes!\n\nEsta es una línea adicional de mi aviso.\nY otra más.');
+  });
+
+  it('should parse fields from Gmail forwarded messages with bot email in headers', () => {
+    const body = `---------- Forwarded message ---------
+From: Natalia Agustina MORAN <natalia.moran@example.com>
+Date: Thu, Jun 11, 2026 at 8:21 AM
+Subject: Inscripciones abiertas a los Coloquios de junio 2026
+To: <bot.vectoritotsds@gmail.com>
+
+nombre: Natalia Agustina MORAN
+inicia: 11/06/2026
+frecuencia: unica
+grupo: 2024
+cuerpo: ¡Buenas tardes!
+
+Ya se encuentran abiertas las inscripciones.`;
+
+    const fields = monitor['parseStructuredFields'](body);
+
+    expect(fields.nombre).toBe('Natalia Agustina MORAN');
+    expect(fields.inicia).toBe('11/06/2026');
+    expect(fields.frecuencia).toBe('unica');
+    expect(fields.grupo).toBe('2024');
+    expect(fields.cuerpo).toContain('¡Buenas tardes!');
+    expect(fields.cuerpo).toContain('Ya se encuentran abiertas las inscripciones.');
+  });
+
+  it('should stop parsing at quoted blocks starting with >', () => {
+    const body = `nombre: Test
+cuerpo: Body text
+
+> This is a quoted reply
+> cuerpo: old value`;
+
+    const fields = monitor['parseStructuredFields'](body);
+
+    expect(fields.nombre).toBe('Test');
+    expect(fields.cuerpo).toBe('Body text');
+  });
 });
 
 // ============================================================================
@@ -1580,8 +1648,49 @@ describe('Improved Institutional Email Notices & TLS Config', () => {
 
     await localMonitor.pollOnce();
 
-    // Option 2 maps to 'general' which targets groups with entry_year=null (group1)
+    // Number 2 maps to the 2nd individual group (group2)
     expect(mockPublishCallback).toHaveBeenCalledTimes(1);
-    expect(mockPublishCallback).toHaveBeenCalledWith(expect.any(String), 'group1');
+    expect(mockPublishCallback).toHaveBeenCalledWith(expect.any(String), 'group2');
+  });
+
+  it('should resolve group selector by letter for cohort correctly', async () => {
+    const email = {
+      subject: '!aviso: Test Letter Option',
+      from: { text: 'profesor@example.com' },
+      text: 'grupo: A\ncuerpo: Mensaje para la camada',
+    } as any;
+
+    const mockGroupRepo = {
+      getAllActiveGroupsWithEntryYear: vi.fn().mockResolvedValue([
+        { group_id: 'group1', display_name: 'Group 1', entry_year: null },
+        { group_id: 'group2', display_name: 'Group 2', entry_year: 2025 },
+        { group_id: 'group3', display_name: 'Group 3', entry_year: 2025 },
+      ]),
+    };
+
+    const mockPublishCallback = vi.fn().mockResolvedValue(undefined);
+
+    const localMonitor = new InstitutionalEmailMonitor(
+      mockEmailService,
+      mockNoticeRepo,
+      mockReminderRepo,
+      mockPublishCallback,
+      undefined,
+      undefined,
+      mockGroupRepo as any,
+      mockOutboundEmailService
+    );
+
+    mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);
+    mockNoticeRepo.getByUniqueHashWithId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 1, notice: { title: 'Test Letter Option' } as any });
+
+    await localMonitor.pollOnce();
+
+    // Letter A maps to the first cohort (2025), which has group2 and group3
+    expect(mockPublishCallback).toHaveBeenCalledTimes(2);
+    expect(mockPublishCallback).toHaveBeenCalledWith(expect.any(String), 'group2');
+    expect(mockPublishCallback).toHaveBeenCalledWith(expect.any(String), 'group3');
   });
 });

@@ -6,19 +6,11 @@ import { UserModerationService } from '../moderation/user-moderation.service.js'
 import { logTuiProcessTrace } from '../../shared/config/tui-shared.js';
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 import { getSettings } from '../../shared/config/settings.js';
+import { AcademicGuardrail } from './academic-guardrail.js';
 
 export class AIQueryService {
   private static readonly RESPONSE_TIMEOUT_MS = 25_000;
   private static readonly TOPIC_CLASSIFICATION_TIMEOUT_MS = 8_000;
-
-  private static readonly ACADEMIC_KEYWORDS = [
-    'ispc', 'materia', 'clase', 'examen', 'parcial', 'final', 'cursada', 'nota',
-    'inscripcion', 'profesor', 'profe', 'correlativa', 'programacion', 'algoritmo',
-    'estructura de datos', 'bases de datos', 'software', 'desarrollo', 'horario',
-    'campus', 'aula', 'aviso', 'regularidad', 'aprobado', 'libre', 'recursada',
-    'práctica', 'ciencia de datos', 'interfaz', 'gestion de proyectos', 'correlatividad',
-    'reglamento', 'regimen', 'régimen', 'académico', 'academico', 'carrera',
-  ];
 
   private static readonly GREETING_PATTERNS: RegExp[] = [
     /^\s*(hola|hi|hey|buenos|buenas|buen|buena|saludos|ola|olá)\s*$/i,
@@ -175,7 +167,7 @@ export class AIQueryService {
 
     let warningContext = '';
     if (isWeakRag) {
-      warningContext = '[Sistema] Los resultados de búsqueda documental (RAG) tienen baja relevancia. Úsalos solo si aportan algo útil; en caso contrario, indicá que no encontraste información precisa en la documentación.';
+      warningContext = '[Sistema] ADVERTENCIA CRÍTICA: Los fragmentos de búsqueda (RAG) adjuntos tienen muy baja relevancia para la consulta del usuario (coincidencias débiles). NO uses los enlaces (como Google Meet, Drive, etc.) ni la información provista en estos fragmentos a menos que respondan con absoluta certeza a lo que el usuario preguntó. Si el usuario pide recomendaciones de estudio, tutoriales o recursos de práctica/ejercitación, ignorá por completo los fragmentos institucionales y respondé de forma general con tu conocimiento.';
     }
 
     const systemInstructions = [
@@ -185,12 +177,31 @@ export class AIQueryService {
       'Ejemplo: `[ABSENT_DATA::clases]` para agenda/horarios, `[ABSENT_DATA::examenes]` para exámenes, `[ABSENT_DATA::profesores]` para profesores.',
       'Si la información solicitada sí está cargada y presente en el contexto, respondé normalmente sin anteponer ninguna etiqueta.',
       '',
+      '[MENÚ DE OPCIONES DINÁMICO - INSTRUCCIÓN OBLIGATORIA]',
+      'Si la consulta del usuario es amplia, ambigua o tiene múltiples respuestas posibles (por ejemplo "qué trámites puedo hacer?", "qué materias hay?", "cómo me contacto?"), debés presentar un menú de opciones numerado en lugar de responder directamente.',
+      'Para activar este menú, iniciá tu respuesta EXACTAMENTE con la etiqueta `[OPTIONS_MENU]` en la primera línea, seguida de una breve introducción y luego las opciones numeradas.',
+      'Formato obligatorio:',
+      '[OPTIONS_MENU]',
+      'Breve introducción explicativa.',
+      '1. Opción uno',
+      '2. Opción dos',
+      '3. Opción tres',
+      '',
+      'Reglas del menú de opciones:',
+      '- Máximo 5 opciones, EXCEPTO cuando la consulta es específicamente sobre materias/asignaturas del plan de estudios (en ese caso podés listar todas las necesarias).',
+      '- Cada opción debe ser concisa (una frase corta que identifique el tema).',
+      '- NO uses emojis numéricos (1️⃣), usá números simples seguidos de punto (1., 2., etc.).',
+      '- NO respondas con [OPTIONS_MENU] si la pregunta tiene una respuesta única y directa (por ejemplo "cuándo es el próximo examen de Programación" tiene una sola respuesta).',
+      '- NO uses [OPTIONS_MENU] para saludos, preguntas simples o consultas directas.',
+      '',
       '[REGLAS ADICIONALES DE RAG Y CONTEXTO ACADÉMICO]',
       '- La sección "MATERIAS ACTIVAS (HORARIOS DE CURSADA)" representa el cronograma general del grupo de WhatsApp. NO asumas que el estudiante está cursando individualmente todas esas materias; es posible que deba recursar alguna correlativa anterior.',
       '- Si el estudiante consulta sobre recursar una materia o quedar libre, explicá detalladamente las condiciones (p. ej., rendir libre dentro de las siguientes dos mesas examinadoras, rematricularse, etc.) basándote exclusivamente en el contexto RAG.',
-      '- Si en el contexto RAG se proveen enlaces específicos (de Google Drive, documentos, etc.) o correos de soporte técnico oficiales (como soporte.guarani@ispc.edu.ar), menciónalos explícitamente.',
+      '- Si en el contexto RAG con alta relevancia se proveen enlaces específicos (de Google Drive, documentos, etc.) o correos de soporte técnico oficiales (como soporte.guarani@ispc.edu.ar), menciónalos explícitamente. NO menciones enlaces de fragmentos RAG con baja relevancia (marcados como débiles) a menos que respondan exactamente a lo solicitado. Evitá asociar enlaces de clases virtuales (Meet) o trámites de SIU Guaraní a consultas sobre contenidos de estudio, práctica o recursos de aprendizaje.',
+      '- Si el usuario consulta sobre recursos, material adicional o plataformas para estudiar o practicar contenidos de cualquier materia de la tecnicatura (por ejemplo Programación, Base de Datos, Redes, etc.), debés sugerirle plataformas populares de aprendizaje y ejercitación (como YouTube, LeetCode, HackerRank, freeCodeCamp, Coursera, GitHub, W3Schools, etc., adaptadas al área de la materia consultada) e indicar amablemente que no dispones de apuntes específicos locales dentro de los archivos institucionales.',
       '- NO delegues ni recomiendes comunicarse con la Coordinadora (Tatiana Manzanelli) a menos que el contexto RAG lo indique específicamente para ese trámite. Si la consulta se puede resolver con la información del RAG o de soporte de SIU Guaraní, brindá esa respuesta directa.'
     ].join('\n');
+
 
     const mergedPrompt = [
       dateContext,
@@ -220,6 +231,65 @@ export class AIQueryService {
     return responseBody;
   }
 
+  /**
+   * Genera una respuesta detallada para una opción seleccionada del menú dinámico.
+   * NO consume cuota — la cuota ya fue consumida en la consulta original.
+   */
+  public async answerSelectedOption(
+    userId: string,
+    selectedOption: string,
+    originalPrompt: string,
+    isAdmin = false,
+    groupId?: string,
+  ): Promise<string> {
+    logTuiProcessTrace(`[Opciones] Usuario ${userId} seleccionó: "${selectedOption}" (consulta original: "${originalPrompt}")`);
+
+    // Construir contexto de BD y RAG (igual que generateAnswer pero sin consumir cuota)
+    const currentDateTime = new Date();
+    logTuiProcessTrace(`Recuperando contexto para respuesta de opción seleccionada...`);
+    const dbContext = await this.knowledgeContextService.buildContext(userId, groupId, currentDateTime);
+
+    let ragContext: string | null = null;
+    if (this.ragQueryService) {
+      const ragResults = await this.ragQueryService.search(`${originalPrompt} ${selectedOption}`, 5, groupId);
+      ragContext = this.ragQueryService.formatContext(ragResults);
+    }
+
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const formattedDate = currentDateTime.toLocaleString('es-AR', { timeZone: tz });
+    const dayNameRaw = currentDateTime.toLocaleDateString('es-AR', { timeZone: tz, weekday: 'long' });
+    const dayName = dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1);
+    const dateContext = `[Sistema] Fecha y hora actual: ${formattedDate} (${dayName}).`;
+
+    const focusedPrompt = [
+      dateContext,
+      '[INSTRUCCIÓN DE CONTEXTO]',
+      `El usuario previamente preguntó: "${originalPrompt}"`,
+      `Se le mostraron varias opciones y eligió: "${selectedOption}".`,
+      'Brindá una respuesta COMPLETA, DETALLADA y EXHAUSTIVA sobre ese tema específico.',
+      'Usá toda la información disponible del contexto RAG y de la base de datos.',
+      'Si hay enlaces, correos o fechas relevantes, mencionálos.',
+      'NO vuelvas a mostrar un menú de opciones. Respondé directamente con la información detallada.',
+      ragContext || '',
+      dbContext ? `Contexto relevante:\n${dbContext}` : '',
+      `Consulta del usuario: Detallame sobre "${selectedOption}"`,
+    ].filter(Boolean).join('\n\n');
+
+    logTuiProcessTrace(`Invocando API del modelo de IA para opción seleccionada...`);
+    const aiText = await this.withTimeout(
+      this.aiProvider.generateContent(userId, focusedPrompt, `${originalPrompt} - ${selectedOption}`),
+      AIQueryService.RESPONSE_TIMEOUT_MS,
+    );
+    logTuiProcessTrace(`Respuesta detallada recibida con éxito.`);
+
+    const normalizedAiText = String(aiText || '').trim();
+    if (!normalizedAiText) {
+      return 'No pude generar una respuesta detallada en este momento.';
+    }
+
+    return normalizedAiText;
+  }
+
   private async classifyOffTopicWithAI(userId: string, prompt: string): Promise<boolean> {
     const classifierPrompt = [
       '[Sistema] Determiná si la consulta del usuario es académica para el ISPC.',
@@ -247,10 +317,10 @@ export class AIQueryService {
       }
 
       console.warn(`[IA] Clasificador devolvió respuesta ambigua para ${userId}: ${normalized}`);
-      return this.isOffTopicPrompt(prompt);
+      return await this.isOffTopicPrompt(prompt);
     } catch (err: any) {
       console.warn(`[IA] Falló la clasificación off-topic para ${userId}: ${err?.message}`);
-      return this.isOffTopicPrompt(prompt);
+      return await this.isOffTopicPrompt(prompt);
     }
   }
 
@@ -259,10 +329,14 @@ export class AIQueryService {
     return AIQueryService.GREETING_PATTERNS.some((pattern) => pattern.test(lower));
   }
 
-  private isOffTopicPrompt(prompt: string): boolean {
-    const lower = prompt.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    // Si contiene alguna palabra académica del ISPC, no es off-topic
-    return !AIQueryService.ACADEMIC_KEYWORDS.some((kw) => lower.includes(kw));
+  private async isOffTopicPrompt(prompt: string): Promise<boolean> {
+    try {
+      const guardrail = AcademicGuardrail.getInstance();
+      const result = await guardrail.validatePrompt(prompt);
+      return !result.isValid;
+    } catch {
+      return false; // Fail-open
+    }
   }
 
   private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -282,15 +356,32 @@ export class AIQueryService {
   private async classifyPromptQualityAndTopic(prompt: string): Promise<{status:string, topic?:string, reason?:string}> {
     const text = prompt.trim().toLowerCase();
     if (text.length < 5) return { status: 'unclear', reason: 'muy corto' };
-    // heurística: si menciona palabras clave del ISPC -> ok
-    const isRelated = /materia|profesor|horario|inscripción|examen|práctica|aula|ispc|coordinación/.test(text);
-    if (isRelated) return { status: 'ok', topic: 'ispc' };
+
     // si contiene palabras sensibles (política, sexual, porn, crimen, etc) => off-topic
     if (/porno|sexual|bomb|atentad|crimen|ilícit|drogas|suicid/i.test(prompt)) {
       return { status: 'offtopic', reason: 'contenido inapropiado' };
     }
-    // fallback: pedir aclaración
-    return { status: 'unclear', reason: 'no está claro si es sobre ISPC' };
+
+    try {
+      const guardrail = AcademicGuardrail.getInstance();
+      const result = await guardrail.validatePrompt(prompt);
+
+      if (result.isValid) {
+        return { status: 'ok', topic: 'ispc' };
+      }
+
+      // Si la similitud es extremadamente baja (ej. < 0.30), la clasificamos como off-topic
+      if (result.similarity < 0.30) {
+        return { status: 'offtopic', reason: `fuera de lugar (Similitud: ${result.similarity.toFixed(4)})` };
+      }
+
+      // Si está en el rango medio (0.30 - 0.42), la marcamos como unclear para aclaración
+      return { status: 'unclear', reason: `no está claro si es sobre ISPC (Similitud: ${result.similarity.toFixed(4)})` };
+    } catch (error) {
+      // Fallback Fail-Open: ante error técnico de transformers, dejamos pasar la consulta
+      console.error('[Guardrail Error] Error al validar consulta con AcademicGuardrail:', error);
+      return { status: 'ok', topic: 'ispc' };
+    }
   }
 
   private generateClarifyingQuestion(prompt: string): string {
@@ -340,5 +431,54 @@ export class AIQueryService {
       'examen', 'examenes', 'parcial', 'final'
     ];
     return scheduleKeywords.some(kw => lower.includes(kw));
+  }
+
+  /**
+   * Verifica si la respuesta del LLM contiene el tag [OPTIONS_MENU].
+   */
+  public static hasOptionsMenu(response: string): boolean {
+    return response.trimStart().startsWith('[OPTIONS_MENU]');
+  }
+
+  /**
+   * Parsea las opciones de una respuesta del LLM que contiene [OPTIONS_MENU].
+   * Retorna el texto introductorio y la lista de opciones extraídas.
+   */
+  public static parseOptionsMenu(response: string): { intro: string; options: string[] } | null {
+    if (!AIQueryService.hasOptionsMenu(response)) return null;
+
+    const withoutTag = response.replace(/^\s*\[OPTIONS_MENU\]\s*/i, '').trim();
+    const lines = withoutTag.split('\n').map(l => l.trim()).filter(Boolean);
+
+    const intro: string[] = [];
+    const options: string[] = [];
+
+    for (const line of lines) {
+      // Detectar líneas que empiezan con "N." o "N)" donde N es un número
+      const optionMatch = line.match(/^\d+[.)]\s*(.+)$/);
+      if (optionMatch) {
+        options.push(optionMatch[1].trim());
+      } else if (options.length === 0) {
+        // Todo lo que esté antes de la primera opción es la intro
+        intro.push(line);
+      }
+      // Ignorar texto después de las opciones
+    }
+
+    if (options.length === 0) return null;
+
+    return {
+      intro: intro.join('\n'),
+      options,
+    };
+  }
+
+  /**
+   * Formatea las opciones con emojis numéricos para WhatsApp.
+   */
+  public static formatOptionsForWhatsApp(intro: string, options: string[]): string {
+    const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+    const formatted = options.map((opt, i) => `${NUMBER_EMOJIS[i] || `${i + 1}.`} ${opt}`).join('\n');
+    return `${intro}\n\n${formatted}\n\nRespondé con el número para ver más detalles.`;
   }
 }

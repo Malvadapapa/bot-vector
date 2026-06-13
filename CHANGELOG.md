@@ -5,6 +5,18 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 ## [0.2.1-alpha.3] - Unreleased
 
 ### Agregado
+- **Guardrail Semántico de Seguridad Local (AcademicGuardrail)**:
+  - Implementación de la clase `AcademicGuardrail` utilizando la librería `@huggingface/transformers` y el modelo multilingüe ligero `Xenova/paraphrase-multilingual-MiniLM-L12-v2`.
+  - Reemplazo del filtro anterior basado en palabras clave rígidas por un sistema de validación basado en embeddings locales y similitud coseno (dot product) contra un texto de referencia institucional.
+  - Definición de umbrales semánticos: consultas con similitud $\ge 0.42$ se aprueban automáticamente, consultas con similitud $< 0.30$ se rechazan como off-topic y aplican advertencias de moderación, y puntuaciones intermedias se clasifican como poco claras (`unclear`), solicitando aclaraciones.
+  - Creación de pruebas unitarias (`academic-guardrail.spec.ts`) mockeando el pipeline del modelo para evitar descargas en la suite de integración.
+- **Sistema de Menú Dinámico de Opciones de IA**:
+  - Detección automática en la IA (vía Gemini/Groq) de consultas ambiguas o amplias mediante el tag de control `[OPTIONS_MENU]` en las directivas del system prompt.
+  - Creación de `OptionsStateService` para mantener en memoria las opciones dinámicas generadas por usuario, con expiración automática configurable (seteada en 10 minutos).
+  - Intercepción y formateo automático de opciones con emojis numéricos en grupos de WhatsApp.
+  - Captura de inputs numéricos en `MessageRouter` para responder a la opción elegida mediante `answerSelectedOption()` sin consumir cuotas de uso diario del estudiante (segunda llamada gratuita).
+  - Robustecimiento del RAG de baja relevancia (`isWeakRag`): adición de advertencias explícitas en el system prompt para ignorar enlaces irrelevantes (Meet de clases, SIU) y sugerir plataformas de aprendizaje alternativas conocidas (LeetCode, W3Schools, YouTube, etc.) para las materias de la tecnicatura.
+  - Adición de pruebas de integración robustas en `messages.spec.ts` que validan el flujo completo, la limpieza de estado ante textos libres y el alcance exclusivo para grupos.
 - **Sistema de Avisos Cohesivo, Autorización por Email y Frecuencias**:
   - Unificación del sistema de avisos institucionales para admitir creación tanto desde correos electrónicos (con asunto que contenga la palabra "aviso") como desde el chat privado de WhatsApp de administradores.
   - Creación de la tabla `authorized_emails` y del repositorio `AuthorizedEmailRepository` para gestionar remitentes autorizados personalizados, con submenú interactivo en WhatsApp para listar, agregar y remover correos.
@@ -13,6 +25,7 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - Registro automático del correo de administradores como `source_email` al crear avisos por WhatsApp para posibilitar el correcto reconocimiento de su rol y nombre en emisiones y planificaciones programadas.
   - Respuestas automáticas por correo electrónico en formato HTML estilizado y texto alternativo con la plantilla estructurada de aviso al tope y sugerencia interactiva de uso de Inteligencia Artificial (ChatGPT, Gemini, Claude) ante formatos inválidos.
   - Simplificación de las opciones de grupo listadas en el correo de error, reduciendo el ruido visual al listar únicamente camadas y opciones generales.
+  - Robustecimiento del analizador de correos para tolerar etiquetas con formato negrita/itálica de Markdown (ej: `**cuerpo**:` o `*grupo*:`), admitir textos multilínea en el mensaje, e ignorar firmas y respuestas citadas (hilos de correo) previniendo sobreescrituras accidentales.
   - Emisión de recordatorios recurrentes según frecuencia en días programada para el aviso, controlados por una tarea periódica del planificador (`SchedulerService`).
   - Comando administrativo `!responderid` para que los superadministradores de WhatsApp puedan responder al emisor de un aviso vía correo electrónico directamente desde el chat.
 - **Visualización Depurada de Calendario y Avisos**:
@@ -52,6 +65,7 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
       - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
 
 ### Corregido
+- **Parser de Avisos por Email Rechazaba Correos Reenviados/Respondidos (BUG-014)**: Corrección del analizador de campos estructurados (`parseStructuredFields`) que rompía prematuramente al encontrar la dirección del bot (`bot.vectoritotsds@gmail.com`) en las cabeceras `To:` de emails reenviados/respondidos por Gmail, o al encontrar la línea `---------- Forwarded message ---------` (que matcheaba `startsWith('---')`). Ambos casos provocaban que el parser abandonara el cuerpo antes de leer ningún campo, generando falsos rechazos por "falta el campo cuerpo". Se reemplazó `startsWith('---')` por `/^-{3,}\s*$/` (solo líneas compuestas enteramente por guiones), se eliminó el check de email del bot, y se agregaron detecciones para bloques citados (`>`), encabezados `Original Message`/`Mensaje Original` y patrones `escribió:`/`wrote:` con case-insensitive.
 - **Corrección en Consulta de Perfiles de Usuario**: Corrección del error `no such column: display_name` en las consultas de la tabla `user_profiles`. Se cambió el campo a `name` para alinearlo con la definición de esquema real del sistema.
 - **Publicación Inmediata de Avisos Futuros**: Corrección de la lógica de publicación para que los avisos con fecha de inicio en el futuro se publiquen inmediatamente por WhatsApp al ser recibidos o creados (sirviendo como primer anuncio), delegando la periodicidad al planificador Scheduler.
 - **Respuestas Especulativas y Falta de Rigidez (BUG-013)**:
