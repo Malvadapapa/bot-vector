@@ -234,6 +234,9 @@ export class VectoritoWhatsAppGateway {
             if (!rawChatId) continue;
             const chatId = rawChatId.split(' ')[0];
 
+            // Ignorar actualizaciones de estado/historias
+            if (chatId === 'status@broadcast') continue;
+
             const isGroup = chatId.includes('@g.us');
             const rawSenderJid = String(incomingMessage?.key?.participant || chatId);
             const senderJid = rawSenderJid.split(' ')[0];
