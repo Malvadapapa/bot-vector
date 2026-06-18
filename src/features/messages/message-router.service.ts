@@ -1,11 +1,28 @@
 import { AcademicCalendarService } from '../academic-calendar/academic-calendar.service.js';
-import { AIQueryService } from '../ai/ai-query.service.js';
+import { AIQueryService, AIQueryResult } from '../ai/ai-query.service.js';
 import { ConversationStateService } from '../conversation/conversation-state.service.js';
 import { OptionsStateService } from '../conversation/options-state.service.js';
+import { AmbiguityStateService } from '../conversation/ambiguity-state.service.js';
 import { MessageIntentParserService } from './message-intent-parser.service.js';
 import { DailyGreetingRepository } from './messages.repository.js';
 import { getSettings } from '../../shared/config/settings.js';
 import { formatLocalDateOnly } from '../../shared/db/db-utils.js';
+
+/**
+ * Resultado de enrutamiento de un mensaje.
+ * - `reply`: texto a enviar al usuario.
+ * - `clarifyContext`: presente solo cuando el LLM emitió [CLARIFY_QUESTION];
+ *   contiene los contextos RAG y DB para persistir en AmbiguityStateService.
+ */
+export interface RouteResult {
+  reply: string;
+  clarifyContext?: {
+    ragContext: string;
+    dbContext: string;
+    originalPrompt: string;
+    clarifyingQuestion: string;
+  };
+}
 
 export class MessageRouter {
   private static BOT_MENTION_ALIASES = ['@vectorito', '@Vectorito'];
@@ -43,6 +60,7 @@ export class MessageRouter {
     private aiQueryService: AIQueryService,
     private dailyGreetingRepository: DailyGreetingRepository,
     private optionsStateService: OptionsStateService = new OptionsStateService(),
+    private ambiguityStateService: AmbiguityStateService = new AmbiguityStateService(),
   ) {}
 
   private helloAttemptsByUserDay = new Map<string, number>();
@@ -61,10 +79,10 @@ export class MessageRouter {
     forceAI = false,
     groupId?: string,
     isSuperAdmin = false,
-  ): Promise<string | null> {
+  ): Promise<RouteResult | null> {
     const routedText = this.normalizeInvocation(text);
     if (!routedText) {
-      return this.pickOne(MessageRouter.EMPTY_PROMPTS);
+      return { reply: this.pickOne(MessageRouter.EMPTY_PROMPTS) };
     }
 
     const normalized = routedText.trim().toLowerCase();
@@ -77,52 +95,57 @@ export class MessageRouter {
       if (groupId && this.optionsStateService.hasPendingOptions(userId)) {
         const selected = this.optionsStateService.getSelectedOption(userId, normalized);
         if (selected) {
-          return this.aiQueryService.answerSelectedOption(userId, selected.selectedOption, selected.originalPrompt, isAdmin, groupId);
+          const reply = await this.aiQueryService.answerSelectedOption(userId, selected.selectedOption, selected.originalPrompt, isAdmin, groupId);
+          return { reply };
         }
         // Si no es un número válido, limpiar opciones y procesar normalmente
         this.optionsStateService.clear(userId);
       }
-      return this.handleAIResponseWithOptions(userId, routedText, now, isAdmin, groupId);
+      return this.handleGroupAIResponse(userId, routedText, now, isAdmin, groupId);
     }
 
     if (normalized === '!hola') {
-      return this.handleHello(userId, now);
+      return { reply: await this.handleHello(userId, now) };
     }
 
     const menuResponse = await this.calendarService.handleMenuInput(userId, routedText, groupId);
     if (menuResponse !== null) {
       // Si el usuario entra al menú estático, limpiar opciones de IA pendientes
       this.optionsStateService.clear(userId);
-      return menuResponse;
+      return { reply: menuResponse };
     }
 
     const parsed = this.messageIntentParserService.parseMessage(routedText, now);
 
     if (parsed.intent === 'command') {
-      return this.calendarService.handleCommand(userId, parsed.normalized_text, now, isAdmin, groupId, isGroupAdmin, isSuperAdmin);
+      const reply = await this.calendarService.handleCommand(userId, parsed.normalized_text, now, isAdmin, groupId, isGroupAdmin, isSuperAdmin);
+      return reply !== null ? { reply } : null;
     }
 
     const stateAction = await this.conversationService.processMessage(userId, parsed.normalized_text, parsed, now);
     if (stateAction.action_type !== 'none') {
-      return stateAction.response_text;
+      return stateAction.response_text !== null ? { reply: stateAction.response_text } : null;
     }
 
     // En grupos: verificar si hay opciones de IA pendientes y el usuario respondió con un número
     if (groupId && this.optionsStateService.hasPendingOptions(userId)) {
       const selected = this.optionsStateService.getSelectedOption(userId, normalized);
       if (selected) {
-        return this.aiQueryService.answerSelectedOption(userId, selected.selectedOption, selected.originalPrompt, isAdmin, groupId);
+        const reply = await this.aiQueryService.answerSelectedOption(userId, selected.selectedOption, selected.originalPrompt, isAdmin, groupId);
+        return { reply };
       }
       // Si envió texto libre (no un número), limpiar opciones y continuar con IA
       this.optionsStateService.clear(userId);
     }
 
     if (!allowAI) return null;
-    // En grupos: manejar respuesta con posible [OPTIONS_MENU]
+    // En grupos: manejar respuesta con posible [OPTIONS_MENU] o [CLARIFY_QUESTION]
     if (groupId) {
-      return this.handleAIResponseWithOptions(userId, routedText, now, isAdmin, groupId);
+      return this.handleGroupAIResponse(userId, routedText, now, isAdmin, groupId);
     }
-    return this.aiQueryService.answer(userId, routedText, now, isAdmin, groupId);
+    // Privado: flujo simple sin freno de ambigüedad
+    const reply = await this.aiQueryService.answer(userId, routedText, now, isAdmin, groupId);
+    return { reply };
   }
 
   private normalizeInvocation(text: string): string {
@@ -193,31 +216,84 @@ export class MessageRouter {
   }
 
   /**
-   * Envuelve la llamada a la IA y detecta si la respuesta contiene [OPTIONS_MENU].
-   * Si es así, guarda las opciones en el OptionsStateService y formatea la respuesta.
+   * Envuelve la llamada a la IA y detecta si la respuesta contiene
+   * [OPTIONS_MENU] o [CLARIFY_QUESTION].
+   *
+   * - [OPTIONS_MENU]: guarda las opciones en OptionsStateService y formatea emojis.
+   * - [CLARIFY_QUESTION]: empaqueta ragContext/dbContext en clarifyContext para que
+   *   el gateway los persista en AmbiguityStateService.
+   *
    * Solo se usa en contexto de grupo.
    */
-  private async handleAIResponseWithOptions(
+  private async handleGroupAIResponse(
     userId: string,
     prompt: string,
     now?: Date,
     isAdmin = false,
     groupId?: string,
-  ): Promise<string> {
-    const response = await this.aiQueryService.answer(userId, prompt, now, isAdmin, groupId);
+  ): Promise<RouteResult> {
+    const result = await this.aiQueryService.answerEnriched(userId, prompt, now, isAdmin, groupId);
+    const { response, ragContext, dbContext } = result;
 
-    // Solo procesar [OPTIONS_MENU] en grupos
-    if (!groupId) return response;
+    if (!groupId) return { reply: response };
 
-    const parsed = AIQueryService.parseOptionsMenu(response);
-    if (!parsed || parsed.options.length === 0) {
-      return response;
+    // — Caso 1: Pregunta aclaratoria del Freno de Ambigüedad
+    if (AIQueryService.hasClarifyQuestion(response)) {
+      const question = AIQueryService.parseClarifyQuestion(response);
+      if (question) {
+        return {
+          reply: question,
+          clarifyContext: {
+            ragContext,
+            dbContext,
+            originalPrompt: prompt,
+            clarifyingQuestion: question,
+          },
+        };
+      }
     }
 
-    // Guardar opciones para este usuario
-    this.optionsStateService.saveOptions(userId, prompt, parsed.options);
+    // — Caso 2: Menú de opciones
+    const parsedMenu = AIQueryService.parseOptionsMenu(response);
+    if (parsedMenu && parsedMenu.options.length > 0) {
+      this.optionsStateService.saveOptions(userId, prompt, parsedMenu.options);
+      return { reply: AIQueryService.formatOptionsForWhatsApp(parsedMenu.intro, parsedMenu.options) };
+    }
 
-    // Formatear la respuesta con emojis numéricos para WhatsApp
-    return AIQueryService.formatOptionsForWhatsApp(parsed.intro, parsed.options);
+    // — Caso 3: Respuesta directa
+    return { reply: response };
+  }
+
+  /**
+   * Heurística estricta para detectar si el mensaje del usuario es una pregunta nueva
+   * y no una respuesta a la pregunta aclaratoria del bot.
+   *
+   * Retorna true (cambio de tema) SOLO si:
+   * 1. El mensaje contiene frases explícitas de cancelación, O
+   * 2. El mensaje contiene signos de interrogación Y es suficientemente largo (> 25 chars).
+   *
+   * En cualquier otro caso (incluyendo respuestas cortas o ambiguas) asume que el
+   * usuario está respondiendo la pregunta aclaratoria.
+   */
+  public static seemsTopicChange(userResponse: string, _clarifyingQuestion: string): boolean {
+    const text = userResponse.trim();
+
+    // Regla 1: frases explícitas de cancelación
+    const CANCEL_PATTERNS = [
+      /\bolvidalo\b/i,
+      /\bcancelar\b/i,
+      /\bolvida(te|lo)?\b/i,
+      /\botra\s+(?:cosa|pregunta|consulta)\b/i,
+      /\bcambiando\s+de\s+tema\b/i,
+      /\bno\s+importa\b/i,
+      /\bdejalo\b/i,
+    ];
+    if (CANCEL_PATTERNS.some(p => p.test(text))) return true;
+
+    // Regla 2: pregunta nueva (interrogación + longitud suficiente)
+    const hasQuestion = text.includes('?') || text.includes('¿');
+    if (hasQuestion && text.length > 25) return true;
+
+    return false;
   }
 }

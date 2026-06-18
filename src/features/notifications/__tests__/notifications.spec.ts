@@ -213,10 +213,14 @@ describe('Slice de Notificaciones - Pruebas Unitarias', () => {
     it('debería poder programar y listar recordatorios de examen', () => {
       const service = new ScheduledReminderService();
       
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + 5);
+      const futureDateStr = `${futureDate.getFullYear()}-${String(futureDate.getMonth() + 1).padStart(2, '0')}-${String(futureDate.getDate()).padStart(2, '0')}`;
+
       const reminders = service.createRemindersForExam(
         1,
         'Parcial Programación',
-        '2026-06-15',
+        futureDateStr,
         '18:00',
         'simple'
       );

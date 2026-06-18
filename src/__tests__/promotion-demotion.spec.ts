@@ -38,6 +38,11 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
       setActive: vi.fn(async () => null),
     };
 
+    const moderationRepo = {
+      listCurrentlyBanned: vi.fn(async () => [{ id: 42, name: 'BannedUser', phone: '12345', ban_type: 'offtopic' }]),
+      unblockById: vi.fn(async (id: number) => id === 42),
+    };
+
     // construct service with minimal dependencies; cast as any to avoid full interface
     svc = new PrivateChatWorkflowService(
       userProfileRepo,
@@ -47,7 +52,7 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
       {} as any, // examsRepository
       {} as any, // managedClassRepository
       {} as any, // managedTeacherRepository
-      {} as any, // moderationRepository
+      moderationRepo as any, // moderationRepository
       {} as any, // dynamicMessageService
       'secret',
       undefined,
@@ -57,6 +62,7 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
       undefined,
       undefined,
     );
+    (svc as any).moderationRepository = moderationRepo;
   });
 
   it('promotes a selected user to group admin using paginated selection', async () => {
@@ -111,5 +117,23 @@ describe('PrivateChatWorkflowService - promotion/demotion flows', () => {
     expect(adminRepo.register).toHaveBeenCalledWith(adminId);
     expect(adminRepo.setSuperAdmin).toHaveBeenCalledWith(adminId, true);
     expect(response).toContain('Menú Super-Admin');
+  });
+
+  it('unbans a user from the group management menu', async () => {
+    const adminId = 'admin1';
+    await svc.handlePrivateMessage(adminId, '!admin-grupos');
+    await svc.handlePrivateMessage(adminId, '1'); // list groups
+    const menu = await svc.handlePrivateMessage(adminId, '1'); // select first group
+    expect(menu).toContain('11 - Desbanear / Desbloquear usuario');
+
+    // choose unban option
+    const unbanList = await svc.handlePrivateMessage(adminId, '11');
+    expect(unbanList).toContain('Pasá el ID del usuario a desbloquear');
+    expect(unbanList).toContain('42 - BannedUser | Tel: 12345');
+
+    // enter the ID
+    const res = await svc.handlePrivateMessage(adminId, '42');
+    expect(res).toContain('Usuario desbloqueado correctamente ✅');
+    expect(svc.moderationRepository.unblockById).toHaveBeenCalledWith(42);
   });
 });

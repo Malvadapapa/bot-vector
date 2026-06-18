@@ -9,7 +9,9 @@ import * as pino from 'pino';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
-import { MessageRouter } from '../../features/messages/message-router.service.js';
+import { MessageRouter, RouteResult } from '../../features/messages/message-router.service.js';
+import { AIQueryService } from '../../features/ai/ai-query.service.js';
+import { AmbiguityStateService } from '../../features/conversation/ambiguity-state.service.js';
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 import { RateLimitService } from '../../features/ai/rate-limit.service.js';
 import { UserModerationService } from '../../features/moderation/user-moderation.service.js';
@@ -76,6 +78,8 @@ export class VectoritoWhatsAppGateway {
     private moderationService: UserModerationService,
     private groupRepository: GroupRepository,
     private groupMembershipRepository: GroupMembershipRepository,
+    private aiQueryService: AIQueryService,
+    private ambiguityStateService: AmbiguityStateService,
   ) {
     this.installConsoleNoiseFilter();
   }
@@ -243,13 +247,17 @@ export class VectoritoWhatsAppGateway {
 
             const incomingText = this.extractMessageText(incomingMessage).trim();
             const impersonation = PrivateChatWorkflowService.getImpersonation(senderJid);
-            const isSuperAdmin = impersonation.isActive ? false : (typeof (this.adminRepository as any).isSuperAdmin === 'function'
+            const isRealSuperAdmin = typeof (this.adminRepository as any).isSuperAdmin === 'function'
               ? await (this.adminRepository as any).isSuperAdmin(senderJid)
-              : !!(await this.adminRepository.get(senderJid))?.is_super_admin);
-            const isGlobalAdmin = impersonation.isActive ? false : (typeof (this.adminRepository as any).isGlobalAdmin === 'function'
+              : !!(await this.adminRepository.get(senderJid))?.is_super_admin;
+            const isRealGlobalAdmin = typeof (this.adminRepository as any).isGlobalAdmin === 'function'
               ? await (this.adminRepository as any).isGlobalAdmin(senderJid)
-              : (await this.adminRepository.isAuthenticated(senderJid)) && !isSuperAdmin);
-            const isAdmin = impersonation.isActive ? false : (isGlobalAdmin || isSuperAdmin);
+              : (await this.adminRepository.isAuthenticated(senderJid)) && !isRealSuperAdmin;
+            const isRealAdmin = isRealGlobalAdmin || isRealSuperAdmin;
+
+            const isSuperAdmin = impersonation.isActive ? false : isRealSuperAdmin;
+            const isGlobalAdmin = impersonation.isActive ? false : isRealGlobalAdmin;
+            const isAdmin = impersonation.isActive ? false : isRealAdmin;
             const isGroupAdmin = impersonation.isActive ? false : (isGroup ? await this.adminRepository.isGroupAdmin(senderJid, chatId) : false);
             const isActiveGroup = !isGroup ? true : await this.groupRepository.isActive(chatId);
 
@@ -487,10 +495,48 @@ export class VectoritoWhatsAppGateway {
             }
           }
 
+          // ──────────────────────────────────────────────────────────────────────
+          // INTERCEPTOR DE AMBIGÜEDAD PENDIENTE
+          // Si el usuario menciona a @Vector y hay una ambigüedad pendiente,
+          // resolver la ambigüedad (o limpiar si cambió de tema).
+          // ──────────────────────────────────────────────────────────────────────
+          if (isGroup && messageMentionsBot && !isCommand) {
+            const pendingAmbiguity = this.ambiguityStateService.get(senderJid);
+            if (pendingAmbiguity) {
+              const responseText = normalizedGroupText
+                .replace(/@session\\[^\s]+/g, '')
+                .replace(/@\d[\d\-\s]{5,}/g, '')
+                .trim() || normalizedGroupText;
+
+              if (MessageRouter.seemsTopicChange(responseText, pendingAmbiguity.clarifyingQuestion)) {
+                // Cambio de tema: limpiar estado y procesar el nuevo mensaje normalmente
+                logTuiProcessTrace(`[Ambiguity] ${senderJid} cambió de tema. Limpiando estado de ambigüedad.`);
+                this.ambiguityStateService.clear(senderJid);
+                // No hacemos continue: dejamos que el flujo normal maneje el nuevo mensaje
+              } else {
+                // El usuario está respondiendo la pregunta aclaratoria
+                logTuiProcessTrace(`[Ambiguity] ${senderJid} respondió aclaratoria: "${responseText}"`);
+                this.ambiguityStateService.clear(senderJid);
+
+                const resolvedAnswer = await this.aiQueryService.answerWithAmbiguityResolved(
+                  senderJid,
+                  responseText,
+                  pendingAmbiguity.originalPrompt,
+                  pendingAmbiguity.ragContext,
+                  pendingAmbiguity.dbContext,
+                  isAdmin,
+                );
+
+                await this.sendTextMessage(chatId, resolvedAnswer, senderJid, false);
+                continue;
+              }
+            }
+          }
+
           const invokedByMention = messageMentionsBot;
 
-          if (!isAdmin && !isCommand && !(hasPendingMenu && isNumericReply)) {
-            const moderation = await this.moderationService.evaluate(senderJid, normalizedGroupText, isAdmin || isSuperAdmin, new Date());
+          if (!isRealAdmin && !isCommand && !(hasPendingMenu && isNumericReply)) {
+            const moderation = await this.moderationService.evaluate(senderJid, normalizedGroupText, isRealAdmin, new Date());
             if (moderation.warningMessage) {
               logTuiProcessTrace(`Advertencia de moderación para ${senderJid}: ${moderation.warningMessage}`);
               await this.sendTextMessage(chatId, moderation.warningMessage, senderJid, false);
@@ -505,7 +551,7 @@ export class VectoritoWhatsAppGateway {
             }
           }
 
-          const groupReply = await this.router.route(
+          const groupRouteResult = await this.router.route(
             senderJid,
             normalizedGroupText,
             new Date(),
@@ -516,17 +562,23 @@ export class VectoritoWhatsAppGateway {
             chatId,
             isSuperAdmin,
           );
-          if (groupReply == null) continue;
+          if (groupRouteResult == null) continue;
+
+          // Si el router detectó [CLARIFY_QUESTION], persistir contexto en AmbiguityStateService
+          if (groupRouteResult.clarifyContext) {
+            logTuiProcessTrace(`[Ambiguity] Guardando estado de ambigüedad para ${senderJid}: "${groupRouteResult.clarifyContext.clarifyingQuestion}"`);
+            this.ambiguityStateService.save(senderJid, groupRouteResult.clarifyContext);
+          }
 
           // Manejar comando de configuración de grupo
-          if (typeof groupReply === 'string' && groupReply.startsWith('config-grupo:')) {
-            const groupId = groupReply.substring('config-grupo:'.length);
+          if (groupRouteResult.reply.startsWith('config-grupo:')) {
+            const groupId = groupRouteResult.reply.substring('config-grupo:'.length);
             const configReply = await this.privateChatWorkflow.startGroupContextConfiguration(senderJid, groupId);
             await this.sendTextMessage(senderJid, configReply, undefined, true);
             continue;
           }
 
-          const safeReply = String(groupReply).trim() || 'No pude generar una respuesta en este momento.';
+          const safeReply = groupRouteResult.reply.trim() || 'No pude generar una respuesta en este momento.';
 
           // ABSENT DATA HANDLING
           const absentDataMatch = safeReply.match(/^\s*\[ABSENT_DATA::([^\]]+)\]/i);

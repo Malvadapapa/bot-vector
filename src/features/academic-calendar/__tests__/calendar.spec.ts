@@ -325,7 +325,8 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
 
   describe('EditExamMenuService', () => {
     it('debería guiar la edición de exámenes', async () => {
-      const examDate = new Date(2026, 5, 15);
+      const examDate = new Date();
+      examDate.setDate(examDate.getDate() + 5);
       await examRepo.create({
         subject: 'Programación 3',
         exam_date: examDate,

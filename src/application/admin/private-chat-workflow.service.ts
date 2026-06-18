@@ -1155,12 +1155,56 @@ export class PrivateChatWorkflowService {
         return parts.join('\n');
       }
 
+      if (lowered === '11') {
+        if (!this.moderationRepository) return 'Repositorio de moderación no disponible.';
+        const banned = await this.moderationRepository.listCurrentlyBanned(new Date(), 100);
+        if (!banned.length) {
+          const menuText = await this.superAdminManageGroupMenuText(gid);
+          return `No hay usuarios baneados para desbloquear.\n\n${menuText}`;
+        }
+        this.pendingAdminState.set(userId, 'super_admin_manage_group_unban');
+        return [
+          'Pasá el ID del usuario a desbloquear (o escribí "cancelar" para volver):',
+          ...banned.map((u: any) => `${u.id} - ${u.name || 'Sin nombre'} | Tel: ${u.phone} | Tipo: ${u.ban_type}`),
+        ].join('\n');
+      }
+
       if (lowered === '0' || lowered === 'menu' || lowered === 'volver') {
         this.pendingAdminState.set(userId, 'super_admin_main');
         return await this.superAdminMenuText(userId);
       }
 
       return 'Opción inválida. Elegí una opción del menú.';
+    }
+
+    if (currentState === 'super_admin_manage_group_unban') {
+      const data = this.pendingSuperAdminData.get(userId);
+      const gid = data?.groupId;
+      if (!gid) {
+        this.pendingAdminState.delete(userId);
+        return 'No hay grupo seleccionado. Volvé a iniciar con admin-grupos.';
+      }
+
+      const choice = cleaned.trim().toLowerCase();
+      if (choice === 'cancelar' || choice === 'menu' || choice === '0' || choice === 'volver') {
+        this.pendingAdminState.set(userId, 'super_admin_manage_group');
+        const menuText = await this.superAdminManageGroupMenuText(gid);
+        return menuText;
+      }
+
+      if (!/^\d+$/.test(choice)) {
+        return 'Pasame un ID numérico válido o escribí "cancelar" para volver.';
+      }
+
+      const ok = await this.moderationRepository.unblockById(Number(choice));
+      this.pendingAdminState.set(userId, 'super_admin_manage_group');
+      const menuText = await this.superAdminManageGroupMenuText(gid);
+
+      if (!ok) {
+        return `No encontré un usuario baneado con ese ID.\n\n${menuText}`;
+      }
+
+      return `Usuario desbloqueado correctamente ✅\n\n${menuText}`;
     }
 
     if (currentState === 'super_admin_edit_entry_year') {
@@ -1938,6 +1982,7 @@ export class PrivateChatWorkflowService {
       '8 - Editar nombre de apoyo (display_name)',
       '9 - ❌ Eliminar grupo (borra datos y sale del grupo)',
       '10 - Cambiar comisión de un usuario',
+      '11 - Desbanear / Desbloquear usuario',
       '',
       '0 - Volver al menú Super-Admin',
     ].join('\n');

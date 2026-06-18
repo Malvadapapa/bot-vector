@@ -100,7 +100,10 @@ function isRateLimitError(error: any): boolean {
 
 /** Detecta errores de facturación/créditos — cambiar de modelo no ayuda. */
 function isBillingError(error: any): boolean {
+  const status = error?.status ?? error?.httpStatusCode ?? error?.code;
+  if (status === 429) return false;
   const msg = String(error?.message || '').toLowerCase();
+  if (msg.includes('quota') || msg.includes('exceeded') || msg.includes('rate limit')) return false;
   return msg.includes('credits are depleted') || msg.includes('billing') || msg.includes('payment') || msg.includes('prepayment');
 }
 
@@ -232,7 +235,6 @@ export class GeminiService implements AIProvider {
         return result;
       } catch (err: any) {
         lastError = err;
-
         if (isBillingError(err)) {
           console.error(`[IA] ⛔ Créditos de API agotados. No se puede usar ningún modelo. Revisá tu cuenta en https://ai.studio/projects`);
           throw new Error('Los créditos de la API de Gemini están agotados.');

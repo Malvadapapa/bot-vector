@@ -709,7 +709,7 @@ describe('InstitutionalEmailMonitor - temporal validation', () => {
     const email = {
       subject: '!aviso: Test',
       from: { text: 'profesor@example.com' },
-      text: 'nombre: Test\ninicia: 20/06/2026\ntermina: 15/06/2026\ncuerpo: Body',
+      text: 'nombre: Test\ninicia: 20/06/2030\ntermina: 15/06/2030\ncuerpo: Body',
     } as any;
 
     mockEmailService.fetchUnreadInstitutionEmails.mockResolvedValueOnce([email]);

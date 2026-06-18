@@ -8,8 +8,22 @@ import { PrivateChatWorkflowService } from '../../application/admin/private-chat
 import { getSettings } from '../../shared/config/settings.js';
 import { AcademicGuardrail } from './academic-guardrail.js';
 
+/**
+ * Resultado enriquecido de una consulta a la IA.
+ * Expone los contextos RAG y DB para que el router pueda guardarlos
+ * en el AmbiguityStateService sin requerir una segunda búsqueda.
+ */
+export interface AIQueryResult {
+  /** Texto de respuesta generado por el LLM. */
+  response: string;
+  /** Contexto RAG inyectado en el prompt (vacío si no hubo RAG relevante). */
+  ragContext: string;
+  /** Contexto de base de datos inyectado en el prompt (vacío si no hubo). */
+  dbContext: string;
+}
+
 export class AIQueryService {
-  private static readonly RESPONSE_TIMEOUT_MS = 25_000;
+  private static readonly RESPONSE_TIMEOUT_MS = 45_000;
   private static readonly TOPIC_CLASSIFICATION_TIMEOUT_MS = 8_000;
 
   private static readonly GREETING_PATTERNS: RegExp[] = [
@@ -34,11 +48,12 @@ export class AIQueryService {
     const nowResolved = now || new Date();
 
     const impersonation = PrivateChatWorkflowService.getImpersonation(userId);
+    const isRealAdmin = isAdmin || impersonation.isActive;
     const effectiveIsAdmin = impersonation.isActive ? false : isAdmin;
     const customLimit = impersonation.isActive ? impersonation.maxQuestions ?? undefined : undefined;
 
     // 0) Compruebo bloqueo a través del servicio de moderación (envía notificación privada si corresponde)
-    const evalResult = await this.userModerationService.evaluate(userId, prompt, effectiveIsAdmin, nowResolved);
+    const evalResult = await this.userModerationService.evaluate(userId, prompt, isRealAdmin, nowResolved);
     if (evalResult.blocked) {
       logTuiProcessTrace(`Acceso denegado: El usuario ${userId} se encuentra suspendido por moderación.`);
       return '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.';
@@ -80,7 +95,7 @@ export class AIQueryService {
       const adminLog = `[RAG-Pipeline] [Paso 1] Usuario es administrador. Omitiendo clasificación de intención.`;
       console.log(adminLog);
       logTuiProcessTrace(adminLog);
-      return await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
+      return (await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit)).response;
     }
 
     // 1) Clasificar (heurística simple)
@@ -90,7 +105,7 @@ export class AIQueryService {
     logTuiProcessTrace(intentLog);
 
     if (cls.status === 'ok') {
-      return await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
+      return (await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit)).response;
     }
 
     if (cls.status === 'unclear') {
@@ -99,6 +114,10 @@ export class AIQueryService {
     }
 
     // 2) Off-topic -> delegar escalado a UserModerationService
+    if (isRealAdmin) {
+      logTuiProcessTrace(`Consulta de ${userId} clasificada como OFF-TOPIC, pero omitida por ser Administrador real.`);
+      return 'Esta es una consulta clasificada como OFF-TOPIC por el guardrail, pero no se aplica sanción por ser Administrador.';
+    }
     logTuiProcessTrace(`Consulta de ${userId} clasificada como OFF-TOPIC.`);
     const action = await this.userModerationService.handleInfraction(userId, undefined, cls.reason || 'offtopic', nowResolved);
     logTuiProcessTrace(`Acción de moderación aplicada para ${userId}: ${action.action} (Mensaje: ${action.message})`);
@@ -109,7 +128,7 @@ export class AIQueryService {
     return 'No pude procesar tu pedido.';
   }
 
-  private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string, customDailyLimit?: number): Promise<string> {
+  private async generateAnswer(userId: string, prompt: string, now: Date | undefined = undefined, isAdmin: boolean, groupId?: string, customDailyLimit?: number): Promise<AIQueryResult> {
     const currentDateTime = now || new Date();
 
     // ✅ Consumir cuota al inicio para evitar condiciones de carrera y llamadas innecesarias a la API de la IA
@@ -119,7 +138,7 @@ export class AIQueryService {
     if (!decision.allowed) {
       logTuiProcessTrace(`Acceso denegado por cuota: El usuario ${userId} superó su límite diario de consultas.`);
       const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
-      return `${prefix} ${decision.message}`;
+      return { response: `${prefix} ${decision.message}`, ragContext: '', dbContext: '' };
     }
 
     logTuiProcessTrace(`Cuota consumida para ${userId}. Restantes: ${decision.remaining_after_request === Number.MAX_SAFE_INTEGER ? 'ilimitadas (admin)' : decision.remaining_after_request}`);
@@ -177,6 +196,34 @@ export class AIQueryService {
       'Ejemplo: `[ABSENT_DATA::clases]` para agenda/horarios, `[ABSENT_DATA::examenes]` para exámenes, `[ABSENT_DATA::profesores]` para profesores.',
       'Si la información solicitada sí está cargada y presente en el contexto, respondé normalmente sin anteponer ninguna etiqueta.',
       '',
+      '[FRENO DE AMBIGÜEDAD UNIVERSAL - REGLA CRÍTICA]',
+      'Si el contexto recuperado (fragmentos RAG) presenta MÚLTIPLES ESCENARIOS, CONDICIONES, REGULACIONES O CAMINOS',
+      'diferentes para responder según el perfil, carrera, año, cohorte o condición del estudiante (ejemplos:',
+      '"si sos alumno regular aplica X, si sos libre aplica Y", "si estás en primer año haces esto, si estás en',
+      'segundo año aquello", "si es equivalencias es tal trámite, si es reconocimiento de saberes es este otro",',
+      '"si es inactividad de tutoría son 14 días, si es baja definitiva son 60 días"), ESTÁ ESTRICTAMENTE PROHIBIDO',
+      'asumir un escenario o listar toda la información de golpe. En cambio, DEBES:',
+      '1. Iniciar tu respuesta EXACTAMENTE con la etiqueta `[CLARIFY_QUESTION]` en la primera línea. Está TERMINANTEMENTE PROHIBIDO anteponer cualquier saludo, introducción, explicación, mención del nombre del usuario, texto o espacio antes de dicha etiqueta. Esta prohibición anula cualquier otra instrucción del sistema sobre dirigirse al usuario por su nombre o saludarlo.',
+      '2. Escribir UNA SOLA pregunta aclaratoria breve y directa para que el usuario defina su situación.',
+      '3. NO dar ningún contenido de respuesta. Solo la etiqueta y la pregunta.',
+      'Ejemplo correcto:',
+      '[CLARIFY_QUESTION]',
+      '¿Estás cursando como alumno *regular* o vas a rendir como *libre*?',
+      '',
+      'REGLAS de uso de [CLARIFY_QUESTION]:',
+      '- Usalo SOLO cuando el RAG tenga caminos condicionales o regulaciones múltiples según la condición del alumno.',
+      '- NO lo usés para preguntas simples con respuesta única y de hecho simple (ej. un email de contacto).',
+      '- NO lo usés junto con [OPTIONS_MENU] en la misma respuesta.',
+      '- Usalo incluso si tenés toda la información en el RAG, siempre que dicha información dependa de definir primero la situación, perfil o condición del alumno. Solo respondé directamente si el usuario ya especificó de forma explícita a qué condición o trámite se refiere en su pregunta (ej: "cómo rindo libre" o "cómo pido equivalencias").',
+      '- Caso Exámenes Finales: Si te preguntan de forma genérica sobre rendir finales, exámenes finales o fechas, y el RAG contiene regulaciones para alumnos regulares y libres, DEBES disparar [CLARIFY_QUESTION] preguntando si el alumno es regular o libre.',
+      '- Caso Cursado/Calendario: Si te preguntan de forma genérica sobre cursado, fechas de inicio o modalidades de cursado, y el RAG contiene plazos distintos para ingresantes (primer año) y avanzados (segundo/tercer año), DEBES disparar [CLARIFY_QUESTION] preguntando si es ingresante o avanzado.',
+      '- Caso Inscripción: Si te preguntan de forma genérica sobre inscripción o cómo inscribirte, y el RAG contiene plazos y procedimientos distintos para cursar materias (ingresantes vs avanzados) o para rendir exámenes finales, DEBES disparar [CLARIFY_QUESTION] preguntando si se refiere a la inscripción para cursar materias o para rendir exámenes finales.',
+      '- Caso Calificaciones/Notas: Si te preguntan de forma genérica sobre ver notas, calificaciones o rendimiento, y el RAG contiene regulaciones para notas de cursada/parciales en Moodle y notas de exámenes finales en SIU Guaraní, DEBES disparar [CLARIFY_QUESTION] preguntando si se refiere a notas de cursada/parciales o a exámenes finales.',
+      '- Caso Trámites Académicos/Equivalencias: Si te preguntan sobre acreditar o certificar materias de otra institución o universidad de forma general, y el RAG contiene diferencias entre el trámite de Equivalencias (materias aprobadas en otra institución) y Reconocimiento de Saberes (experiencia laboral o capacitaciones), DEBES disparar [CLARIFY_QUESTION] preguntando si se refiere a Equivalencias o a Reconocimiento de Saberes.',
+      '- Caso Aprobación de Cursado: Si te preguntan de forma genérica con qué nota o calificación se aprueba el cursado o las materias, y el RAG contiene notas mínimas distintas para materias comunes (nota 4) y para proyectos integradores ABP o reconocimiento de saberes (nota 7), DEBES disparar [CLARIFY_QUESTION] preguntando si se refiere a materias comunes o al proyecto integrador ABP/reconocimiento de saberes.',
+      '- Caso Certificado de Salud (CUS): Si te preguntan de forma genérica sobre cuándo o cómo presentar el Certificado Único de Salud (CUS), y el RAG contiene plazos distintos para ingresantes (inscripción inicial) y avanzados (renovación anual antes del último día hábil de junio), DEBES disparar [CLARIFY_QUESTION] preguntando si es ingresante o alumno avanzado.',
+      '- Caso Correlatividades: Si te preguntan de forma genérica sobre las materias correlativas o cómo te afectan, y el RAG contiene regulaciones para cursado (regularidad requerida) y para exámenes finales (inhabilitación si adeudas correlativas previas), DEBES disparar [CLARIFY_QUESTION] preguntando si se refiere al impacto de las correlativas en el cursado o en los exámenes finales.',
+      '',
       '[MENÚ DE OPCIONES DINÁMICO - INSTRUCCIÓN OBLIGATORIA]',
       'Si la consulta del usuario es amplia, ambigua o tiene múltiples respuestas posibles (por ejemplo "qué trámites puedo hacer?", "qué materias hay?", "cómo me contacto?"), debés presentar un menú de opciones numerado en lugar de responder directamente.',
       'Para activar este menú, iniciá tu respuesta EXACTAMENTE con la etiqueta `[OPTIONS_MENU]` en la primera línea, seguida de una breve introducción y luego las opciones numeradas.',
@@ -221,14 +268,27 @@ export class AIQueryService {
 
     const normalizedAiText = String(aiText || '').trim();
     if (!normalizedAiText) {
-      return 'No pude generar una respuesta en este momento.';
+      return {
+        response: 'No pude generar una respuesta en este momento.',
+        ragContext: ragContext ?? '',
+        dbContext: dbContext ?? '',
+      };
     }
 
-    // Cuántas preguntas quedan (solo para usuarios comunes)
-    const quotaSuffix = !isAdmin && decision.quota_message ? `\n\n${decision.quota_message}` : '';
+    // Cuántas preguntas quedan (solo para usuarios comunes).
+    // EXCEPCIÓN: no agregar sufijo de cuota si el LLM hizo una pregunta aclaratoria,
+    // ya que esa interacción no debe contar como una respuesta "consumida" visiblemente.
+    const isClarifyQuestion = AIQueryService.hasClarifyQuestion(normalizedAiText);
+    const quotaSuffix = !isAdmin && !isClarifyQuestion && decision.quota_message
+      ? `\n\n${decision.quota_message}`
+      : '';
     const responseBody = `${normalizedAiText}${quotaSuffix}`;
 
-    return responseBody;
+    return {
+      response: responseBody,
+      ragContext: ragContext ?? '',
+      dbContext: dbContext ?? '',
+    };
   }
 
   /**
@@ -355,6 +415,24 @@ export class AIQueryService {
   // retorna { status: 'ok'|'unclear'|'offtopic', topic?: string, reason?: string }
   private async classifyPromptQualityAndTopic(prompt: string): Promise<{status:string, topic?:string, reason?:string}> {
     const text = prompt.trim().toLowerCase();
+
+    // 1) Interceptar Saludos
+    if (this.isGreetingPrompt(prompt)) {
+      return { status: 'ok', topic: 'greeting' };
+    }
+
+    // 2) Whitelist para frases de navegación, cancelación y saludos comunes
+    const NAVIGATION_WHITELIST = /^\s*(olvidalo|cancelar|olvida|olvidate|otra cosa|cambiando de tema|no importa|dejalo|gracias|chau|adios|hasta luego|hola|buen dia|buenas tardes|buenas noches)\s*$/i;
+    if (NAVIGATION_WHITELIST.test(text)) {
+      return { status: 'ok', topic: 'navigation' };
+    }
+
+    // 3) Whitelist de palabras clave académicas de alta confianza para evitar falsos negativos en frases cortas
+    const ACADEMIC_KEYWORDS = /\b(inscribir|inscripcion|inscribirme|inscribo|cursar|cursado|examen|examenes|final|finales|materia|materias|equivalencia|equivalencias|cus|siu|guarani|moodle|aula|aulas)\b/i;
+    if (ACADEMIC_KEYWORDS.test(text)) {
+      return { status: 'ok', topic: 'academic_whitelist' };
+    }
+
     if (text.length < 5) return { status: 'unclear', reason: 'muy corto' };
 
     // si contiene palabras sensibles (política, sexual, porn, crimen, etc) => off-topic
@@ -480,5 +558,130 @@ export class AIQueryService {
     const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
     const formatted = options.map((opt, i) => `${NUMBER_EMOJIS[i] || `${i + 1}.`} ${opt}`).join('\n');
     return `${intro}\n\n${formatted}\n\nRespondé con el número para ver más detalles.`;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // FRENO DE AMBIGÜEDAD — métodos públicos
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Verifica si la respuesta del LLM contiene el tag [CLARIFY_QUESTION].
+   */
+  public static hasClarifyQuestion(response: string): boolean {
+    return response.trimStart().startsWith('[CLARIFY_QUESTION]');
+  }
+
+  /**
+   * Extrae la pregunta aclaratoria de una respuesta con [CLARIFY_QUESTION].
+   * Retorna solo el texto de la pregunta, sin el tag.
+   */
+  public static parseClarifyQuestion(response: string): string | null {
+    if (!AIQueryService.hasClarifyQuestion(response)) return null;
+    const question = response.replace(/^\s*\[CLARIFY_QUESTION\]\s*/i, '').trim();
+    return question || null;
+  }
+
+  /**
+   * Genera la respuesta completa después de que el usuario resolvió la ambigüedad.
+   * Reutiliza los contextos RAG y DB guardados en AmbiguityStateService.
+   * NO consume cuota — la cuota ya fue consumida en la consulta original.
+   */
+  public async answerWithAmbiguityResolved(
+    userId: string,
+    clarification: string,
+    originalPrompt: string,
+    savedRagContext: string,
+    savedDbContext: string,
+    isAdmin = false,
+  ): Promise<string> {
+    logTuiProcessTrace(`[Ambiguity] Resolviendo para ${userId}: "${clarification}" (original: "${originalPrompt}")`);
+
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    const now = new Date();
+    const formattedDate = now.toLocaleString('es-AR', { timeZone: tz });
+    const dayNameRaw = now.toLocaleDateString('es-AR', { timeZone: tz, weekday: 'long' });
+    const dayName = dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1);
+
+    const resolvedPrompt = [
+      `[Sistema] Fecha y hora actual: ${formattedDate} (${dayName}).`,
+      '[INSTRUCCIÓN DE RESOLUCIÓN DE AMBIGÜEDAD]',
+      `El usuario originalmente consultó: "${originalPrompt}"`,
+      `Para aclarar, el bot le hizo una pregunta, y el usuario respondió: "${clarification}"`,
+      'Con esta aclaración, ahora SÍ podés dar la respuesta COMPLETA, DETALLADA y ESPECÍFICA.',
+      'Aplicá ÚNICAMENTE el escenario que corresponde a lo que el usuario acaba de confirmar.',
+      'NO uses [CLARIFY_QUESTION] ni [OPTIONS_MENU] en esta respuesta. Respondé directamente.',
+      'Si la respuesta del usuario sigue siendo ambigua, reformulá una pregunta aclaratoria',
+      'más específica dentro del cuerpo del mensaje, sin usar ningún tag especial.',
+      savedRagContext || '',
+      savedDbContext ? `Contexto relevante:\n${savedDbContext}` : '',
+      `Consulta original: "${originalPrompt}" — Aclaración del usuario: "${clarification}"`,
+    ].filter(Boolean).join('\n\n');
+
+    logTuiProcessTrace(`[Ambiguity] Invocando API del LLM para resolución...`);
+    const aiText = await this.withTimeout(
+      this.aiProvider.generateContent(userId, resolvedPrompt, originalPrompt),
+      AIQueryService.RESPONSE_TIMEOUT_MS,
+    );
+    logTuiProcessTrace(`[Ambiguity] Respuesta de resolución recibida.`);
+
+    return String(aiText || '').trim() || 'No pude generar una respuesta en este momento.';
+  }
+
+  /**
+   * Genera una respuesta enriquecida exponiendo ragContext y dbContext.
+   * Usado por el router para poder guardar los contextos en AmbiguityStateService
+   * cuando el LLM emite [CLARIFY_QUESTION].
+   * Solo aplica para usuarios en grupos (flujo IA con RAG).
+   */
+  public async answerEnriched(
+    userId: string,
+    prompt: string,
+    now?: Date,
+    isAdmin = false,
+    groupId?: string,
+  ): Promise<AIQueryResult> {
+    const nowResolved = now || new Date();
+
+    const impersonation = PrivateChatWorkflowService.getImpersonation(userId);
+    const isRealAdmin = isAdmin || impersonation.isActive;
+    const effectiveIsAdmin = impersonation.isActive ? false : isAdmin;
+    const customLimit = impersonation.isActive ? impersonation.maxQuestions ?? undefined : undefined;
+
+    // Chequeos previos — si alguno falla, retornamos el string de error envuelto en AIQueryResult
+    const evalResult = await this.userModerationService.evaluate(userId, prompt, isRealAdmin, nowResolved);
+    if (evalResult.blocked) {
+      return { response: '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.', ragContext: '', dbContext: '' };
+    }
+    if (this.isPromptLeakageAttempt(prompt)) {
+      return { response: '¡Hola! Como asistente virtual del ISPC, estoy para ayudarte con consultas sobre materias, horarios, exámenes y temas académicos del instituto. No puedo compartir mis reglas de comportamiento ni configuraciones internas. ¿En qué te puedo ayudar hoy con respecto al ISPC?', ragContext: '', dbContext: '' };
+    }
+
+    const isExhausted = customLimit !== undefined
+      ? await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin, customLimit)
+      : await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin);
+    if (isExhausted) {
+      const decision = customLimit !== undefined
+        ? await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin, customLimit)
+        : await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin);
+      const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
+      return { response: `${prefix} ${decision.message}`, ragContext: '', dbContext: '' };
+    }
+
+    const cls = await this.classifyPromptQualityAndTopic(prompt);
+    if (cls.status === 'unclear') {
+      return { response: this.generateClarifyingQuestion(prompt), ragContext: '', dbContext: '' };
+    }
+    if (cls.status === 'offtopic') {
+      if (isRealAdmin) {
+        return { response: 'Esta es una consulta clasificada como OFF-TOPIC por el guardrail, pero no se aplica sanción por ser Administrador.', ragContext: '', dbContext: '' };
+      }
+      const action = await this.userModerationService.handleInfraction(userId, undefined, cls.reason || 'offtopic', nowResolved);
+      if (action.action === 'warn-private') return { response: `[MODERATION::WARN_PRIVATE] ${action.message}`, ragContext: '', dbContext: '' };
+      if (action.action === 'warn-public-restrict') return { response: `[MODERATION::WARN_PUBLIC] ${action.message}`, ragContext: '', dbContext: '' };
+      if (action.action === 'ban') return { response: `[MODERATION::BAN] ${action.message}`, ragContext: '', dbContext: '' };
+      return { response: 'No pude procesar tu pedido.', ragContext: '', dbContext: '' };
+    }
+
+    return this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
   }
 }

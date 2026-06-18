@@ -127,7 +127,7 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
       } as any;
 
       const mockAIQueryService = {
-        answer: vi.fn().mockResolvedValue('respuesta ia'),
+        answerEnriched: vi.fn().mockResolvedValue({ response: 'respuesta ia', ragContext: '', dbContext: '' }),
       } as any;
 
       const router = new MessageRouter(
@@ -150,8 +150,9 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
         false,
       );
 
-      expect(result).toBe('respuesta ia');
-      expect(mockAIQueryService.answer).toHaveBeenCalledWith(
+      expect(result).not.toBeNull();
+      expect((result as any).reply).toBe('respuesta ia');
+      expect(mockAIQueryService.answerEnriched).toHaveBeenCalledWith(
         'userA',
         'consulta normal',
         expect.any(Date),
@@ -175,7 +176,11 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
       } as any;
 
       const mockAIQueryService = {
-        answer: vi.fn().mockResolvedValue('[OPTIONS_MENU]\nElige un trámite:\n1. Equivalencias\n2. Regularidad'),
+        answerEnriched: vi.fn().mockResolvedValue({
+          response: '[OPTIONS_MENU]\nElige un trámite:\n1. Equivalencias\n2. Regularidad',
+          ragContext: '',
+          dbContext: '',
+        }),
         answerSelectedOption: vi.fn().mockResolvedValue('Detalle de Equivalencias'),
       } as any;
 
@@ -203,9 +208,9 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
         false,
       );
 
-      expect(step1Result).toContain('Elige un trámite:');
-      expect(step1Result).toContain('1️⃣ Equivalencias');
-      expect(step1Result).toContain('2️⃣ Regularidad');
+      expect((step1Result as any)?.reply).toContain('Elige un trámite:');
+      expect((step1Result as any)?.reply).toContain('1️⃣ Equivalencias');
+      expect((step1Result as any)?.reply).toContain('2️⃣ Regularidad');
       expect(optionsStateService.hasPendingOptions('userA')).toBe(true);
 
       // 2. Enviar número válido '1' -> Debe llamar a answerSelectedOption
@@ -221,7 +226,7 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
         false,
       );
 
-      expect(step2Result).toBe('Detalle de Equivalencias');
+      expect((step2Result as any)?.reply).toBe('Detalle de Equivalencias');
       expect(mockAIQueryService.answerSelectedOption).toHaveBeenCalledWith(
         'userA',
         'Equivalencias',
@@ -247,7 +252,7 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
       } as any;
 
       const mockAIQueryService = {
-        answer: vi.fn().mockResolvedValue('respuesta nueva'),
+        answerEnriched: vi.fn().mockResolvedValue({ response: 'respuesta nueva', ragContext: '', dbContext: '' }),
       } as any;
 
       const optionsStateService = new OptionsStateService();
@@ -274,7 +279,7 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
         false,
       );
 
-      expect(result).toBe('respuesta nueva');
+      expect((result as any)?.reply).toBe('respuesta nueva');
       expect(optionsStateService.hasPendingOptions('userA')).toBe(false);
     });
 
@@ -320,7 +325,8 @@ describe('Slice de Mensajes - Pruebas Unitarias', () => {
       );
 
       // En privado no debe formatear con emojis ni guardar en el servicio
-      expect(result).toBe('[OPTIONS_MENU]\nIntro:\n1. Opcion A');
+      // El router retorna { reply: '...' } incluso para privado
+      expect((result as any)?.reply).toBe('[OPTIONS_MENU]\nIntro:\n1. Opcion A');
       expect(optionsStateService.hasPendingOptions('userA')).toBe(false);
     });
   });

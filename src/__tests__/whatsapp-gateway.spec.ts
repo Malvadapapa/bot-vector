@@ -49,7 +49,7 @@ describe('VectoritoWhatsAppGateway - Filtrado de estados y broadcast', () => {
     vi.clearAllMocks();
 
     mockRouter = {
-      route: vi.fn().mockResolvedValue('reply'),
+      route: vi.fn().mockResolvedValue({ reply: 'reply' }),
       hasActiveMenuState: vi.fn().mockReturnValue(false),
     };
     mockPrivateChatWorkflow = {
@@ -84,6 +84,16 @@ describe('VectoritoWhatsAppGateway - Filtrado de estados y broadcast', () => {
       addMembership: vi.fn(),
     };
 
+    const mockAiQueryService = {
+      answerWithAmbiguityResolved: vi.fn().mockResolvedValue('resolved_answer'),
+    };
+    const mockAmbiguityStateService = {
+      get: vi.fn().mockReturnValue(null),
+      has: vi.fn().mockReturnValue(false),
+      save: vi.fn(),
+      clear: vi.fn(),
+    };
+
     gateway = new VectoritoWhatsAppGateway(
       mockRouter,
       mockPrivateChatWorkflow,
@@ -93,6 +103,8 @@ describe('VectoritoWhatsAppGateway - Filtrado de estados y broadcast', () => {
       mockModerationService,
       mockGroupRepo,
       mockGroupMembershipRepo,
+      mockAiQueryService as any,
+      mockAmbiguityStateService as any,
     );
 
     // Obtener la instancia simulada de makeWASocket

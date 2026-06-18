@@ -13,6 +13,8 @@ import { ClassNotificationService } from './features/notifications/class-notific
 import { ConversationStateService } from './features/conversation/conversation-state.service.js';
 import { DynamicMessageService } from './features/messages/dynamic-message.service.js';
 import { MessageRouter } from './features/messages/message-router.service.js';
+import { AmbiguityStateService } from './features/conversation/ambiguity-state.service.js';
+import { OptionsStateService } from './features/conversation/options-state.service.js';
 import { PrivateChatWorkflowService } from './application/admin/private-chat-workflow.service.js';
 import { RateLimitService } from './features/ai/rate-limit.service.js';
 import { KnowledgeContextService } from './features/ai/knowledge-context.service.js';
@@ -363,12 +365,18 @@ async function bootstrap() {
 
   const aiQueryService = new AIQueryService(fallbackAiService, rateLimitService, knowledgeContextService, moderationService, ragQueryService);
   const conversationStateService = new ConversationStateService(reminderRepository, confirmationRepository);
+  // Instancias de estado de conversación compartidas entre router y gateway
+  const optionsStateService = new OptionsStateService();
+  const ambiguityStateService = new AmbiguityStateService();
+
   const messageRouter = new MessageRouter(
     messageIntentParserService,
     academicCalendarService,
     conversationStateService,
     aiQueryService,
     dailyGreetingRepository,
+    optionsStateService,
+    ambiguityStateService,
   );
 
   const privateChatWorkflow = new PrivateChatWorkflowService(
@@ -400,6 +408,8 @@ async function bootstrap() {
     moderationService,
     groupRepository,
     groupMembershipRepository,
+    aiQueryService,
+    ambiguityStateService,
   );
 
   privateChatWorkflow.setPublishCallback(async (text: string, groupId?: string) => {
