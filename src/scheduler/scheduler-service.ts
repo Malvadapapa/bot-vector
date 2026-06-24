@@ -487,7 +487,7 @@ export class SchedulerService {
       teacherReplies = await all<any>(
         this.sqliteDb,
         `SELECT r.id, r.teacher_message_id, r.author_name, r.content, r.timestamp,
-                m.author_id as teacher_email, m.author_name as teacher_name, m.subject as message_subject
+                m.author_id as teacher_email, m.author_name as teacher_name, m.content as message_subject
          FROM teacher_message_replies r
          JOIN teacher_messages m ON r.teacher_message_id = m.id
          WHERE r.is_from_student = 1 AND r.email_sent = 0`
@@ -628,7 +628,7 @@ export class SchedulerService {
       teacherReplies = await all<any>(
         this.sqliteDb,
         `SELECT r.id, r.teacher_message_id, r.author_name, r.content, r.timestamp,
-                m.author_id as teacher_email, m.author_name as teacher_name, m.subject as message_subject
+                m.author_id as teacher_email, m.author_name as teacher_name, m.content as message_subject
          FROM teacher_message_replies r
          JOIN teacher_messages m ON r.teacher_message_id = m.id
          WHERE r.is_from_student = 1 AND r.whatsapp_sent = 0`
