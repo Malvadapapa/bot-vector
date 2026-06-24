@@ -10,6 +10,8 @@ interface DataTableAction<T> {
   onClick: (item: T) => void;
   variant?: 'danger' | 'ghost' | 'outline';
   disabled?: (item: T) => boolean;
+  className?: (item: T) => string;
+  badgeCount?: (item: T) => number;
 }
 
 interface DataTableProps<T> {
@@ -115,6 +117,8 @@ export function DataTable<T>({
                   variant: act.variant,
                   disabled: act.disabled ? act.disabled(item) : false,
                   onClick: () => act.onClick(item),
+                  className: act.className ? act.className(item) : undefined,
+                  badgeCount: act.badgeCount ? act.badgeCount(item) : undefined,
                 }));
 
                 return (

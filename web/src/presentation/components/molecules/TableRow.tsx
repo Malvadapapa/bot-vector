@@ -7,6 +7,8 @@ interface TableAction {
   onClick: () => void;
   variant?: 'danger' | 'ghost' | 'outline';
   disabled?: boolean;
+  className?: string;
+  badgeCount?: number;
 }
 
 interface TableRowProps {
@@ -59,20 +61,28 @@ export const TableRow: React.FC<TableRowProps> = ({
       {actions.length > 0 && (
         <td className="px-6 py-4 text-sm align-middle text-right whitespace-nowrap">
           <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-            {actions.map((action, index) => (
-              <Button
-                key={index}
-                size="sm"
-                variant={action.variant || buttonVariants[action.icon]}
-                onClick={action.onClick}
-                disabled={action.disabled}
-                title={action.label}
-                className="!p-2"
-              >
-                <span className="sr-only">{action.label}</span>
-                {iconMap[action.icon]}
-              </Button>
-            ))}
+            {actions.map((action, index) => {
+              const hasBadge = action.badgeCount !== undefined && action.badgeCount > 0;
+              return (
+                <Button
+                  key={index}
+                  size="sm"
+                  variant={action.variant || buttonVariants[action.icon]}
+                  onClick={action.onClick}
+                  disabled={action.disabled}
+                  title={action.label}
+                  className={`!p-2 relative ${action.className || ''}`}
+                >
+                  <span className="sr-only">{action.label}</span>
+                  {iconMap[action.icon]}
+                  {hasBadge && (
+                    <span className="absolute -top-1.5 -right-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white ring-2 ring-[var(--color-bg-card)]">
+                      {action.badgeCount}
+                    </span>
+                  )}
+                </Button>
+              );
+            })}
           </div>
         </td>
       )}

@@ -1526,18 +1526,7 @@ const SANoticesTab: React.FC = () => {
                     searchFields={['title']}
                     renderRowCells={(n) => [
                         <div className="flex flex-col">
-                            <div className="flex items-center gap-2">
-                                <span className="font-semibold">{n.title}</span>
-                                {n.unreadRepliesCount && n.unreadRepliesCount > 0 ? (
-                                    <span className="inline-flex items-center justify-center px-2 py-0.5 text-[10px] font-bold leading-none text-white bg-red-500 rounded-full animate-pulse" title={`${n.unreadRepliesCount} consultas nuevas`}>
-                                        {n.unreadRepliesCount}
-                                    </span>
-                                ) : n.repliesCount && n.repliesCount > 0 ? (
-                                    <span className="inline-flex items-center justify-center px-2 py-0.5 text-[10px] font-bold leading-none text-[var(--color-text-secondary)] bg-[var(--color-border)] rounded-full" title={`${n.repliesCount} consultas`}>
-                                        {n.repliesCount}
-                                    </span>
-                                ) : null}
-                            </div>
+                            <span className="font-semibold">{n.title}</span>
                             <span className="text-xs text-[var(--color-text-secondary)] truncate max-w-sm">{n.body}</span>
                         </div>,
                         <Badge variant="accent">{n.targetName}</Badge>,
@@ -1552,7 +1541,15 @@ const SANoticesTab: React.FC = () => {
                     ]}
                     actions={[
                         { icon: 'edit', label: 'Editar aviso', onClick: (n) => { setEditingNotice(n); setIsFormOpen(true); } },
-                        { icon: 'chat', label: 'Ver réplicas WhatsApp', onClick: (n) => handleOpenChat(n) },
+                        { 
+                            icon: 'chat', 
+                            label: 'Ver réplicas WhatsApp', 
+                            onClick: (n) => handleOpenChat(n),
+                            className: (n) => n.unreadRepliesCount && n.unreadRepliesCount > 0 
+                                ? '!text-emerald-600 hover:!text-emerald-700 !bg-emerald-500/10 hover:!bg-emerald-500/20 !border-emerald-500/30' 
+                                : '',
+                            badgeCount: (n) => n.unreadRepliesCount || 0
+                        },
                         { icon: 'delete', label: 'Eliminar comunicado', onClick: (n) => setDeleteId(n.id) }
                     ]}
                 />
