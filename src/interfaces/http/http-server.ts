@@ -1444,6 +1444,7 @@ export class HttpServer {
             createdBy: e.exam.created_by,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            commissionId: e.exam.exam_commission_id ? String(e.exam.exam_commission_id) : undefined,
           });
         }
 
@@ -1454,7 +1455,7 @@ export class HttpServer {
       // POST /api/exams
       if (pathname === '/api/exams' && req.method === 'POST') {
         const body = await this.getBodyJson(req);
-        const { subjectId, type, title, startDate, endDate, alerts, groupId, createdBy } = body;
+        const { subjectId, type, title, startDate, endDate, alerts, groupId, createdBy, commissionId } = body;
 
         const subRow = await get<any>(
           this.sqliteDb,
@@ -1479,7 +1480,8 @@ export class HttpServer {
           aviso_inicio_only: alerts?.notifyAtRangeStart ? 1 : 0,
           aviso_fin_pre_deadline: alerts?.notifyBeforeDeadline ? 1 : 0,
           created_by_name: authUser?.name || 'Admin',
-          created_by_role: authUser?.role || 'super_admin'
+          created_by_role: authUser?.role || 'super_admin',
+          exam_commission_id: commissionId ? Number(commissionId) : undefined
         });
 
         this.sendJson(res, 201, { success: true, id: String(newId) });
@@ -1489,7 +1491,7 @@ export class HttpServer {
       // PUT /api/exams/:id
       if (pathname.startsWith('/api/exams/') && req.method === 'PUT') {
         const id = parseInt(pathname.substring('/api/exams/'.length), 10);
-        const { title, type, startDate, endDate, alerts } = await this.getBodyJson(req);
+        const { title, type, startDate, endDate, alerts, commissionId } = await this.getBodyJson(req);
 
         const updates: any = {};
         if (title !== undefined) updates.observations = title;
@@ -1499,6 +1501,7 @@ export class HttpServer {
         if (alerts?.timings !== undefined) updates.frecuenciaAvisos = alerts.timings.join(',');
         if (alerts?.notifyAtRangeStart !== undefined) updates.aviso_inicio_only = alerts.notifyAtRangeStart ? 1 : 0;
         if (alerts?.notifyBeforeDeadline !== undefined) updates.aviso_fin_pre_deadline = alerts.notifyBeforeDeadline ? 1 : 0;
+        if (commissionId !== undefined) updates.exam_commission_id = commissionId ? Number(commissionId) : null;
 
         await this.managedExamRepository.update(id, updates);
         this.sendJson(res, 200, { success: true });
@@ -2151,12 +2154,11 @@ export class HttpServer {
             await run(
               this.sqliteDb,
               `UPDATE managed_teachers 
-               SET name = ?, email = ?, phone = ?, notify_email = ?, notify_whatsapp = ?, updated_at = CURRENT_TIMESTAMP
+               SET name = ?, email = ?, notify_email = ?, notify_whatsapp = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?`,
               [
                 name,
                 email.toLowerCase().trim(),
-                phone ?? null,
                 notifyEmail ? 1 : 0,
                 notifyWhatsapp ? 1 : 0,
                 teacher.id
@@ -2165,12 +2167,11 @@ export class HttpServer {
           } else {
             await run(
               this.sqliteDb,
-              `INSERT INTO managed_teachers (name, email, phone, notify_email, notify_whatsapp)
-               VALUES (?, ?, ?, ?, ?)`,
+              `INSERT INTO managed_teachers (name, email, notify_email, notify_whatsapp)
+               VALUES (?, ?, ?, ?)`,
               [
                 name,
                 email.toLowerCase().trim(),
-                phone ?? null,
                 notifyEmail ? 1 : 0,
                 notifyWhatsapp ? 1 : 0
               ]
@@ -2179,6 +2180,166 @@ export class HttpServer {
         }
 
         this.sendJson(res, 200, { success: true });
+        return;
+      }
+
+      // GET /api/teachers/my-assignments
+      if (pathname === '/api/teachers/my-assignments' && req.method === 'GET') {
+        if (authUser.role !== 'professor' && authUser.role !== 'super_admin') {
+          this.sendJson(res, 403, { success: false, error: 'Acceso denegado.' });
+          return;
+        }
+
+        let teacherRows = [];
+        if (authUser.role === 'super_admin') {
+          const emailParam = parsedUrl.searchParams.get('email');
+          const emailToFilter = emailParam ? emailParam.toLowerCase().trim() : authUser.email.toLowerCase().trim();
+          teacherRows = await all<any>(
+            this.sqliteDb,
+            'SELECT id, name, email, subject, group_id, commission_id, commission_label FROM managed_teachers WHERE LOWER(email) = ?',
+            [emailToFilter]
+          );
+        } else {
+          teacherRows = await all<any>(
+            this.sqliteDb,
+            'SELECT id, name, email, subject, group_id, commission_id, commission_label FROM managed_teachers WHERE LOWER(email) = ?',
+            [authUser.email.toLowerCase().trim()]
+          );
+        }
+
+        this.sendJson(res, 200, teacherRows.map(t => ({
+          id: String(t.id),
+          name: t.name,
+          email: t.email,
+          subject: t.subject,
+          groupId: t.group_id,
+          commissionId: t.commission_id ? String(t.commission_id) : null,
+          commissionLabel: t.commission_label
+        })));
+        return;
+      }
+
+      // POST /api/profile/send-phone-otp
+      if (pathname === '/api/profile/send-phone-otp' && req.method === 'POST') {
+        const { phone } = await this.getBodyJson(req);
+        if (!phone) {
+          this.sendJson(res, 400, { success: false, error: 'Teléfono requerido.' });
+          return;
+        }
+
+        const phoneCleaned = phone.replace(/\D/g, '');
+        if (!phoneCleaned) {
+          this.sendJson(res, 400, { success: false, error: 'Número de teléfono inválido.' });
+          return;
+        }
+
+        const jid = `${phoneCleaned}@s.whatsapp.net`;
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+
+        await run(
+          this.sqliteDb,
+          `INSERT INTO phone_otp_sessions (email, phone, code, expires_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(email, phone) DO UPDATE SET code = excluded.code, expires_at = excluded.expires_at, created_at = CURRENT_TIMESTAMP`,
+          [authUser.email.toLowerCase().trim(), jid, code, expiresAt.toISOString()]
+        );
+
+        try {
+          const otpMessage = `🔑 *Código de Verificación de Teléfono*\n\nHola. Tu código de verificación para vincular este número al Panel de Vectorito es: *${code}*.\n\nIngresalo en el panel web para completar la vinculación.`;
+          await this.vectoritoWhatsAppGateway.sendTextMessage(jid, otpMessage);
+          this.sendJson(res, 200, { success: true, debugCode: code });
+        } catch (e) {
+          console.error('[HTTP Server] Falló envío de OTP a WhatsApp:', e);
+          this.sendJson(res, 500, { success: false, error: 'No se pudo enviar el mensaje por WhatsApp. Verificá el número de teléfono.' });
+        }
+        return;
+      }
+
+      // POST /api/profile/verify-phone-otp
+      if (pathname === '/api/profile/verify-phone-otp' && req.method === 'POST') {
+        const { phone, code } = await this.getBodyJson(req);
+        if (!phone || !code) {
+          this.sendJson(res, 400, { success: false, error: 'Teléfono y código OTP requeridos.' });
+          return;
+        }
+
+        const phoneCleaned = phone.replace(/\D/g, '');
+        const jid = `${phoneCleaned}@s.whatsapp.net`;
+
+        const row = await get<any>(
+          this.sqliteDb,
+          'SELECT expires_at FROM phone_otp_sessions WHERE LOWER(email) = ? AND phone = ? AND code = ? LIMIT 1',
+          [authUser.email.toLowerCase().trim(), jid, code.trim()]
+        );
+
+        if (!row) {
+          this.sendJson(res, 400, { success: false, error: 'Código de verificación inválido.' });
+          return;
+        }
+
+        const expiresTime = new Date(row.expires_at).getTime();
+        if (Date.now() > expiresTime) {
+          await run(this.sqliteDb, 'DELETE FROM phone_otp_sessions WHERE LOWER(email) = ? AND phone = ?', [authUser.email.toLowerCase().trim(), jid]);
+          this.sendJson(res, 400, { success: false, error: 'El código de verificación ha expirado.' });
+          return;
+        }
+
+        // OTP is valid! Clean up
+        await run(this.sqliteDb, 'DELETE FROM phone_otp_sessions WHERE LOWER(email) = ? AND phone = ?', [authUser.email.toLowerCase().trim(), jid]);
+
+        // Link in user_profiles: delete any profile with this email that is not this JID
+        await run(this.sqliteDb, 'UPDATE user_profiles SET email = "" WHERE LOWER(email) = ? AND user_id != ?', [authUser.email.toLowerCase().trim(), jid]);
+
+        // Upsert user_profile
+        await run(
+          this.sqliteDb,
+          `INSERT INTO user_profiles (user_id, name, birthday_day_month, email, user_commission_id)
+           VALUES (?, ?, '01/01', ?, 1)
+           ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, name = excluded.name`,
+          [jid, authUser.name, authUser.email.toLowerCase().trim()]
+        );
+
+        // Update phone in managed_teachers
+        await run(
+          this.sqliteDb,
+          'UPDATE managed_teachers SET phone = ? WHERE LOWER(email) = ?',
+          [jid, authUser.email.toLowerCase().trim()]
+        );
+
+        this.sendJson(res, 200, { success: true });
+        return;
+      }
+
+      // GET /api/groups/:id/students
+      if (pathname.startsWith('/api/groups/') && pathname.endsWith('/students') && req.method === 'GET') {
+        const parts = pathname.split('/');
+        const groupId = parts[3];
+
+        const groupRow = await get<any>(
+          this.sqliteDb,
+          'SELECT entry_year FROM whatsapp_groups WHERE group_id = ? LIMIT 1',
+          [groupId]
+        );
+        const cohortId = groupRow?.entry_year ? `camada:${groupRow.entry_year}` : 'camada:2026';
+
+        const rows = await all<any>(
+          this.sqliteDb,
+          `SELECT p.user_id as id, p.name, p.email, m.commission_id
+           FROM group_memberships m
+           JOIN user_profiles p ON m.user_id = p.user_id
+           WHERE m.group_id = ? AND m.is_active = 1`,
+          [groupId]
+        );
+
+        this.sendJson(res, 200, rows.map(r => ({
+          id: r.id,
+          name: r.name,
+          phone: String(r.id).split('@')[0],
+          email: r.email,
+          cohortId,
+          commissionId: r.commission_id ? String(r.commission_id) : undefined
+        })));
         return;
       }
 
@@ -2431,11 +2592,24 @@ export class HttpServer {
       // GET /api/messages
       if (pathname === '/api/messages' && req.method === 'GET') {
         const groupId = parsedUrl.searchParams.get('groupId') || '';
-        const rows = await all<any>(
+        const context = await this.groupContextRepository.getByGroupId(groupId);
+        const groupRow = await get<any>(
           this.sqliteDb,
-          'SELECT * FROM teacher_messages WHERE target_id = ? OR target_id = "" ORDER BY timestamp DESC',
+          'SELECT entry_year FROM whatsapp_groups WHERE group_id = ? LIMIT 1',
           [groupId]
         );
+        const cohortYear = groupRow?.entry_year || (context?.year ? (new Date().getFullYear() - context.year + 1) : null);
+        const cohortId = cohortYear ? `camada:${cohortYear}` : null;
+
+        let query = 'SELECT * FROM teacher_messages WHERE target_id = ? OR target_id = ""';
+        const params = [groupId];
+        if (cohortId) {
+          query += ' OR target_id = ?';
+          params.push(cohortId);
+        }
+        query += ' ORDER BY timestamp DESC';
+
+        const rows = await all<any>(this.sqliteDb, query, params);
         const mapped = await Promise.all(rows.map(async (r) => {
           let repliesCount = 0;
           let unreadRepliesCount = 0;

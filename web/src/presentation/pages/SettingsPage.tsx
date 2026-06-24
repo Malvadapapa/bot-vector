@@ -14,6 +14,10 @@ export const SettingsPage: React.FC = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [initialPhone, setInitialPhone] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifyWhatsapp, setNotifyWhatsapp] = useState(true);
   
@@ -122,6 +126,7 @@ export const SettingsPage: React.FC = () => {
         setName(data.name || '');
         setEmail(data.email || '');
         setPhone(data.phone || '');
+        setInitialPhone(data.phone || '');
         setNotifyEmail(data.notifyEmail !== false);
         setNotifyWhatsapp(data.notifyWhatsapp !== false);
       } catch (e) {
@@ -140,7 +145,7 @@ export const SettingsPage: React.FC = () => {
       await profileRepository.updateSettings({
         name,
         email,
-        phone: user?.role === 'professor' ? phone : undefined,
+        phone: user?.role === 'professor' ? initialPhone : undefined,
         notifyEmail: user?.role === 'professor' ? notifyEmail : undefined,
         notifyWhatsapp: user?.role === 'professor' ? notifyWhatsapp : undefined,
       });
@@ -152,11 +157,55 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleSendOtp = async () => {
+    if (!phone) {
+      toast.error('Por favor ingresá un número de teléfono.');
+      return;
+    }
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanPhone) {
+      toast.error('Número de teléfono inválido.');
+      return;
+    }
+    try {
+      await profileRepository.sendPhoneOtp(cleanPhone);
+      setIsOtpSent(true);
+      toast.success('Código de verificación enviado por WhatsApp.');
+    } catch (e: any) {
+      toast.error(e.message || 'Error al enviar el código de verificación.');
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!otpCode) {
+      toast.error('Por favor ingresá el código de verificación.');
+      return;
+    }
+    const cleanPhone = phone.replace(/\D/g, '');
+    setIsVerifyingOtp(true);
+    try {
+      await profileRepository.verifyPhoneOtp(cleanPhone, otpCode);
+      setInitialPhone(cleanPhone);
+      setPhone(cleanPhone);
+      setIsOtpSent(false);
+      setOtpCode('');
+      toast.success('¡Número de teléfono verificado y vinculado con éxito!');
+    } catch (e: any) {
+      toast.error(e.message || 'Código de verificación incorrecto.');
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
   const handleThemeChange = (themeId: string) => {
     setSelectedTheme(themeId);
     localStorage.setItem('app_theme', themeId);
-    document.body.className = '';
-    document.body.classList.add(`theme-${themeId}`);
+    if (themeId === 'classic-dark') {
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      document.documentElement.setAttribute('data-theme', themeId);
+    }
+    window.dispatchEvent(new Event('theme-changed'));
     toast.success('Paleta visual aplicada con éxito.');
   };
 
@@ -239,15 +288,61 @@ export const SettingsPage: React.FC = () => {
                   <span className="text-xs font-bold text-[var(--color-text-primary)]">Preferencias de Notificaciones (Docente)</span>
                 </div>
 
-                <div className="grid gap-6 sm:grid-cols-2">
-                  <FormField
-                    label="Teléfono WhatsApp (Formato Internacional)"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="Ej: +5493512345678"
-                    icon={<Phone className="w-4 h-4" />}
-                  />
+                <div className="grid gap-6 sm:grid-cols-2 items-end">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-[var(--color-text-secondary)] uppercase">
+                        Teléfono WhatsApp (Formato Internacional)
+                      </label>
+                      {phone && (
+                        phone.replace(/\D/g, '') === initialPhone.replace(/\D/g, '') ? (
+                          <span className="text-[10px] bg-green-500/10 text-green-500 border border-green-500/20 px-2 py-0.5 rounded-full font-bold uppercase">
+                            Verificado
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 px-2 py-0.5 rounded-full font-bold uppercase animate-pulse">
+                            Pendiente
+                          </span>
+                        )
+                      )}
+                    </div>
+                    <FormField
+                      label=""
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="Ej: 5493512345678 (sin espacios ni el +)"
+                      icon={<Phone className="w-4 h-4" />}
+                    />
+                  </div>
+
+                  {phone && phone.replace(/\D/g, '') !== initialPhone.replace(/\D/g, '') && !isOtpSent && (
+                    <div className="pb-1">
+                      <Button type="button" variant="primary" size="sm" onClick={handleSendOtp}>
+                        Verificar Teléfono
+                      </Button>
+                    </div>
+                  )}
                 </div>
+                
+                {isOtpSent && (
+                  <div className="p-4 border border-[var(--color-border)] bg-[var(--color-bg-card)] rounded-xl space-y-4 max-w-sm animate-fade-in">
+                    <FormField
+                      label="Código de Verificación (Enviado a tu WhatsApp)"
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value)}
+                      placeholder="Ej: 123456"
+                      required
+                    />
+                    <div className="flex gap-2">
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setIsOtpSent(false)}>
+                        Cancelar
+                      </Button>
+                      <Button type="button" variant="primary" size="sm" onClick={handleVerifyOtp} disabled={isVerifyingOtp}>
+                        {isVerifyingOtp ? 'Verificando...' : 'Confirmar Código'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 
                 <p className="text-[11px] text-[var(--color-text-tertiary)] leading-relaxed">
                   Para recibir alertas sobre réplicas de alumnos, asegurate de cargar tu número de teléfono con el código de país.

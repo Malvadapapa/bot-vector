@@ -215,5 +215,8 @@ export interface IProfileRepository {
   getSettings(): Promise<ProfileSettings>;
   updateSettings(settings: ProfileSettings): Promise<void>;
   getProfileMe(): Promise<User>;
+  sendPhoneOtp(phone: string): Promise<void>;
+  verifyPhoneOtp(phone: string, code: string): Promise<void>;
+  getMyAssignments(): Promise<any[]>;
 }
 

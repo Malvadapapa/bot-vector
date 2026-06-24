@@ -201,6 +201,15 @@ export class InboundEmailRejectionRepository {
     );
     return !!row;
   }
+
+  async hasBeenRejected(sender: string): Promise<boolean> {
+    const row = await get<any>(
+      this.db,
+      'SELECT id FROM inbound_email_rejections WHERE LOWER(sender) = ? LIMIT 1',
+      [sender.trim().toLowerCase()]
+    );
+    return !!row;
+  }
 }
 
 export class AuthorizedEmailRepository {

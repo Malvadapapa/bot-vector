@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import { DynamicMessageService } from '../../features/messages/dynamic-message.service.js';
 import { ManagedExam, ManagedClassCreateInput, ManagedTeacherCreateInput } from '../../domain/models.js';
 import { InstitutionalNotice } from '../../features/notifications/notifications.models.js';
-import { formatLocalDateOnly, run } from '../../shared/db/db-utils.js';
+import { formatLocalDateOnly, run, get, all } from '../../shared/db/db-utils.js';
+import { OutboundEmailService } from '../../features/notifications/integrations/email.service.js';
 import {
   AdminRepository,
   AdminVerificationCodeRepository,
@@ -353,6 +354,12 @@ export class PrivateChatWorkflowService {
       return '🔐 *Registro de Administrador*\n\nHola. Para continuar, necesito verificar tu identidad.\n\nMandame el *código de 6 dígitos* que te proporcionaron.';
     }
 
+    const lowerCleaned = cleaned.toLowerCase().trim();
+    if (lowerCleaned === '!panel' || lowerCleaned === 'panel' || lowerCleaned.startsWith('!panel ') || lowerCleaned.startsWith('panel ')) {
+      this.clearPendingData(userId);
+      return await this.handleTeacherPanelCommand(userId, cleaned);
+    }
+
     // Verificar inactividad de 15 minutos en el registro de estudiante
     const lastInteraction = this.pendingProfileTimestamps.get(userId);
     const now = Date.now();
@@ -373,7 +380,6 @@ export class PrivateChatWorkflowService {
       this.pendingProfileTimestamps.set(userId, now);
     }
 
-    const lowerCleaned = cleaned.toLowerCase().trim();
     if (!isRegisterState && this.isGreetingInvocation(lowerCleaned)) {
       const profile = await this.userProfileRepository.get(userId);
       const missingFields = this.getMissingProfileFields(profile);
@@ -425,6 +431,10 @@ export class PrivateChatWorkflowService {
       lowered = 'menu';
     }
     const currentState = this.pendingAdminState.get(userId);
+
+    if (currentState === 'await_teacher_phone_otp') {
+      return this.handleTeacherPhoneOtpVerification(userId, cleaned);
+    }
 
     if (currentState === 'await_admin_registration_code') {
       return this.handleAdminRegistrationCode(userId, cleaned);
@@ -4644,5 +4654,151 @@ export class PrivateChatWorkflowService {
     } else {
       return `No se encontró ningún remitente con ID ${id}. ❌\n\n${this.authorizedEmailsSubmenuText()}`;
     }
+  }
+
+  private async handleTeacherPanelCommand(userId: string, cleaned: string): Promise<string> {
+    const db = (this.userProfileRepository as any).db;
+
+    // 1. Check if registered admin/super-admin
+    if (await this.adminRepository.isRegistered(userId)) {
+      return await this.handleWebPanelLink(userId);
+    }
+
+    // 2. Check if registered teacher (by phone)
+    const teacherByPhone = await get<any>(
+      db,
+      'SELECT * FROM managed_teachers WHERE phone = ? LIMIT 1',
+      [userId]
+    );
+
+    if (teacherByPhone) {
+      if (this.webOtpRepository) {
+        const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        await this.webOtpRepository.createOtp(teacherByPhone.email, otpCode, userId, expiresAt);
+
+        const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+        const redirectPath = '/professor/messages';
+        const loginUrl = `${baseUrl}/login?email=${encodeURIComponent(teacherByPhone.email)}&redirect=${encodeURIComponent(redirectPath)}`;
+
+        return `🔗 *Acceso al Panel de Control Web*\n\nHola, ${teacherByPhone.name}. Hacé click en el enlace para ingresar al panel:\n${loginUrl}|||SPLIT|||${otpCode}`;
+      } else {
+        return '❌ Error: Repositorio OTP no disponible.';
+      }
+    }
+
+    // 3. Not linked. Resolve email
+    let email = '';
+    const parts = cleaned.trim().split(/\s+/);
+    if (parts.length > 1 && parts[1].includes('@')) {
+      email = parts[1].trim().toLowerCase();
+    }
+
+    if (!email) {
+      const profile = await this.userProfileRepository.get(userId);
+      if (profile?.email) {
+        email = profile.email.trim().toLowerCase();
+      }
+    }
+
+    if (!email) {
+      return '⚠️ No reconozco tu número de teléfono ni tengo tu correo registrado.\n\nSi sos docente, por favor escribí *!panel tu-email@institucional.edu* para iniciar la verificación.';
+    }
+
+    // Check if email is in managed_teachers
+    const teacherByEmail = await get<any>(
+      db,
+      'SELECT * FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
+      [email]
+    );
+
+    if (!teacherByEmail) {
+      return `❌ El email *${email}* no está registrado como docente en el sistema.\n\nSi considerás que esto es un error, por favor contactá al administrador.`;
+    }
+
+    // Send email OTP
+    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await run(
+      db,
+      `INSERT INTO phone_otp_sessions (email, phone, code, expires_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(email, phone) DO UPDATE SET code = excluded.code, expires_at = excluded.expires_at, created_at = CURRENT_TIMESTAMP`,
+      [email, userId, otpCode, expiresAt.toISOString()]
+    );
+
+    try {
+      const outbound = new OutboundEmailService();
+      const subject = 'Código de Verificación - Panel de Vectorito';
+      const body = `Hola ${teacherByEmail.name}.\n\nTu código de verificación para asociar tu número de WhatsApp al Panel de Vectorito es: ${otpCode}\n\nIngresá este código en WhatsApp para completar la vinculación.\n\nEste código vence en 10 minutos.`;
+      await outbound.send(email, subject, body);
+
+      this.pendingAdminState.set(userId, 'await_teacher_phone_otp');
+      return `📧 *Verificación de Identidad Docente*\n\nHola ${teacherByEmail.name}. Enviamos un código de verificación de 6 dígitos a tu correo: *${email}*.\n\nPor favor, escribí el código de 6 dígitos acá en WhatsApp para completar la vinculación de tu teléfono.`;
+    } catch (err) {
+      console.error('[PrivateChatWorkflow] Error al enviar email OTP de docente:', err);
+      return `❌ No se pudo enviar el correo de verificación a *${email}*. Por favor, contactá a soporte.`;
+    }
+  }
+
+  private async handleTeacherPhoneOtpVerification(userId: string, cleaned: string): Promise<string> {
+    const db = (this.userProfileRepository as any).db;
+    const code = cleaned.trim();
+
+    if (!/^\d{6}$/.test(code)) {
+      return '❌ Código inválido. Por favor, enviá exactamente el código de 6 dígitos recibido en tu correo.';
+    }
+
+    const session = await get<any>(
+      db,
+      'SELECT * FROM phone_otp_sessions WHERE phone = ? AND code = ? LIMIT 1',
+      [userId, code]
+    );
+
+    if (!session) {
+      return '❌ Código de verificación incorrecto. Verificá el código enviado e intentalo de nuevo.';
+    }
+
+    const expiresTime = new Date(session.expires_at).getTime();
+    if (Date.now() > expiresTime) {
+      await run(db, 'DELETE FROM phone_otp_sessions WHERE phone = ?', [userId]);
+      this.pendingAdminState.delete(userId);
+      return '❌ El código de verificación ha expirado. Por favor, solicitá un nuevo código escribiendo *!panel*.';
+    }
+
+    // OTP is valid! Clean up session
+    await run(db, 'DELETE FROM phone_otp_sessions WHERE phone = ?', [userId]);
+    this.pendingAdminState.delete(userId);
+
+    const email = session.email.toLowerCase().trim();
+
+    // Link JID in managed_teachers
+    await run(db, 'UPDATE managed_teachers SET phone = ? WHERE LOWER(email) = ?', [userId, email]);
+
+    // Upsert profile in user_profiles
+    const teacher = await get<any>(db, 'SELECT name FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1', [email]);
+    await run(db, 'UPDATE user_profiles SET email = "" WHERE LOWER(email) = ? AND user_id != ?', [email, userId]);
+    await run(
+      db,
+      `INSERT INTO user_profiles (user_id, name, birthday_day_month, email, user_commission_id)
+       VALUES (?, ?, '01/01', ?, 1)
+       ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, name = excluded.name`,
+      [userId, teacher?.name || 'Profesor', email]
+    );
+
+    if (this.webOtpRepository) {
+      const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      await this.webOtpRepository.createOtp(email, otpCode, userId, expiresAt);
+
+      const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+      const redirectPath = '/professor/messages';
+      const loginUrl = `${baseUrl}/login?email=${encodeURIComponent(email)}&redirect=${encodeURIComponent(redirectPath)}`;
+
+      return `✅ *Verificación Exitosa*\n\nTu número de WhatsApp fue vinculado correctamente a tu perfil docente.\n\n🔗 *Acceso al Panel de Control Web*\n\nHola, ${teacher?.name || 'Profesor'}. Hacé click en el enlace para ingresar al panel:\n${loginUrl}|||SPLIT|||${otpCode}`;
+    }
+
+    return '✅ *Verificación Exitosa*\n\nTu número de WhatsApp fue vinculado correctamente.';
   }
 }

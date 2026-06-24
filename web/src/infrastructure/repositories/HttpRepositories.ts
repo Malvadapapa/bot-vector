@@ -242,7 +242,9 @@ export class HttpGroupRepository implements IGroupRepository {
   }
 
   async getStudents(groupId: string): Promise<SimulatedStudent[]> {
-    return [];
+    const res = await fetch(`/api/groups/${groupId}/students`, { headers: this.getHeaders() });
+    if (!res.ok) return [];
+    return res.json();
   }
 
   async getYearsConfig(): Promise<{ year: number; commissionCount: number }[]> {
@@ -856,6 +858,36 @@ export class HttpProfileRepository implements IProfileRepository {
   async getProfileMe(): Promise<User> {
     const res = await fetch('/api/profile/me', { headers: this.getHeaders() });
     if (!res.ok) throw new Error('Error al obtener perfil actual.');
+    return res.json();
+  }
+
+  async sendPhoneOtp(phone: string): Promise<void> {
+    const res = await fetch('/api/profile/send-phone-otp', {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ phone })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Error al enviar OTP.');
+    }
+  }
+
+  async verifyPhoneOtp(phone: string, code: string): Promise<void> {
+    const res = await fetch('/api/profile/verify-phone-otp', {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ phone, code })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Error al verificar OTP.');
+    }
+  }
+
+  async getMyAssignments(): Promise<any[]> {
+    const res = await fetch('/api/teachers/my-assignments', { headers: this.getHeaders() });
+    if (!res.ok) throw new Error('Error al obtener asignaciones.');
     return res.json();
   }
 }

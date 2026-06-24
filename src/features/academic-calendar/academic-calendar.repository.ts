@@ -257,6 +257,10 @@ export class ManagedExamRepository {
       updates.push('created_by_role = ?');
       values.push(data.created_by_role);
     }
+    if (data.exam_commission_id !== undefined) {
+      updates.push('exam_commission_id = ?');
+      values.push(data.exam_commission_id);
+    }
 
     if (updates.length === 0) return;
 

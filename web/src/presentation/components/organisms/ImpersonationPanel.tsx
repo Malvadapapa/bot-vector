@@ -99,12 +99,33 @@ export const ImpersonationPanel: React.FC = () => {
   // Load students and cohorts for the active group
   useEffect(() => {
     if (activeGroup) {
-      groupRepository.getStudents(activeGroup.id).then(setStudents).catch(() => {});
+      groupRepository.getStudents(activeGroup.id)
+        .then((loadedStudents) => {
+          setStudents(loadedStudents);
+          if (loadedStudents.length > 0) {
+            setSelectedStudentId(loadedStudents[0].id);
+          } else {
+            setSelectedStudentId('');
+          }
+        })
+        .catch(() => {});
       groupRepository.getCohorts(activeGroup.id).then(setCohorts).catch(() => {});
-      setSelectedStudentId('');
       setSelectedCommissionId('');
     }
   }, [activeGroup]);
+
+  // Automatically select the first commission for the selected student
+  useEffect(() => {
+    if (selectedStudentId && !selectedCommissionId && !impersonation?.active) {
+      const student = students.find((s) => s.id === selectedStudentId);
+      if (student) {
+        const cohort = cohorts.find((c) => c.id === student.cohortId);
+        if (cohort && cohort.commissions && cohort.commissions.length > 0) {
+          setSelectedCommissionId(cohort.commissions[0].id);
+        }
+      }
+    }
+  }, [selectedStudentId, cohorts, students, impersonation, selectedCommissionId]);
 
   // Sync state with active impersonation profile
   useEffect(() => {
@@ -144,7 +165,7 @@ export const ImpersonationPanel: React.FC = () => {
   const handleToggleActive = (checked: boolean) => {
     if (checked) {
       if (!selectedStudentId) {
-        toast.error('Por favor, seleccioná un alumno para simular.');
+        toast.error('No hay alumnos registrados en este grupo para simular.');
         return;
       }
       const student = students.find((s) => s.id === selectedStudentId);
@@ -240,27 +261,13 @@ export const ImpersonationPanel: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid gap-6 sm:grid-cols-2">
-            <DropdownSelector
-              label="Alumno a Simular"
-              options={studentOptions}
-              selectedValue={selectedStudentId}
-              onChange={(val) => {
-                setSelectedStudentId(val);
-                setSelectedCommissionId('');
-              }}
-              placeholder="Seleccioná un alumno"
-              searchable
-              disabled={!!impersonation?.active}
-              required
-            />
-
+          <div className="max-w-md">
             <DropdownSelector
               label="Comisión Asignada (Temporal)"
               options={getCommissionOptions()}
               selectedValue={selectedCommissionId}
               onChange={handleCommissionChange}
-              placeholder={selectedStudentId ? "Seleccionar comisión" : "Elegí primero un alumno"}
+              placeholder={selectedStudentId ? "Seleccionar comisión" : "No hay comisiones disponibles"}
               disabled={!selectedStudentId}
             />
           </div>
@@ -357,7 +364,7 @@ export const ImpersonationPanel: React.FC = () => {
               <Eye className="w-12 h-12 text-[var(--color-border)] mb-3" />
               <h4 className="text-sm font-bold text-[var(--color-text-secondary)]">Simulación Inactiva</h4>
               <p className="text-xs mt-1.5 max-w-[200px] leading-relaxed">
-                Elegí un alumno de la lista y hacé click en el switch de arriba para iniciar la simulación.
+                Hacé click en el switch de arriba para iniciar la simulación de alumnos.
               </p>
             </div>
           )}

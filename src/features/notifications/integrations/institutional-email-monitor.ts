@@ -37,6 +37,179 @@ export class InstitutionalEmailMonitor {
 
     for (const email of emails) {
       console.log(`[EmailMonitor] Analizando email - De: ${email.from?.text || '?'} | Asunto: "${email.subject || '(sin asunto)'}"`);
+      
+      const normSubject = (email.subject || '').toLowerCase().replace(/\s+/g, '');
+      let src = email.from?.text || '';
+      let m = src.match(/<([^>]+)>/);
+      let sourceAddr = m ? m[1].toLowerCase() : src.trim().toLowerCase();
+
+      if (normSubject === 'panel') {
+        console.log(`[EmailMonitor] Email recibido con asunto "panel" de ${sourceAddr}. Procesando acceso al panel...`);
+        const superadminEmailsEnv = process.env.SUPERADMIN_EMAILS || '';
+        const superadmins = superadminEmailsEnv
+          .split(',')
+          .map((email) => email.trim().toLowerCase())
+          .filter(Boolean);
+
+        let isAuthorized = false;
+        let senderLabel = 'profe';
+        let displayName = sourceAddr;
+
+        const hasRepositories = !!(this.managedTeacherRepository || this.adminRepository || this.authorizedEmailRepository);
+
+        if (!hasRepositories) {
+          isAuthorized = true;
+          if (superadmins.includes(sourceAddr)) {
+            senderLabel = 'super-admin';
+          }
+        } else {
+          if (superadmins.includes(sourceAddr)) {
+            isAuthorized = true;
+            senderLabel = 'super-admin';
+            if (this.adminRepository) {
+              const profile = await get<any>(
+                (this.adminRepository as any).db,
+                'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+                [sourceAddr]
+              );
+              if (profile && profile.name) {
+                displayName = profile.name;
+              }
+            }
+          }
+
+          if (!isAuthorized && this.adminRepository) {
+            const adminEmails = await this.adminRepository.listAdminEmails();
+            if (adminEmails.includes(sourceAddr)) {
+              isAuthorized = true;
+              senderLabel = 'admin';
+              const profile = await get<any>(
+                (this.adminRepository as any).db,
+                'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+                [sourceAddr]
+              );
+              if (profile && profile.name) {
+                displayName = profile.name;
+              }
+            }
+          }
+
+          if (!isAuthorized && this.managedTeacherRepository) {
+            let teacherRecords = [];
+            if (typeof (this.managedTeacherRepository as any).listByEmail === 'function') {
+              teacherRecords = await (this.managedTeacherRepository as any).listByEmail(sourceAddr);
+            } else {
+              const t = await this.managedTeacherRepository.getByEmail(sourceAddr);
+              teacherRecords = t ? [t] : [];
+            }
+            if (teacherRecords.length > 0) {
+              isAuthorized = true;
+              senderLabel = 'profe';
+              displayName = teacherRecords[0].name || sourceAddr;
+            }
+          }
+
+          if (!isAuthorized && this.authorizedEmailRepository) {
+            const customEmailExists = await this.authorizedEmailRepository.exists(sourceAddr);
+            if (customEmailExists) {
+              isAuthorized = true;
+              senderLabel = 'colaborador';
+              const row = await get<any>(
+                (this.authorizedEmailRepository as any).db,
+                'SELECT description FROM authorized_emails WHERE LOWER(email) = ? LIMIT 1',
+                [sourceAddr]
+              );
+              if (row && row.description) {
+                displayName = row.description;
+              }
+            }
+          }
+        }
+
+        if (isAuthorized) {
+          console.log(`[EmailMonitor] Remitente de email "panel" autorizado: ${sourceAddr}`);
+          if (this.webOtpRepository && this.outboundEmailService) {
+            const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+            const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+            await this.webOtpRepository.createOtp(sourceAddr, otpCode, null, expiresAt);
+
+            const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+            let redirectPath = '/professor/messages';
+            if (senderLabel === 'super-admin') {
+              redirectPath = '/super-admin/groups';
+            } else if (senderLabel === 'admin') {
+              redirectPath = '/admin/calendar';
+            }
+            
+            const loginUrl = `${baseUrl}/login?email=${encodeURIComponent(sourceAddr)}&otp=${otpCode}&redirect=${encodeURIComponent(redirectPath)}`;
+            const subject = 'Acceso al Panel de Control de Vectorito';
+            
+            const plainBody = `Hola ${displayName}.\n\n` +
+              `Solicitaste el acceso al panel. Podés ingresar utilizando el siguiente enlace directo (que ya incluye tu código de acceso temporal):\n\n` +
+              `${loginUrl}\n\n` +
+              `Si el enlace no abre, podés ingresar manualmente a ${baseUrl}/login con tu email (${sourceAddr}) y este código OTP temporal:\n\n` +
+              `Código OTP: ${otpCode}\n\n` +
+              `El código vencerá en 10 minutos.\n\n` +
+              `¡Muchas gracias!\n` +
+              `Equipo de Vectorito`;
+
+            const htmlBody = `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+  <h2 style="color: #4f46e5; margin-top: 0; margin-bottom: 20px;">🔑 Acceso al Panel de Control Web</h2>
+  <p>Hola ${displayName},</p>
+  <p>Para ingresar al panel de control de Vectorito, hacé click en el siguiente botón:</p>
+  <div style="text-align: center; margin: 25px 0;">
+    <a href="${loginUrl}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Ingresar al Panel</a>
+  </div>
+  <p>O ingresá manualmente con tu email (${sourceAddr}) y el siguiente código OTP:</p>
+  <p style="font-size: 1.5em; font-weight: bold; color: #4f46e5; letter-spacing: 2px; text-align: center;">${otpCode}</p>
+  <p style="font-size: 0.9em; color: #6b7280; text-align: center;">Vence en 10 minutos.</p>
+</div>`;
+
+            try {
+              await this.outboundEmailService.send(sourceAddr, subject, plainBody, htmlBody);
+              console.log(`[EmailMonitor] OTP de panel enviado por correo a ${sourceAddr}.`);
+            } catch (e) {
+              console.error('[EmailMonitor] Error enviando email con OTP de panel:', e);
+            }
+          }
+        } else {
+          console.log(`[EmailMonitor] [RECHAZADO] Remitente no autorizado para email "panel": ${sourceAddr}`);
+          
+          let fingerprint = '';
+          const messageId = email.messageId;
+          if (messageId) {
+            fingerprint = messageId.trim();
+          } else {
+            const fromStr = email.from?.text || '';
+            const subjectStr = email.subject || '';
+            const dateStr = email.date ? email.date.toISOString() : '';
+            const bodyStr = email.text || '';
+            const rawInput = [fromStr, subjectStr, dateStr, bodyStr].join('|');
+            fingerprint = crypto.createHash('sha256').update(rawInput).digest('hex');
+          }
+
+          if (this.rejectionRepository) {
+            const previouslyRejected = await this.rejectionRepository.hasBeenRejected(sourceAddr);
+            if (!previouslyRejected) {
+              await this.rejectionRepository.markIfNew(fingerprint, sourceAddr, email.subject || '');
+              if (this.outboundEmailService) {
+                const subject = 'Acceso Denegado al Panel de Control';
+                const body = `Hola.\n\nEl correo electrónico (${sourceAddr}) no se encuentra registrado en el sistema ni tiene materias asignadas.\n\nPor favor, contactate con el administrador del bot para que te dé de alta en el sistema.`;
+                try {
+                  await this.outboundEmailService.send(sourceAddr, subject, body);
+                } catch (e) {
+                  /* ignore */
+                }
+              }
+            } else {
+              console.log(`[EmailMonitor] El remitente ${sourceAddr} ya fue rechazado anteriormente. Ignorando silenciosamente.`);
+            }
+          }
+        }
+        processed += 1;
+        continue;
+      }
+
       const notice = this.parseNoticeFromEmail(email);
       if (!notice) {
         console.log(`[EmailMonitor] >> Email descartado: el asunto no contiene "aviso".`);
@@ -45,9 +218,9 @@ export class InstitutionalEmailMonitor {
       console.log(`[EmailMonitor] [OK] Email reconocido como aviso institucional: "${notice.title}"`);
 
       // Extract source address (best-effort)
-      const src = notice.sourceEmail || '';
-      const m = src.match(/<([^>]+)>/);
-      const sourceAddr = m ? m[1].toLowerCase() : src.trim().toLowerCase();
+      src = notice.sourceEmail || '';
+      m = src.match(/<([^>]+)>/);
+      sourceAddr = m ? m[1].toLowerCase() : src.trim().toLowerCase();
 
       // Validate sender: either superadmin, db admin, registered teacher, or authorized email
       const superadminEmailsEnv = process.env.SUPERADMIN_EMAILS || '';

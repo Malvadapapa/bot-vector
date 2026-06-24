@@ -1,0 +1,35 @@
+# ============================================================
+# Bot Vectorito — Docker Compose
+# ============================================================
+# Uso:
+#   docker compose up -d          # Iniciar en background
+#   docker compose logs -f        # Ver logs en tiempo real
+#   docker compose down           # Detener
+#   docker compose up -d --build  # Reconstruir imagen
+# ============================================================
+
+services:
+  vectorito:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bot-vectorito
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persistir base de datos SQLite y archivos de datos
+      - ./data:/app/data
+      # Persistir sesión de WhatsApp (Baileys)
+      - ./session:/app/session
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - TUI_ENABLED=false
+    tty: false
+    # Limitar recursos (ajustar según necesidad)
+    deploy:
+      resources:
+        limits:
+          memory: 1G

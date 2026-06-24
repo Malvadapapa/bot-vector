@@ -18,6 +18,7 @@ import {
   messageRepository,
   groupRepository,
   classRepository,
+  profileRepository,
 } from '../../infrastructure/repositories/instances';
 import type { Exam, ChatMessage, Subject, CalendarEvent, Cohort } from '../../domain/entities';
 import { Video } from 'lucide-react';
@@ -32,20 +33,64 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+function normalizeSubjectName(name: string): string {
+  if (!name) return '';
+  let normalized = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  normalized = normalized.replace(/\biii\b/g, '3');
+  normalized = normalized.replace(/\bii\b/g, '2');
+  normalized = normalized.replace(/\bi\b/g, '1');
+  return normalized.replace(/[^a-z0-9]/g, '');
+}
+
+export const ProfessorDataContext = React.createContext<any>(null);
+
+export const useProfessorDataContext = () => {
+  const context = React.useContext(ProfessorDataContext);
+  if (!context) {
+    throw new Error('useProfessorDataContext must be used within a ProfessorDataProvider');
+  }
+  return context;
+};
+
 export const ProfessorDashboard: React.FC = () => {
+  const data = useProfessorData();
+  const location = useLocation();
+  const showFilter = !location.pathname.endsWith('settings') && data.assignments.length > 1;
+
   return (
-    <DashboardLayout title="Panel Docente">
+    <ProfessorDataContext.Provider value={data}>
+      <DashboardLayout title="Panel Docente">
+        {showFilter && (
+          <div className="mb-6 p-4 bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] rounded-xl flex items-center gap-4">
+            <label className="text-xs font-bold text-[var(--color-text-secondary)] uppercase whitespace-nowrap">
+              Filtrar por Materia / Comisión:
+            </label>
+            <div className="w-64">
+              <DropdownSelector
+                options={[
+                  { value: 'all', label: 'Todas mis materias / comisiones' },
+                  ...data.assignments.map((a: any) => ({
+                    value: `${a.subject}_${a.commissionId || 'all'}`,
+                    label: `${a.subject} - Comisión ${a.commissionLabel || a.commissionId || 'Única'}`
+                  }))
+                ]}
+                selectedValue={data.selectedAssignmentId}
+                onChange={data.setSelectedAssignmentId}
+              />
+            </div>
+          </div>
+        )}
 
-
-      <Routes>
-        <Route path="calendar" element={<CalendarTab />} />
-        <Route path="exams" element={<ExamsTab />} />
-        <Route path="classes" element={<ClassesTab />} />
-        <Route path="messages" element={<MessagesTab />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="*" element={<CalendarTab />} />
-      </Routes>
-    </DashboardLayout>
+        <Routes>
+          <Route path="calendar" element={<CalendarTab />} />
+          <Route path="exams" element={<ExamsTab />} />
+          <Route path="classes" element={<ClassesTab />} />
+          <Route path="messages" element={<MessagesTab />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="*" element={<CalendarTab />} />
+        </Routes>
+      </DashboardLayout>
+    </ProfessorDataContext.Provider>
   );
 };
 
@@ -58,35 +103,36 @@ const useProfessorData = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshAll = async () => {
     if (!activeGroup || !user) return;
     setIsLoading(true);
     try {
-      const [subsList, examsList, messagesList, cohortsList, classesList] = await Promise.all([
+      const [subsList, examsList, messagesList, cohortsList, classesList, assignmentsList] = await Promise.all([
         groupRepository.getSubjects(activeGroup.id),
         examRepository.getAll(activeGroup.id),
         messageRepository.getAll(activeGroup.id),
         groupRepository.getCohorts(activeGroup.id),
         classRepository.getByGroup(activeGroup.id),
+        profileRepository.getMyAssignments().catch(() => [])
       ]);
 
       setAllSubjects(subsList);
 
-      // Filter subjects where this user is assigned as professor
       const profSubjects = subsList.filter((s) => s.professorIds.includes(user.id));
       setSubjects(profSubjects);
 
-      // Show all exams from the group
       setExams(examsList);
 
-      // Filter messages to only show professor messages sent by this user
-      const profMessages = messagesList.filter((m) => m.authorId === user.id);
+      const profMessages = messagesList.filter((m) => m.authorId === user.id || user.role === 'super_admin');
       setMessages(profMessages);
 
       setCohorts(cohortsList);
       setClasses(classesList);
+      setAssignments(assignmentsList || []);
     } catch {
       toast.error('Error al sincronizar datos del docente.');
     } finally {
@@ -98,16 +144,38 @@ const useProfessorData = () => {
     refreshAll();
   }, [activeGroup, user]);
 
-  return { subjects, allSubjects, exams, messages, cohorts, classes, isLoading, refreshAll };
+  return {
+    subjects,
+    allSubjects,
+    exams,
+    messages,
+    cohorts,
+    classes,
+    assignments,
+    selectedAssignmentId,
+    setSelectedAssignmentId,
+    isLoading,
+    refreshAll
+  };
 };
 
-// ── SUB-VIEW: CALENDAR ───────────────────────────────────────
 const CalendarTab: React.FC = () => {
-  const { exams, allSubjects, isLoading } = useProfessorData();
+  const { exams, allSubjects, isLoading, selectedAssignmentId } = useProfessorDataContext();
 
   const buildCalendarEvents = (): CalendarEvent[] => {
-    return exams.map((e) => {
-      const subject = allSubjects.find((s) => s.id === e.subjectId);
+    let list = exams;
+    if (selectedAssignmentId !== 'all') {
+      const [selSubject, selComm] = selectedAssignmentId.split('_');
+      list = exams.filter((e: any) => {
+        const sub = allSubjects.find((s: any) => s.id === e.subjectId);
+        const nameMatches = sub && normalizeSubjectName(sub.name) === normalizeSubjectName(selSubject);
+        const commMatches = selComm === 'all' || !e.commissionId || String(e.commissionId) === String(selComm);
+        return nameMatches && commMatches;
+      });
+    }
+
+    return list.map((e: any) => {
+      const subject = allSubjects.find((s: any) => s.id === e.subjectId);
       return {
         id: e.id,
         title: `[${e.type.toUpperCase()}] ${e.title} (${subject?.name || 'Materia'})`,
@@ -141,7 +209,7 @@ const CalendarTab: React.FC = () => {
 // ── SUB-VIEW: EXAMS LIST ─────────────────────────────────────
 const ExamsTab: React.FC = () => {
   const { activeGroup, user } = useAuth();
-  const { exams, subjects, allSubjects, isLoading, refreshAll } = useProfessorData();
+  const { exams, subjects, allSubjects, isLoading, refreshAll, assignments, selectedAssignmentId } = useProfessorDataContext();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingExam, setEditingExam] = useState<Exam | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -182,6 +250,22 @@ const ExamsTab: React.FC = () => {
     }
   };
 
+  const isMyExam = (e: any) => {
+    if (user?.role === 'super_admin') return true;
+    const sub = allSubjects.find((s: any) => s.id === e.subjectId);
+    if (!sub) return false;
+    return assignments.some((a: any) => normalizeSubjectName(a.subject) === normalizeSubjectName(sub.name));
+  };
+
+  const filteredExams = selectedAssignmentId === 'all' ? exams : exams.filter((e: any) => {
+    const sub = allSubjects.find((s: any) => s.id === e.subjectId);
+    if (!sub) return false;
+    const [selSubject, selComm] = selectedAssignmentId.split('_');
+    const nameMatches = normalizeSubjectName(sub.name) === normalizeSubjectName(selSubject);
+    const commMatches = selComm === 'all' || !e.commissionId || String(e.commissionId) === String(selComm);
+    return nameMatches && commMatches;
+  });
+
   const headers = ['Título Examen', 'Materia', 'Tipo', 'Fecha / Plazo'];
 
   const typeBadges = {
@@ -211,17 +295,17 @@ const ExamsTab: React.FC = () => {
       {isLoading ? (
         <div className="h-64 flex items-center justify-center text-[var(--color-text-secondary)]">Cargando exámenes...</div>
       ) : (
-        <DataTable
+        <DataTable<any>
           headers={headers}
-          data={exams}
+          data={filteredExams}
           searchPlaceholder="Buscar por título..."
           searchFields={['title']}
-          renderRowCells={(e) => {
-            const sub = allSubjects.find((s) => s.id === e.subjectId);
+          renderRowCells={(e: any) => {
+            const sub = allSubjects.find((s: any) => s.id === e.subjectId);
             return [
               <span className="font-semibold">{e.title}</span>,
               sub?.name || 'Cargando...',
-              typeBadges[e.type],
+              typeBadges[e.type as keyof typeof typeBadges],
               <span className="text-xs text-[var(--color-text-secondary)] font-medium">
                 {new Date(e.startDate).toLocaleDateString()}
                 {e.endDate && ` al ${new Date(e.endDate).toLocaleDateString()}`}
@@ -232,18 +316,18 @@ const ExamsTab: React.FC = () => {
             {
               icon: 'edit',
               label: 'Editar examen',
-              onClick: (e) => {
+              onClick: (e: any) => {
                 setEditingExam(e);
                 setIsFormOpen(true);
               },
-              disabled: (e) => !subjects.some((s) => s.id === e.subjectId),
+              disabled: (e: any) => !isMyExam(e),
             },
             {
               icon: 'delete',
               label: 'Eliminar examen',
-              onClick: (e) => setDeleteId(e.id),
+              onClick: (e: any) => setDeleteId(e.id),
               variant: 'danger',
-              disabled: (e) => !subjects.some((s) => s.id === e.subjectId),
+              disabled: (e: any) => !isMyExam(e),
             },
           ]}
         />
@@ -281,7 +365,7 @@ const ExamsTab: React.FC = () => {
 // ── SUB-VIEW: SENT MESSAGES & LIVE CHAT WINDOW ────────────────
 const MessagesTab: React.FC = () => {
   const { user } = useAuth();
-  const { messages, cohorts, isLoading, refreshAll } = useProfessorData();
+  const { messages, cohorts, isLoading, refreshAll, assignments, selectedAssignmentId } = useProfessorDataContext();
   
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
   const [replies, setReplies] = useState<ChatMessage[]>([]);
@@ -290,6 +374,16 @@ const MessagesTab: React.FC = () => {
   const [isNewMsgModalOpen, setIsNewMsgModalOpen] = useState(false);
   const [targetId, setTargetId] = useState('');
   const [messageContent, setMessageContent] = useState('');
+
+  // Auto-select target cohort if a specific assignment filter is active
+  useEffect(() => {
+    if (isNewMsgModalOpen && selectedAssignmentId !== 'all') {
+      const activeAssignment = assignments.find((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId);
+      if (activeAssignment && activeAssignment.groupId) {
+        setTargetId(activeAssignment.groupId);
+      }
+    }
+  }, [isNewMsgModalOpen, selectedAssignmentId, assignments]);
 
   // Fetch replies when selected message changes
   useEffect(() => {
@@ -316,7 +410,7 @@ const MessagesTab: React.FC = () => {
       return;
     }
 
-    const cohort = cohorts.find((c) => c.id === targetId);
+    const cohort = cohorts.find((c: any) => c.id === targetId);
 
     try {
       await messageRepository.send({
@@ -357,6 +451,13 @@ const MessagesTab: React.FC = () => {
     }
   };
 
+  const filteredMessages = messages.filter((m: any) => {
+    if (selectedAssignmentId === 'all') return true;
+    const activeAssignment = assignments.find((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId);
+    if (!activeAssignment) return true;
+    return m.targetId === activeAssignment.groupId;
+  });
+
   return (
     <>
       {isLoading ? (
@@ -379,12 +480,12 @@ const MessagesTab: React.FC = () => {
             </div>
 
             <div className="space-y-3.5 max-h-[500px] overflow-y-auto pr-1">
-              {messages.length === 0 ? (
+              {filteredMessages.length === 0 ? (
                 <div className="text-center p-6 text-xs text-[var(--color-text-tertiary)]">
-                  No enviaste mensajes de difusión aún.
+                  No enviaste mensajes de difusión aún o ninguno coincide con el filtro.
                 </div>
               ) : (
-                messages.map((m) => {
+                filteredMessages.map((m: any) => {
                   const isSelected = selectedMessage?.id === m.id;
                   return (
                     <button
@@ -464,7 +565,7 @@ const MessagesTab: React.FC = () => {
                 <form onSubmit={handleSendBroadcast} className="space-y-4">
                   <DropdownSelector
                     label="Enviar a (Destinatario)"
-                    options={cohorts.map((c) => ({ value: c.id, label: `${c.name} (${c.year})` }))}
+                    options={cohorts.map((c: any) => ({ value: c.id, label: `${c.name} (${c.year})` }))}
                     selectedValue={targetId}
                     onChange={setTargetId}
                     required
@@ -498,16 +599,16 @@ const MessagesTab: React.FC = () => {
 );
 };
 export const ClassesTab: React.FC = () => {
-  const { classes, subjects, allSubjects, cohorts, isLoading, refreshAll } = useProfessorData();
-  const { activeGroup } = useAuth();
+  const { classes, subjects, allSubjects, cohorts, isLoading, refreshAll, assignments, selectedAssignmentId } = useProfessorDataContext();
+  const { activeGroup, user } = useAuth();
   
   const [selectedYear, setSelectedYear] = useState('all');
   const [isEditMeetModalOpen, setIsEditMeetModalOpen] = useState(false);
   const [editingClassSlot, setEditingClassSlot] = useState<any | null>(null);
   const [newMeetLink, setNewMeetLink] = useState('');
-
+ 
   const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-
+ 
   const getCohortYear = (coh: Cohort): number => {
     if (coh.year && coh.year > 2000) {
       const currentYear = new Date().getFullYear();
@@ -528,13 +629,13 @@ export const ClassesTab: React.FC = () => {
     }
     return 1;
   };
-
+ 
   const handleOpenEditModal = (c: any) => {
     setEditingClassSlot(c);
     setNewMeetLink(c.meetLink || '');
     setIsEditMeetModalOpen(true);
   };
-
+ 
   const handleUpdateMeetLink = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingClassSlot) return;
@@ -554,14 +655,17 @@ export const ClassesTab: React.FC = () => {
       toast.error('Error al actualizar el enlace de Meet.');
     }
   };
-
-  const filteredCohorts = cohorts.filter(coh => {
+ 
+  const filteredCohorts = cohorts.filter((coh: any) => {
     if (selectedYear === 'all') return true;
     return getCohortYear(coh) === Number(selectedYear);
   });
-
-  const isMyClass = (c: any) => subjects.some((s) => s.id === c.subjectId);
-
+ 
+  const isMyClass = (c: any) => {
+    if (user?.role === 'super_admin') return true;
+    return assignments.some((a: any) => normalizeSubjectName(a.subject) === normalizeSubjectName(c.subjectName));
+  };
+ 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[var(--color-bg-sidebar)] p-4 border border-[var(--color-border)] rounded-xl">
@@ -581,16 +685,28 @@ export const ClassesTab: React.FC = () => {
           </div>
         </div>
       </div>
-
+ 
       {isLoading ? (
         <div className="h-64 flex items-center justify-center text-[var(--color-text-secondary)]">Cargando clases...</div>
       ) : (
         <div className="flex flex-col gap-6">
-          {filteredCohorts.map(coh => {
-            const cohortSubjectIds = allSubjects.filter(s => s.cohortId === coh.id).map(s => s.id);
-            const cohortClasses = classes.filter(c => cohortSubjectIds.includes(c.subjectId));
+          {filteredCohorts.map((coh: any) => {
+            const cohortSubjectIds = allSubjects.filter((s: any) => s.cohortId === coh.id).map((s: any) => s.id);
+            const cohortClasses = classes.filter((c: any) => cohortSubjectIds.includes(c.subjectId));
             const year = getCohortYear(coh);
-
+ 
+            let filteredCohortClasses = cohortClasses;
+            if (selectedAssignmentId !== 'all') {
+              const [selSubject, selComm] = selectedAssignmentId.split('_');
+              filteredCohortClasses = cohortClasses.filter((c: any) => {
+                const nameMatches = normalizeSubjectName(c.subjectName) === normalizeSubjectName(selSubject);
+                const commMatches = selComm === 'all' || !c.commissions || c.commissions.length === 0 || c.commissions.some((cm: any) => String(cm.commissionId) === String(selComm));
+                return nameMatches && commMatches;
+              });
+            }
+ 
+            if (selectedAssignmentId !== 'all' && filteredCohortClasses.length === 0) return null;
+ 
             return (
               <div key={coh.id} className="p-5 border border-[var(--color-border)] bg-[var(--color-bg-card)] rounded-xl flex flex-col gap-4">
                 <div className="flex justify-between items-center border-b border-[var(--color-border)] pb-3">
@@ -602,18 +718,18 @@ export const ClassesTab: React.FC = () => {
                     {year}° Año de Cursada
                   </Badge>
                 </div>
-
-                {cohortClasses.length === 0 ? (
+ 
+                {filteredCohortClasses.length === 0 ? (
                   <div className="py-6 text-center text-xs text-[var(--color-text-tertiary)] italic">
                     No hay clases registradas para este grupo.
                   </div>
                 ) : (
-                  <DataTable
+                  <DataTable<any>
                     headers={['Materia', 'Día Semana', 'Horario', 'Detalles / Enlace Virtual']}
-                    data={cohortClasses}
+                    data={filteredCohortClasses}
                     searchPlaceholder="Buscar por materia..."
                     searchFields={['subjectName']}
-                    renderRowCells={(c) => [
+                    renderRowCells={(c: any) => [
                       <span className="font-semibold">{c.subjectName}</span>,
                       days[c.dayOfWeek],
                       `${c.startTime} a ${c.endTime}hs`,
@@ -644,8 +760,8 @@ export const ClassesTab: React.FC = () => {
                       {
                         icon: 'edit',
                         label: 'Editar enlace Meet',
-                        onClick: (c) => handleOpenEditModal(c),
-                        disabled: (c) => !isMyClass(c),
+                        onClick: (c: any) => handleOpenEditModal(c),
+                        disabled: (c: any) => !isMyClass(c),
                       }
                     ]}
                   />
@@ -653,7 +769,18 @@ export const ClassesTab: React.FC = () => {
               </div>
             );
           })}
-          {filteredCohorts.length === 0 && (
+          {filteredCohorts.filter((coh: any) => {
+            if (selectedAssignmentId === 'all') return true;
+            const cohortSubjectIds = allSubjects.filter((s: any) => s.cohortId === coh.id).map((s: any) => s.id);
+            const cohortClasses = classes.filter((c: any) => cohortSubjectIds.includes(c.subjectId));
+            const [selSubject, selComm] = selectedAssignmentId.split('_');
+            const filtered = cohortClasses.filter((c: any) => {
+              const nameMatches = normalizeSubjectName(c.subjectName) === normalizeSubjectName(selSubject);
+              const commMatches = selComm === 'all' || !c.commissions || c.commissions.length === 0 || c.commissions.some((cm: any) => String(cm.commissionId) === String(selComm));
+              return nameMatches && commMatches;
+            });
+            return filtered.length > 0;
+          }).length === 0 && (
             <div className="h-48 border border-dashed border-[var(--color-border)] rounded-xl flex items-center justify-center text-sm text-[var(--color-text-secondary)]">
               No se encontraron grupos para el filtro seleccionado.
             </div>

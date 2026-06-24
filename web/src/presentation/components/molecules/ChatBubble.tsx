@@ -19,6 +19,8 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isSelf }) => {
     }
   })();
 
+  const isEmail = message.authorId ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(message.authorId) : false;
+
   return (
     <div className={`flex w-full gap-3 ${isSelf ? 'justify-end' : 'justify-start'} mb-4`}>
       {!isSelf && (
@@ -34,7 +36,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isSelf }) => {
         {isSelf ? (
           <span className="text-[11px] text-[var(--color-text-secondary)] font-semibold mb-1 mr-1 flex items-center gap-1.5 justify-end">
             {message.authorName || 'Tú'}
-            {message.authorId && message.authorId.includes('@') && (
+            {isEmail && (
               <span className="text-[var(--color-text-tertiary)] font-normal text-[10px]">
                 ({message.authorId})
               </span>
@@ -43,7 +45,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isSelf }) => {
         ) : (
           <span className="text-[11px] text-[var(--color-text-secondary)] font-semibold mb-1 ml-1 flex items-center gap-1.5">
             {message.authorName || 'Alumno'}
-            {message.authorId && message.authorId.includes('@') ? (
+            {isEmail ? (
               <span className="text-[var(--color-text-tertiary)] font-normal text-[10px]">
                 ({message.authorId})
               </span>

@@ -49,20 +49,57 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
   - Al terminar las materias, solicita registrar la lista de emails de clase de la cohorte en formato `etiqueta|email` separados por comas (salteable con `skip` o `mas tarde`).
 - **Enrutamiento de Avisos de Profesor Multi-Grupo**: Un profesor puede estar registrado para dictar en múltiples grupos/camadas con un único correo. El monitor IMAP valida y restringe la publicación del aviso estrictamente a los grupos autorizados para el remitente, permitiendo enviar a todos sus grupos por defecto o filtrar según selector de camada.
 - **Conexión de Profesores y Avisos en Contexto IA**: En `buildContext`, se vinculan los avisos institucionales con el profesor emisor basándose en su correo para inyectar la relación a la IA, permitiendo responder a preguntas como *"¿el profesor de programación dejó algún aviso?"* de forma natural.
-  - **Tablero de Supervisión TUI (Interfaz de Consola Dividida)**:
-    - Implementación de una interfaz gráfica de terminal (TUI) autocontenida basada en `neo-blessed` que se activa mediante `TUI_ENABLED=true` en `.env`.
-    - División vertical de la pantalla al 50% en dos visualizadores continuos: el **Panel Izquierdo** para el flujo de conversaciones de WhatsApp y trazas del proceso RAG/IA (incluyendo validación de comisiones, hits de contexto y llamadas al LLM), y el **Panel Derecho** para logs generales de infraestructura y errores del sistema.
-    - Implementación de un interceptor de stream seguro (`StreamInterceptor`) que intercepta directamente el objeto `console` global con control de recursión (`activeInterceptions`) y limpiador de códigos ANSI (`stripAnsi`), evitando interferencias con el motor de dibujo de Blessed.
-    - Integración de barras de scroll visuales e independientes para cada panel (amarillo/cian).
-    - Soporte de scroll independiente por mouse "hover" (sin necesidad de hacer foco previo) y foco alternado vía teclado (tecla `Tab`) para navegar el historial completo (scrollback de 10k líneas).
-    - Forzado automático de codificación UTF-8 (`chcp 65001`) en entornos Windows para la correcta renderización de emojis y bordes de paneles.
-    - Extracción automática de números de teléfono de estudiantes y representación de contextos de grupo (nombre y camada) en el flujo del chat.
-    - **Refinamiento y Colores del Tablero TUI**:
-      - **Filtro de Logs Redundantes**: Supresión completa del flujo de mensajes en bruto (`📩` y `📤`) en el panel derecho de infraestructura cuando la TUI está activa, evitando logs duplicados.
-      - **Resolución de JID/LID a Teléfono Real**: Extracción automática de JIDs telefónicos alternativos (`participantAlt` / `remoteJidAlt`) proporcionados por Baileys. Las consultas a la base de datos de perfiles ahora buscan tanto por el JID de envío (que puede ser un Linked ID `@lid`) como por el JID real de teléfono, mostrando siempre `Nombre del Estudiante (Teléfono Real)` o el teléfono real en su defecto en el panel de conversación.
-      - **Colores Semánticos y Accesibles**: Aplicación de colores automáticos mediante Blessed en el panel derecho de logs (Verde para éxitos y conexiones, Amarillo/Naranja para advertencias, bloqueos y reintentos, Rojo para excepciones y errores graves).
-      - **Identificación de Origen (Tags)**: Las etiquetas bracketed al inicio de las líneas de log (ej. `[BD]`, `[RAG]`, `[IA]`, `[WhatsApp]`, `[Scheduler]`, etc.) se colorean de manera independiente con su propio tono visual persistente para identificar de un vistazo el origen de los flujos.
-      - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
+- **Tablero de Supervisión TUI (Interfaz de Consola Dividida)**:
+  - Implementación de una interfaz gráfica de terminal (TUI) autocontenida basada en `neo-blessed` que se activa mediante `TUI_ENABLED=true` en `.env`.
+  - División vertical de la pantalla al 50% en dos visualizadores continuos: el **Panel Izquierdo** para el flujo de conversaciones de WhatsApp y trazas del proceso RAG/IA (incluyendo validación de comisiones, hits de contexto y llamadas al LLM), y el **Panel Derecho** para logs generales de infraestructura y errores del sistema.
+  - Implementación de un interceptor de stream seguro (`StreamInterceptor`) que intercepta directamente el objeto `console` global con control de recursión (`activeInterceptions`) y limpiador de códigos ANSI (`stripAnsi`), evitando interferencias con el motor de dibujo de Blessed.
+  - Integración de barras de scroll visuales e independientes para cada panel (amarillo/cian).
+  - Soporte de scroll independiente por mouse "hover" (sin necesidad de hacer foco previo) y foco alternado vía teclado (tecla `Tab`) para navegar el historial completo (scrollback de 10k líneas).
+  - Forzado automático de codificación UTF-8 (`chcp 65001`) en entornos Windows para la correcta renderización de emojis y bordes de paneles.
+  - Extracción automática de números de teléfono de estudiantes y representación de contextos de grupo (nombre y camada) en el flujo del chat.
+  - **Refinamiento y Colores del Tablero TUI**:
+    - **Filtro de Logs Redundantes**: Supresión completa del flujo de mensajes en bruto (`📩` y `📤`) en el panel derecho de infraestructura cuando la TUI está activa, evitando logs duplicados.
+    - **Resolución de JID/LID a Teléfono Real**: Extracción automática de JIDs telefónicos alternativos (`participantAlt` / `remoteJidAlt`) proporcionados por Baileys. Las consultas a la base de datos de perfiles ahora buscan tanto por el JID de envío (que puede ser un Linked ID `@lid`) como por el JID real de teléfono, mostrando siempre `Nombre del Estudiante (Teléfono Real)` o el teléfono real en su defecto en el panel de conversación.
+    - **Colores Semánticos y Accesibles**: Aplicación de colores automáticos mediante Blessed en el panel derecho de logs (Verde para éxitos y conexiones, Amarillo/Naranja para advertencias, bloqueos y reintentos, Rojo para excepciones y errores graves).
+    - **Identificación de Origen (Tags)**: Las etiquetas bracketed al inicio de las líneas de log (ej. `[BD]`, `[RAG]`, `[IA]`, `[WhatsApp]`, `[Scheduler]`, etc.) se colorean de manera independiente con su propio tono visual persistente para identificar de un vistazo el origen de los flujos.
+    - **Trazabilidad Completa del Flujo**: Nuevas trazas de depuración interna (`⚙️ [PROCESO RAG]`) en el panel izquierdo que documentan intentos de Prompt Leakage bloqueados, consultas poco claras (`unclear`), clasificaciones off-topic con su acción de moderación, bloqueos a usuarios baneados y control de cuotas diarias de IA consumidas o denegadas (con conteo de preguntas restantes).
+- **Panel Web de Administración (React 19 / Vite 8 / TailwindCSS 4)**:
+  - Implementación completa de un panel web SPA embebido servido desde el servidor HTTP del bot (puerto 3000) con autenticación OTP por correo electrónico y enlaces de login directos.
+  - Cuatro dashboards diferenciados por rol de usuario:
+    - **Super Administrador**: Gestión global de grupos, materias, profesores, comisiones, calendario académico (con gestión del ciclo lectivo), administradores, emails autorizados y simulación de alumnos.
+    - **Administrador de Grupo**: Vista acotada a su grupo asignado con acceso de solo lectura al calendario y administradores.
+    - **Personal Institucional**: Edición completa de hitos del ciclo lectivo, feriados, horarios de clase con enlaces de Meet y datos de docentes.
+    - **Profesor**: Calendario de evaluaciones, registro/edición de exámenes, agenda de clases con edición de enlace Meet, mensajería bidireccional con alumnos vía WhatsApp y ajustes de perfil con verificación de teléfono OTP.
+  - Componentes reutilizables: `DataTable` con paginación, búsqueda y acciones dinámicas; `CalendarWidget`; `ChatWindow` bidireccional; `ExamForm`; `DropdownSelector`; `Badge`; `ConfirmDialog`; `FormField`; `SearchBar`; `Spinner`.
+  - Sistema de temas/paletas de colores con persistencia en `localStorage` y aplicación instantánea mediante `data-theme` en el `documentElement`.
+  - Chat bidireccional integrado: réplicas a mensajes de WhatsApp desde el panel con burbujas estilo WhatsApp (emisor a la derecha, receptor a la izquierda), mostrando nombre y email del emisor con filtro regex para distinguir emails reales de JIDs de WhatsApp.
+  - Indicadores dinámicos de mensajes sin leer: botón de chat con tinte verde (`emerald`) y badge numérico rojo cuando hay réplicas nuevas de alumnos.
+  - Plantilla de respuesta automática de WhatsApp con rol dinámico del emisor (`🛡️ Super Administrador`, `🔑 Administrador`, `👨‍🏫 Profesor`, `🏫 Personal Institucional`), instrucción de respuesta con comando `!rid[id]` y contacto por email.
+  - Gestión dinámica de comisiones por año (1 a 4) con sincronización automática entre grupos del mismo año.
+  - Panel de simulación de alumnos: autoselección transparente del primer alumno, selector de comisión habilitado, sin necesidad de seleccionar alumno manualmente.
+- **Autodetectación y Verificación Segura de Docentes**:
+  - Flujo seguro de vinculación de teléfono WhatsApp a perfil docente mediante OTP de 6 dígitos enviado al email institucional registrado en `managed_teachers`.
+  - Tabla `phone_otp_sessions` y triggers de sincronización de teléfono entre `user_profiles` y `managed_teachers` (migración 40).
+  - Endpoint `POST /api/profile/send-phone-otp` para generar y enviar código de verificación por WhatsApp al número provisto.
+  - Endpoint `POST /api/profile/verify-phone-otp` para validar el código y vincular el teléfono de forma definitiva.
+  - Interfaz de verificación de teléfono en la página de Ajustes del panel docente con badges de estado ("Verificado" verde / "Pendiente" amarillo).
+- **Comando `!panel` en WhatsApp y Email con Asunto `"panel"`**:
+  - Los docentes registrados pueden escribir `!panel` o `panel` en el chat privado con el bot para recibir instantáneamente un enlace de acceso directo al panel web con código OTP.
+  - Si el WhatsApp del docente no está vinculado, el bot envía un OTP al email institucional para verificar su identidad antes de entregar el enlace.
+  - El monitor IMAP procesa emails con asunto `"panel"` (normalización case-insensitive y sin espacios) generando OTP y respondiendo con enlace al panel para remitentes autorizados.
+  - Prevención de spam: los remitentes no registrados reciben una única notificación de rechazo indicando contactar al administrador; correos futuros del mismo remitente se ignoran silenciosamente consultando `InboundEmailRejectionRepository.hasBeenRejected()`.
+- **Filtro Global por Materia y Comisión en Dashboard Docente**:
+  - Endpoint `GET /api/teachers/my-assignments` para obtener la lista de materias/comisiones asignadas al docente autenticado.
+  - `ProfessorDataContext` centraliza el estado del docente y el filtro seleccionado para todas las sub-vistas.
+  - Barra superior con `DropdownSelector` para filtrar por materia-comisión específica o "Todas mis materias/comisiones".
+  - Visibilidad global de evaluaciones del año para coordinación entre docentes, con restricción de edición/eliminación para exámenes y enlaces Meet de materias no asignadas al docente.
+- **Corrección de Simulación de Alumnos (Super Admin)**:
+  - Nuevo endpoint `GET /api/groups/:id/students` que consulta `group_memberships` + `user_profiles` para listar alumnos reales del grupo.
+  - Conexión del repositorio frontend `getStudents` al nuevo endpoint, eliminando el stub vacío que causaba el error "No hay alumnos registrados en este grupo para simular".
+- **Dockerización**:
+  - Dockerfile multi-stage optimizado con Node.js 24 Alpine: compilación de dependencias nativas (`sqlite3`) en stage de build, frontend React/Vite en stage separado, imagen de producción limpia sin herramientas de desarrollo.
+  - `docker-compose.yml` con volumes para persistencia de base de datos SQLite (`./data`) y sesión de WhatsApp Baileys (`./session`), carga de variables de entorno desde `.env`, healthcheck HTTP y límite de memoria.
+  - `.dockerignore` para excluir `node_modules`, `dist`, `.git`, `session`, `data`, tests y archivos de IDE del build context.
 
 ### Corregido
 - **Parser de Avisos por Email Rechazaba Correos Reenviados/Respondidos (BUG-014)**: Corrección del analizador de campos estructurados (`parseStructuredFields`) que rompía prematuramente al encontrar la dirección del bot (`bot.vectoritotsds@gmail.com`) en las cabeceras `To:` de emails reenviados/respondidos por Gmail, o al encontrar la línea `---------- Forwarded message ---------` (que matcheaba `startsWith('---')`). Ambos casos provocaban que el parser abandonara el cuerpo antes de leer ningún campo, generando falsos rechazos por "falta el campo cuerpo". Se reemplazó `startsWith('---')` por `/^-{3,}\s*$/` (solo líneas compuestas enteramente por guiones), se eliminó el check de email del bot, y se agregaron detecciones para bloques citados (`>`), encabezados `Original Message`/`Mensaje Original` y patrones `escribió:`/`wrote:` con case-insensitive.

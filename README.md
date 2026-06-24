@@ -2,11 +2,13 @@
 
 **Asistente académico automatizado para WhatsApp orientado a estudiantes del ISPC**
 
-[![Node.js](https://img.shields.io/badge/Node.js-20%2B-green?logo=node.js)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5%2B-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-24%2B-green?logo=node.js)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6%2B-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)](https://react.dev/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com/)
 [![RAG](https://img.shields.io/badge/Architecture-RAG-orange)](https://en.wikipedia.org/wiki/Retrieval-augmented_generation)
 [![License](https://img.shields.io/badge/License-MIT-gray)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Alpha%202.1.0-alpha.1-yellow)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/Status-Alpha%200.2.1--alpha.3-yellow)](CHANGELOG.md)
 
 Bot Vectorito es un asistente académico automatizado diseñado para centralizar y simplificar el acceso a la información de cursada para los estudiantes de la Tecnicatura Superior en Desarrollo de Software del ISPC (Instituto Superior Politécnico Córdoba).
 
@@ -73,12 +75,14 @@ Más que un bot de comandos, Vectorito actúa como un asistente académico autom
 
 | Capa | Tecnología | Propósito |
 | --- | --- | --- |
-| **Runtime & Lenguaje** | Node.js 20+ / TypeScript 5+ | Entorno de ejecución y tipado estático |
-| **Interfaz** | Baileys | Conexión a WhatsApp vía Web Socket |
+| **Runtime & Lenguaje** | Node.js 24+ / TypeScript 6+ | Entorno de ejecución y tipado estático |
+| **Interfaz WhatsApp** | Baileys | Conexión a WhatsApp vía Web Socket |
+| **Panel Web** | React 19 / Vite 8 / TailwindCSS 4 | Dashboard de administración SPA |
 | **Persistencia** | SQLite | Almacenamiento ágil de datos e índices RAG |
-| **IA & Embeddings** | Gemini 2.5 (Groq fallback) / Google Embeddings | Generación de respuestas y vectorización |
+| **IA & Embeddings** | Gemini 2.5 (Groq fallback) / HuggingFace Transformers | Generación de respuestas y vectorización |
 | **Automatización** | node-cron | Tareas programadas e indexación incremental |
-| **Integraciones** | IMAP, RSS | Lectura de correos institucionales y noticias |
+| **Integraciones** | IMAP, SMTP, RSS | Correos institucionales, notificaciones y noticias |
+| **Despliegue** | Docker / Docker Compose | Contenedorización y despliegue portable |
 
 ---
 
@@ -130,49 +134,76 @@ src/
 │   └── logging/                    # Servicio de logs
 ├── interfaces/                     # ── ADAPTADORES DE ENTRADA/SALIDA ──
 │   └── whatsapp/                   # Baileys gateway
-└── scheduler/                      # ── TAREAS EN SEGUNDO PLANO ──
-    └── scheduler-service.ts        # Cron jobs del sistema
-```
-
-**Flujo de una consulta con IA:**
-1. Mensaje recibido → `WhatsAppGateway` valida permisos.
-2. `MessageRouterService` (features/messages) deriva a `AIQueryService` (features/ai).
-3. Se verifica moderación (features/moderation) y rate limit (features/ai).
-4. Se ensambla el contexto uniendo datos de SQLite y búsqueda RAG (features/ai/rag).
-5. El modelo de IA genera la respuesta contextualizada y se envía al grupo.
-
----
-
-## ⚙️ Instalación y Configuración
+└── scheduler/                      # �## ⚙️ Instalación y Configuración
 
 ### Requisitos Previos
-* Node.js 20.x+ y npm 10.x+
+* Node.js 24.x+ y npm 10.x+
 * Git
 * Cuenta de WhatsApp (cualquier número)
 * API Key de Gemini (Google AI Studio)
 
-### Pasos
+### Opción 1: Instalación Local
 
 1. **Clonar e instalar dependencias:**
    ```bash
    git clone <URL_DEL_REPOSITORIO>
    cd bot-vectorito
    npm install
+   npm run install:web
    ```
-2. **Configurar entorno: **
+2. **Configurar entorno:**
    Copia `.env.example` a `.env` y completa las variables clave:
    ```env
    ADMIN_PASSWORD=tu_password_fuerte
    ADMIN_SEED_CODES=123456,654321
    GEMINI_API_KEY=tu_gemini_api_key
    SQLITE_PATH=data/chatbot.db
+   BASE_URL=http://localhost:3000
    ```
 3. **Compilar e iniciar:**
    ```bash
-   npm run build
-   npm start # Para desarrollo: npm run dev
+   npm run build        # Compilar backend (TypeScript)
+   npm run build:web    # Compilar panel web (React/Vite)
+   npm start            # Iniciar en producción
+   # Para desarrollo con hot-reload: npm run dev
    ```
 4. **Vincular WhatsApp:** Escanea el código QR que aparecerá en la terminal desde `Dispositivos vinculados` en tu app de WhatsApp. Escribe `!menu` en el grupo para verificar.
+5. **Acceder al panel web:** Abrí `http://localhost:3000` en tu navegador.
+
+### Opción 2: Despliegue con Docker 🐳
+
+La forma más simple y portable de desplegar el bot.
+
+1. **Requisitos:** [Docker](https://docs.docker.com/get-docker/) y [Docker Compose](https://docs.docker.com/compose/install/) instalados.
+
+2. **Clonar y configurar:**
+   ```bash
+   git clone <URL_DEL_REPOSITORIO>
+   cd bot-vectorito
+   cp .env.example .env
+   # Editar .env con tus claves y configuración
+   ```
+
+3. **Construir e iniciar:**
+   ```bash
+   docker compose up -d --build
+   ```
+
+4. **Ver logs en tiempo real:**
+   ```bash
+   docker compose logs -f
+   ```
+
+5. **Detener:**
+   ```bash
+   docker compose down
+   ```
+
+> **Nota:** La sesión de WhatsApp y la base de datos se persisten automáticamente en las carpetas `./session/` y `./data/` respectivamente. Estas carpetas sobreviven a reinicios y reconstrucciones del contenedor.
+
+> **Nota:** La TUI (interfaz de consola) se deshabilita automáticamente en Docker (`TUI_ENABLED=false`). El bot funciona en modo headless.
+
+---
 
 ## Configuración de grupos
 
@@ -192,6 +223,14 @@ Los grupos se gestionan automáticamente en la base de datos SQLite. Ya no se co
    - **Camada y comisiones**: Se creará el año y número de comisiones académicas.
    - **Materias y Profesores**: Por cada materia ingresada, se solicitará su día/hora y enlace de Meet, seguido del nombre y email de su profesor (`Nombre|email@ispc.edu.ar`). Estos pasos se pueden omitir ingresando `skip`.
    - **Emails de la cohorte**: Al finalizar las materias, se solicitará ingresar la lista de emails de clase de la cohorte separados por comas (`etiqueta|email, etiqueta|email`, ej: `Tutoría|tutor@ispc.edu.ar, Bedelía|bedelia@ispc.edu.ar`). Se puede omitir ingresando `skip` o `mas tarde`.
+
+5. El bot confirma la configuración definitiva dentro del grupo.
+
+### Migración desde versión anterior
+
+Si venías usando `WHATSAPP_GROUP_ID` o `WHATSAPP_GROUP_ID_2` en tu `.env`, el bot los migra automáticamente a la BD en el primer arranque. Podés eliminar esas variables del `.env` después del primer inicio exitoso.
+
+---aterias, se solicitará ingresar la lista de emails de clase de la cohorte separados por comas (`etiqueta|email, etiqueta|email`, ej: `Tutoría|tutor@ispc.edu.ar, Bedelía|bedelia@ispc.edu.ar`). Se puede omitir ingresando `skip` o `mas tarde`.
 
 5. El bot confirma la configuración definitiva dentro del grupo.
 
@@ -281,12 +320,45 @@ Los documentos que ya estaban en `data/ai-context/` antes de esta versión se tr
 
 ---
 
+## 🌐 Panel Web de Administración
+
+El bot incluye un panel web embebido accesible en `http://localhost:3000` (o la URL configurada en `BASE_URL`).
+
+### Acceso al Panel
+
+El acceso se realiza mediante **autenticación OTP por correo electrónico**:
+- **Super Administradores y Administradores**: Escriben `!panel` en el chat privado con el bot para recibir un enlace de login con código OTP.
+- **Profesores**: Pueden enviar un email con asunto `panel` al correo institucional del bot, o escribir `!panel` en el chat privado. Si su WhatsApp no está vinculado, se les envía un código de verificación a su email institucional.
+- **Acceso directo**: El enlace de login incluye el email y código OTP pre-completados para ingreso con un solo click.
+
+### Roles y Funcionalidades
+
+| Rol | Funcionalidades |
+| --- | --- |
+| 🛡️ **Super Admin** | Gestión global de grupos, materias, profesores, comisiones, calendario académico, ciclo lectivo, administradores, emails autorizados, simulación de alumnos, ajustes y temas |
+| 🔑 **Admin de Grupo** | Vista acotada a su grupo con lectura de calendario, administradores y horarios |
+| 🏫 **Personal Institucional** | Edición de hitos del ciclo lectivo, feriados, horarios de clase, enlaces de Meet y datos docentes |
+| 👨‍🏫 **Profesor** | Calendario de evaluaciones, registro/edición de exámenes propios, agenda de clases, mensajería bidireccional con alumnos vía WhatsApp, verificación de teléfono OTP |
+
+### Compilación del Frontend
+
+```bash
+npm run install:web   # Instalar dependencias del frontend
+npm run build:web     # Compilar el panel web (React/Vite/TailwindCSS)
+```
+
+El panel se sirve estáticamente desde `web/dist/`. Si no está compilado, el servidor HTTP responde con un mensaje indicando ejecutar `npm run build:web`.
+
+---
+
 ## 📖 Desarrollo y Decisiones Técnicas
 
 ### Scripts Útiles
 ```bash
-npm run dev           # Hot reload con recompilación automática
-npm run build         # Compilación TypeScript
+npm run dev           # Hot reload (Bot + Web) con recompilación automática
+npm run build         # Compilación TypeScript del backend
+npm run build:web     # Compilación del panel web (React/Vite)
+npm run install:web   # Instalar dependencias del frontend
 npm run test          # Ejecutar tests con Vitest (watch)
 npm run test:vitest   # Ejecutar tests una sola vez
 npm run rag:index     # Indexa PDFs nuevos en data/ai-context/
@@ -301,12 +373,16 @@ npm run cleanup:data  # ⚠️ Limpia la BD y vectores
 * **Contexto Mixto (RAG + SQLite):** RAG procesa documentos estáticos, pero la BD maneja el conocimiento "caliente" (qué alumno pregunta, de qué comisión es, qué clase toca hoy).
 * **Baileys vs API Oficial:** Para esta etapa Alpha, Baileys permite iterar rápido y gratis en grupos estándar. La lógica está desacoplada para facilitar una futura migración a la WhatsApp Business API.
 * **Moderación:** El sistema progresivo (warnings → ban temporal) asegura el acceso democrático y educa al usuario antes de penalizarlo.
+* **Panel Web Embebido:** El servidor HTTP nativo de Node.js sirve la API REST y la SPA sin necesidad de un reverse proxy adicional. Esto simplifica el despliegue y mantiene todo en un único proceso.
+* **Docker Multi-Stage:** La imagen de producción excluye herramientas de compilación, reduciendo significativamente el tamaño final.
 
 ---
 
 ## ❓ FAQ
 
-* **En desarrollo**
+* **¿Necesito Docker para usar el bot?** No. Docker es opcional. Podés instalar Node.js y ejecutar el bot directamente con `npm start`.
+* **¿Cómo accedo al panel web?** Abrí `http://localhost:3000` y logueate con tu email usando el código OTP que recibís al escribir `!panel` al bot.
+* **¿Puedo cambiar el puerto del servidor HTTP?** El puerto está hardcodeado en `3000`. Para cambiar el puerto, podés usar Docker Compose mapeando `"8080:3000"` en el archivo `docker-compose.yml`.
 
 ---
 

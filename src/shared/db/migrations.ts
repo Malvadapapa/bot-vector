@@ -696,6 +696,36 @@ const MIGRATIONS: Migration[] = [
       `INSERT OR IGNORE INTO year_commission_configs (year, commission_count) VALUES (2, 1)`,
       `INSERT OR IGNORE INTO year_commission_configs (year, commission_count) VALUES (3, 1)`
     ]
+  },
+  {
+    version: 40,
+    description: 'Create phone_otp_sessions table and setup teacher phone synchronization triggers',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS phone_otp_sessions (
+        email TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        code TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(email, phone)
+      )`,
+      `CREATE TRIGGER IF NOT EXISTS trg_sync_teacher_phone_on_profile_insert
+       AFTER INSERT ON user_profiles
+       FOR EACH ROW
+       BEGIN
+         UPDATE managed_teachers
+         SET phone = NEW.user_id
+         WHERE LOWER(email) = LOWER(NEW.email);
+       END`,
+      `CREATE TRIGGER IF NOT EXISTS trg_sync_teacher_phone_on_profile_update
+       AFTER UPDATE OF email ON user_profiles
+       FOR EACH ROW
+       BEGIN
+         UPDATE managed_teachers
+         SET phone = NEW.user_id
+         WHERE LOWER(email) = LOWER(NEW.email);
+       END`
+    ]
   }
 ];
 
