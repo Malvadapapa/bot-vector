@@ -559,51 +559,79 @@ export class HttpServer {
       // 4. GET /api/groups
       if (pathname === '/api/groups' && req.method === 'GET') {
         const groups = await this.groupRepository.getAllActiveGroupsWithEntryYear();
+        
+        // Pre-cargar datos para evitar N+1 queries
+        const allContexts = await this.groupContextRepository.findAll();
+        const contextsMap = new Map<string, any>();
+        for (const c of allContexts) {
+          contextsMap.set(c.group_id, c);
+        }
+
+        const memberCounts = await all<any>(
+          this.sqliteDb,
+          'SELECT group_id, COUNT(*) as count FROM group_memberships WHERE is_active = 1 GROUP BY group_id'
+        );
+        const memberCountMap = new Map<string, number>();
+        for (const r of memberCounts) {
+          memberCountMap.set(r.group_id, Number(r.count));
+        }
+
+        const onboardingRows = await all<any>(
+          this.sqliteDb,
+          'SELECT group_id, onboarding_completed FROM pending_group_onboarding'
+        );
+        const onboardingMap = new Map<string, boolean>();
+        for (const r of onboardingRows) {
+          onboardingMap.set(r.group_id, Number(r.onboarding_completed) === 1);
+        }
+
+        const commissionCounts = await all<any>(
+          this.sqliteDb,
+          'SELECT group_context_id, COUNT(*) as count FROM group_context_commissions GROUP BY group_context_id'
+        );
+        const commCountMap = new Map<number, number>();
+        for (const r of commissionCounts) {
+          commCountMap.set(Number(r.group_context_id), Number(r.count));
+        }
+
+        const adminRows = await all<any>(
+          this.sqliteDb,
+          `SELECT ga.group_id, ga.user_id, COALESCE(p.name, '') as name
+           FROM group_admins ga
+           JOIN admin_users a ON ga.user_id = a.user_id
+           LEFT JOIN user_profiles p ON ga.user_id = p.user_id
+           WHERE a.is_authenticated = 1`
+        );
+        const adminsByGroup = new Map<string, { name: string; phone: string }[]>();
+        for (const r of adminRows) {
+          if (!adminsByGroup.has(r.group_id)) {
+            adminsByGroup.set(r.group_id, []);
+          }
+          adminsByGroup.get(r.group_id)!.push({
+            name: r.name || 'Admin',
+            phone: String(r.user_id).split('@')[0],
+          });
+        }
+
         const mappedGroups = [];
 
         for (const g of groups) {
-          const context = await this.groupContextRepository.getByGroupId(g.group_id);
-          const memberCountRow = await get<any>(
-            this.sqliteDb,
-            'SELECT COUNT(*) as count FROM group_memberships WHERE group_id = ? AND is_active = 1',
-            [g.group_id]
-          );
-          const studentCount = memberCountRow ? Number(memberCountRow.count) : 0;
+          const context = contextsMap.get(g.group_id);
+          const studentCount = memberCountMap.get(g.group_id) || 0;
 
           // Check if onboarding is completed
-          const onboardingRow = await get<any>(
-            this.sqliteDb,
-            'SELECT onboarding_completed FROM pending_group_onboarding WHERE group_id = ?',
-            [g.group_id]
-          );
-          const onboardingCompleted = !onboardingRow || Number(onboardingRow.onboarding_completed) === 1;
+          const onboardingCompleted = onboardingMap.has(g.group_id) 
+            ? onboardingMap.get(g.group_id)! 
+            : true;
           const isConfigured = !!(context?.year) && onboardingCompleted;
 
           // Count commissions linked to this group
-          let commissionsCount = 1;
-          if (context) {
-            const commCountRow = await get<any>(
-              this.sqliteDb,
-              'SELECT COUNT(*) as count FROM group_context_commissions WHERE group_context_id = ?',
-              [context.id]
-            );
-            commissionsCount = commCountRow ? Math.max(Number(commCountRow.count), 1) : 1;
-          }
+          const commissionsCount = context 
+            ? Math.max(commCountMap.get(context.id) || 1, 1) 
+            : 1;
 
           // Get group admins
-          const adminRows = await all<any>(
-            this.sqliteDb,
-            `SELECT ga.user_id, COALESCE(p.name, '') as name
-             FROM group_admins ga
-             JOIN admin_users a ON ga.user_id = a.user_id
-             LEFT JOIN user_profiles p ON ga.user_id = p.user_id
-             WHERE a.is_authenticated = 1 AND ga.group_id = ?`,
-            [g.group_id]
-          );
-          const admins = adminRows.map((a: any) => ({
-            name: a.name || 'Admin',
-            phone: String(a.user_id).split('@')[0],
-          }));
+          const admins = adminsByGroup.get(g.group_id) || [];
 
           mappedGroups.push({
             id: g.group_id,
@@ -1189,7 +1217,46 @@ export class HttpServer {
       if (pathname === '/api/classes' && req.method === 'GET') {
         const groupId = parsedUrl.searchParams.get('groupId') || undefined;
         const classes = await this.managedClassRepository.listAll(groupId);
+        
+        // Pre-cargar datos para evitar N+1 queries
         const allSubjects = await all<any>(this.sqliteDb, 'SELECT id, name FROM academic_subjects');
+        const allCommissions = await all<any>(this.sqliteDb, 'SELECT id, name FROM commissions');
+        const relevantTeachers = await all<any>(
+          this.sqliteDb,
+          'SELECT name, email, subject, group_id, commission_id FROM managed_teachers'
+        );
+
+        const classIds = classes.map(c => c.id).filter(Boolean);
+        const allSchedules = classIds.length > 0 ? await all<any>(
+          this.sqliteDb,
+          `SELECT * FROM class_commission_schedule WHERE managed_class_id IN (${classIds.map(() => '?').join(',')})`,
+          classIds
+        ) : [];
+
+        const commissionsMap = new Map<number, string>();
+        for (const comm of allCommissions) {
+          commissionsMap.set(comm.id, comm.name);
+        }
+
+        const findTeacherInMem = (subject: string, gId: string, commId: number | null) => {
+          const matchSubject = normalizeSubjectName(subject);
+          
+          if (commId !== null) {
+            const exact = relevantTeachers.find(t => 
+              normalizeSubjectName(t.subject || '') === matchSubject && 
+              (t.group_id || '') === gId && 
+              t.commission_id === commId
+            );
+            if (exact) return exact;
+          }
+          
+          const matchGroup = relevantTeachers.find(t => 
+            normalizeSubjectName(t.subject || '') === matchSubject && 
+            (t.group_id || '') === gId
+          );
+          return matchGroup || null;
+        };
+
         const mapped = [];
 
         for (const c of classes) {
@@ -1198,16 +1265,16 @@ export class HttpServer {
 
           const dayIdx = DAYS_ES.findIndex(d => normalizeString(d) === normalizeString(c.schedule_day));
 
-          // Fetch commission schedules
-          const commSchedules = await this.classCommissionScheduleRepository.listByManagedClass(c.id!);
+          // Filtrar schedules en memoria
+          const commSchedules = allSchedules.filter(s => s.managed_class_id === c.id);
           const commSchedulesWithNames = [];
           
           let primaryCommId: number | null = null;
           if (commSchedules.length > 0) {
             const sortedComms = [];
             for (const cs of commSchedules) {
-              const commRow = await get<any>(this.sqliteDb, 'SELECT name FROM commissions WHERE id = ?', [cs.commission_id]);
-              sortedComms.push({ cs, name: commRow?.name || '' });
+              const commName = commissionsMap.get(cs.commission_id) || '';
+              sortedComms.push({ cs, name: commName });
             }
             sortedComms.sort((a, b) => a.name.localeCompare(b.name));
             if (sortedComms.length > 0) {
@@ -1215,28 +1282,12 @@ export class HttpServer {
             }
           }
 
-          // Fetch primary teacher (for fallback)
-          const primaryTeacherRow = primaryCommId ? await get<any>(
-            this.sqliteDb,
-            'SELECT name, email FROM managed_teachers WHERE subject = ? AND group_id = ? AND commission_id = ? LIMIT 1',
-            [c.subject, c.group_id || '', primaryCommId]
-          ) : null;
-          
-          const fallbackTeacherRow = primaryTeacherRow || await get<any>(
-            this.sqliteDb,
-            'SELECT name, email FROM managed_teachers WHERE subject = ? AND group_id = ? LIMIT 1',
-            [c.subject, c.group_id || '']
-          );
+          const fallbackTeacherRow = findTeacherInMem(c.subject, c.group_id || '', primaryCommId);
 
           for (const cs of commSchedules) {
-            const commRow = await get<any>(this.sqliteDb, 'SELECT name FROM commissions WHERE id = ?', [cs.commission_id]);
+            const commName = commissionsMap.get(cs.commission_id) || `Comisión ${cs.commission_id}`;
             
-            let commTeacherRow = await get<any>(
-              this.sqliteDb,
-              'SELECT name, email FROM managed_teachers WHERE subject = ? AND group_id = ? AND commission_id = ? LIMIT 1',
-              [c.subject, c.group_id || '', cs.commission_id]
-            );
-
+            let commTeacherRow = findTeacherInMem(c.subject, c.group_id || '', cs.commission_id);
             if (!commTeacherRow || (!commTeacherRow.name && !commTeacherRow.email)) {
               commTeacherRow = fallbackTeacherRow;
             }
@@ -1246,7 +1297,7 @@ export class HttpServer {
             commSchedulesWithNames.push({
               id: cs.id,
               commissionId: String(cs.commission_id),
-              commissionName: commRow ? commRow.name : `Comisión ${cs.commission_id}`,
+              commissionName: commName,
               dayOfWeek: DAYS_ES.findIndex(d => normalizeString(d) === normalizeString(cs.schedule_day)),
               startTime: cs.schedule_time,
               endTime: getEndTime(cs.schedule_time),
@@ -1450,19 +1501,21 @@ export class HttpServer {
         const groupId = parsedUrl.searchParams.get('groupId') || undefined;
         const examsList = await this.managedExamRepository.listWithIds(50, groupId);
         
+        const allSubjects = await all<any>(this.sqliteDb, 'SELECT id, name FROM academic_subjects');
+        const subjectMap = new Map<string, number>();
+        for (const s of allSubjects) {
+          subjectMap.set(s.name.toLowerCase(), s.id);
+        }
+
         const mapped = [];
         for (const e of examsList) {
-          const subRow = await get<any>(
-            this.sqliteDb,
-            'SELECT id FROM academic_subjects WHERE LOWER(name) = LOWER(?) LIMIT 1',
-            [e.exam.subject]
-          );
+          const subjectIdVal = subjectMap.get(e.exam.subject.toLowerCase());
 
           const timings = (e.exam.frecuenciaAvisos || '7d,3d').split(',').map(s => s.trim()).filter(Boolean);
 
           mapped.push({
             id: String(e.id),
-            subjectId: subRow ? String(subRow.id) : `sub-${e.exam.subject.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+            subjectId: subjectIdVal ? String(subjectIdVal) : `sub-${e.exam.subject.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
             groupId: e.exam.group_id || '',
             type: e.exam.exam_type || 'evidence',
             title: e.exam.observations || 'Evaluación',
