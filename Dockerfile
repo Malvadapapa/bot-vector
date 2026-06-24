@@ -64,7 +64,8 @@ RUN mkdir -p data session data/ai-context/global
 
 # Variables de entorno por defecto
 ENV NODE_ENV=production
-ENV TUI_ENABLED=false
+ENV TUI_ENABLED=true
+ENV TERM=xterm-256color
 ENV SQLITE_PATH=data/chatbot.db
 
 # El servidor HTTP escucha en el puerto 3000

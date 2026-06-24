@@ -26,8 +26,13 @@ services:
       - .env
     environment:
       - NODE_ENV=production
-      - TUI_ENABLED=false
-    tty: false
+      # TUI (interfaz de consola): activar con true, desactivar con false (headless)
+      - TUI_ENABLED=true
+      # Necesario para que neo-blessed renderice colores y bordes correctamente
+      - TERM=xterm-256color
+    # Requerido para que la TUI funcione dentro del contenedor
+    stdin_open: true   # Equivale al flag -i (interactive)
+    tty: true          # Equivale al flag -t (pseudo-TTY)
     # Limitar recursos (ajustar según necesidad)
     deploy:
       resources:
