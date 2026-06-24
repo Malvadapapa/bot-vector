@@ -318,6 +318,26 @@ export class HttpServer {
   }
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const startTime = Date.now();
+    const parsedUrl = new URL(req.url || '', `http://localhost:${this.port}`);
+    const pathname = parsedUrl.pathname;
+
+    res.on('finish', () => {
+      const duration = Date.now() - startTime;
+      const isApi = pathname.startsWith('/api');
+      const isPage = pathname === '/' || !pathname.includes('.'); // Ignorar estáticos como .js, .css, .png, etc.
+
+      if (isApi || isPage) {
+        let statusEmoji = '🟢';
+        if (res.statusCode >= 400 && res.statusCode < 500) {
+          statusEmoji = '🟡';
+        } else if (res.statusCode >= 500) {
+          statusEmoji = '🔴';
+        }
+        console.log(`[HTTP] ${statusEmoji} ${req.method} ${pathname} - Código: ${res.statusCode} (${duration}ms)`);
+      }
+    });
+
     // Enable CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
@@ -328,9 +348,6 @@ export class HttpServer {
       res.end();
       return;
     }
-
-    const parsedUrl = new URL(req.url || '', `http://localhost:${this.port}`);
-    const pathname = parsedUrl.pathname;
 
     try {
       // ── API ROUTES ──────────────────────────────────────────────────────────

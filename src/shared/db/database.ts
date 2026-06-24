@@ -123,14 +123,12 @@ export class DatabaseConnection {
     const tursoToken = process.env.TURSO_AUTH_TOKEN;
 
     if (tursoUrl && tursoToken) {
-      console.log(`[BD] Iniciando conexión remota con Turso...`);
       this.ready = new Promise((resolve, reject) => {
         try {
           this.db = new LibsqlDatabase(tursoUrl, tursoToken) as any;
           this.db.run('PRAGMA foreign_keys = ON;', async (pragmaErr) => {
             try {
-              console.log(`[BD] Conectado a Turso (URL: ${tursoUrl})`);
-              console.log(`[BD] ☁️  ¡CONFIRMADO: USANDO BASE DE DATOS EN LA NUBE (TURSO)!`);
+              console.log('[BD] ☁️  Conectado a la base de datos en la nube (Turso)');
               await applyMigrations(this.db);
               console.log('[BD] Esquema verificado y migraciones aplicadas en Turso');
               resolve();
@@ -166,8 +164,7 @@ export class DatabaseConnection {
               console.error(`[BD] Error al activar foreign_keys local: ${pragmaErr.message}`);
             }
             try {
-              console.log(`[BD] Conectado localmente a: ${finalPath}`);
-              console.log(`[BD] 💻 ¡ATENCIÓN: USANDO BASE DE DATOS LOCAL (SQLITE)!`);
+              console.log('[BD] 💻 Conectado a la base de datos local (SQLite)');
               await applyMigrations(this.db);
               console.log('[BD] Esquema verificado y migraciones aplicadas localmente');
               resolve();
