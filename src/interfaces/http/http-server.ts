@@ -537,11 +537,31 @@ export class HttpServer {
           name = profile.name;
         }
 
+        let groupIds: string[] = [];
+        if (role === 'group_admin') {
+          const adminRows = await all<any>(
+            this.sqliteDb,
+            `SELECT ga.group_id 
+             FROM group_admins ga
+             LEFT JOIN user_profiles p ON ga.user_id = p.user_id
+             WHERE LOWER(p.email) = LOWER(?) OR ga.user_id = ?`,
+            [normalizedEmail, normalizedEmail]
+          );
+          groupIds = adminRows.map(r => r.group_id);
+        } else if (role === 'professor') {
+          const teacherRows = await all<any>(
+            this.sqliteDb,
+            'SELECT DISTINCT group_id FROM managed_teachers WHERE LOWER(email) = LOWER(?)',
+            [normalizedEmail]
+          );
+          groupIds = teacherRows.map(r => r.group_id).filter(Boolean);
+        }
+
         const token = JwtUtils.sign({ email: normalizedEmail, role, name });
         this.sendJson(res, 200, {
           success: true,
           token,
-          user: { id: normalizedEmail, email: normalizedEmail, name, role, groupIds: [] }
+          user: { id: normalizedEmail, email: normalizedEmail, name, role, groupIds }
         });
         return;
       }
@@ -2173,14 +2193,9 @@ export class HttpServer {
           [authUser.email]
         );
 
-        if (!profile) {
-          this.sendJson(res, 404, { success: false, error: 'Perfil de usuario no encontrado.' });
-          return;
-        }
-
         const result: any = {
-          name: profile.name,
-          email: profile.email
+          name: profile ? profile.name : authUser.name,
+          email: profile ? profile.email : authUser.email
         };
 
         if (authUser.role === 'professor') {
@@ -2212,22 +2227,28 @@ export class HttpServer {
           return;
         }
 
-        const profile = await get<any>(
+        let profile = await get<any>(
           this.sqliteDb,
           'SELECT user_id FROM user_profiles WHERE LOWER(email) = LOWER(?) LIMIT 1',
           [authUser.email]
         );
 
         if (!profile) {
-          this.sendJson(res, 404, { success: false, error: 'Perfil de usuario no encontrado.' });
-          return;
+          const userId = authUser.email;
+          await run(
+            this.sqliteDb,
+            `INSERT INTO user_profiles (user_id, name, birthday_day_month, email)
+             VALUES (?, ?, '01/01', ?)`,
+            [userId, name, email.toLowerCase().trim()]
+          );
+          profile = { user_id: userId };
+        } else {
+          await run(
+            this.sqliteDb,
+            'UPDATE user_profiles SET name = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+            [name, email.toLowerCase().trim(), profile.user_id]
+          );
         }
-
-        await run(
-          this.sqliteDb,
-          'UPDATE user_profiles SET name = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
-          [name, email.toLowerCase().trim(), profile.user_id]
-        );
 
         if (authUser.role === 'professor') {
           const teacher = await get<any>(
