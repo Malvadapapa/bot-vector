@@ -161,12 +161,11 @@ export class HttpServer {
       }
 
       const ngrokCmd = process.env.NGROK_PATH || 'ngrok';
-      console.log(`[Tunnel] Ejecutando: ${ngrokCmd} http ${this.port} --url=${domain}`);
-      this.tunnelProcess = spawn(ngrokCmd, [
-        'http',
-        String(this.port),
-        `--url=${domain}`
-      ], { shell: true });
+      const fullCmd = `"${ngrokCmd}" http ${this.port} --url=${domain}`;
+      console.log(`[Tunnel] Ejecutando: ${fullCmd}`);
+      this.tunnelProcess = spawn(fullCmd, [], { shell: true });
+
+      let isAlreadyOnline = false;
 
       this.tunnelProcess.on('error', (err: any) => {
         console.error('\n┌────────────────────────────────────────────────────────┐');
@@ -181,7 +180,13 @@ export class HttpServer {
 
       this.tunnelProcess.stdout.on('data', (data: any) => {
         const output = data.toString();
-        console.log('[Tunnel stdout]:', output.trim());
+        if (output.includes('is already online') || output.includes('ERR_NGROK_334')) {
+          if (!isAlreadyOnline) {
+            isAlreadyOnline = true;
+            console.log('[Tunnel] La ruta de ngrok ya está activa y en línea (ya existe un túnel abierto). El bot continuará funcionando.');
+          }
+          return;
+        }
         if (output.includes('Session Status') || output.includes('online') || output.includes('Active')) {
           console.log('[Tunnel] Túnel ngrok activo y online.');
         }
@@ -189,10 +194,21 @@ export class HttpServer {
 
       this.tunnelProcess.stderr.on('data', (data: any) => {
         const output = data.toString();
+        if (output.includes('is already online') || output.includes('ERR_NGROK_334')) {
+          if (!isAlreadyOnline) {
+            isAlreadyOnline = true;
+            console.log('[Tunnel] La ruta de ngrok ya está activa y en línea (ya existe un túnel abierto). El bot continuará funcionando.');
+          }
+          return;
+        }
         console.error('[Tunnel stderr]:', output.trim());
       });
 
       this.tunnelProcess.on('close', (code: any) => {
+        if (isAlreadyOnline && code === 1) {
+          // El túnel ya estaba levantado en otro proceso, es normal.
+          return;
+        }
         console.log(`[Tunnel] Túnel ngrok cerrado con código: ${code}`);
       });
     } catch (err) {

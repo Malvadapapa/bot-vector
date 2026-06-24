@@ -15,16 +15,9 @@ export class GroqProvider implements AIProvider {
     if (!this.apiKey) return;
 
     try {
-      const response = await fetch(this.modelsUrl, {
-        headers: { 'Authorization': `Bearer ${this.apiKey}` }
-      });
-      if (response.ok) {
-        const data: any = await response.json();
-        const models = data.data.map((m: any) => m.id);
-        console.log(`[IA] Modelos disponibles en Groq: ${models.slice(0, 10).join(', ')}${models.length > 10 ? '...' : ''}`);
-      }
+      console.log(`[IA] Proveedor Groq inicializado (modelo: ${this.defaultModel}).`);
     } catch (e) {
-      console.warn('[IA] No se pudieron obtener los modelos de Groq.', e);
+      console.warn('[IA] No se pudo inicializar el proveedor Groq.', e);
     }
     this.initialized = true;
   }

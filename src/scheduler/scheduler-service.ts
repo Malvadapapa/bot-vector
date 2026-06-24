@@ -51,14 +51,12 @@ export class SchedulerService {
   }
 
   public async startJobs(): Promise<void> {
-    console.log('[Scheduler] Iniciando tareas automáticas...');
-    
     // Obtener grupos activos desde BD
     const activeGroupIds = await this.groupRepository.getAllActiveIds();
     if (!activeGroupIds.length) {
-      console.log('[Scheduler] Avisos a grupos desactivados: no hay grupos activos en BD.');
+      console.log('[Scheduler] Tareas automáticas iniciadas (sin grupos activos en BD).');
     } else {
-      console.log(`[Scheduler] ${activeGroupIds.length} grupos activos cargados desde BD`);
+      console.log(`[Scheduler] Tareas automáticas iniciadas con ${activeGroupIds.length} grupos activos.`);
     }
 
     // Update ExamNotificationService with current groups

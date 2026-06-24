@@ -152,7 +152,6 @@ export class GeminiService implements AIProvider {
     // 2. Resolver cadena de modelos disponibles
     this.genAI = new GoogleGenerativeAI(this.apiKey);
     const available = await this.listAvailableModels();
-    console.log(`[IA] Modelos disponibles en la API: ${available.size > 0 ? [...available].slice(0, 12).join(', ') : 'ninguno detectado'}`);
 
     // Construir cadena priorizada
     const preferredModel = process.env.GEMINI_MODEL || '';
@@ -187,7 +186,7 @@ export class GeminiService implements AIProvider {
       throw new Error('No se encontró ningún modelo disponible en la API de Gemini.');
     }
 
-    console.log(`[IA] Cadena de modelos configurada (${this.modelChain.length}): ${this.modelChain.map((m) => m.name).join(' → ')}`);
+    console.log(`[IA] Proveedor Gemini inicializado con ${this.modelChain.length} modelos (principal: ${this.modelChain[0]?.name}).`);
 
     // 3. Construir historial base (con archivos de conocimiento)
     const contextParts: PromptPart[] = this.uploadedFiles.map((f) => ({

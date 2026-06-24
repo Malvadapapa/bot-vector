@@ -68,7 +68,8 @@ export class RagPipelineService {
     groupId?: string,
     forceAll = false
   ): Promise<void> {
-    console.log(`[RAG] Iniciando sincronización para ${scopeDir}...`);
+    const scopeLabel = scope === 'general' ? 'general' : `grupo ${groupId}`;
+    console.log(`[RAG] Iniciando sincronización (${scopeLabel})...`);
     const tempSyncState = new SyncState(statePath);
     const tempVectorStorage = new VectorStorage(storagePath);
     
@@ -151,12 +152,12 @@ export class RagPipelineService {
 
     // 3. Guardar estado y vectores si hubo cambios
     if (processedCount > 0 || deletedCount > 0 || forceAll) {
-      console.log(`[RAG] Guardando cambios en el storage...`);
+      console.log(`[RAG] Guardando cambios en almacenamiento (${scopeLabel})...`);
       await tempVectorStorage.save();
       await tempSyncState.saveState(state);
-      console.log(`[RAG] Sincronización completa para ${scopeDir}. Vectores totales: ${tempVectorStorage.getRecordCount()}`);
+      console.log(`[RAG] Sincronización completada (${scopeLabel}). Vectores totales: ${tempVectorStorage.getRecordCount()}`);
     } else {
-      console.log(`[RAG] Sincronización completa para ${scopeDir}. No se detectaron cambios.`);
+      console.log(`[RAG] Sincronización completada (${scopeLabel}). Sin cambios.`);
     }
   }
 
