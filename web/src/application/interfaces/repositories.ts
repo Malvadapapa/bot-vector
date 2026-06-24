@@ -48,6 +48,8 @@ export interface IGroupRepository {
   getSubjectsByCohort(cohortId: string): Promise<Subject[]>;
   getTeachers(groupId: string): Promise<Teacher[]>;
   getStudents(groupId: string): Promise<SimulatedStudent[]>;
+  getYearsConfig(): Promise<{ year: number; commissionCount: number }[]>;
+  updateYearConfig(year: number, commissionCount: number): Promise<void>;
 }
 
 // ── Exams ────────────────────────────────────────────────────

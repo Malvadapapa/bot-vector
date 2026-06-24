@@ -683,6 +683,19 @@ const MIGRATIONS: Migration[] = [
     sql: [
       `ALTER TABLE managed_teachers ADD COLUMN meet_link TEXT DEFAULT NULL`
     ]
+  },
+  {
+    version: 39,
+    description: 'Create year_commission_configs table and seed defaults',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS year_commission_configs (
+        year INTEGER PRIMARY KEY,
+        commission_count INTEGER NOT NULL DEFAULT 1
+      )`,
+      `INSERT OR IGNORE INTO year_commission_configs (year, commission_count) VALUES (1, 1)`,
+      `INSERT OR IGNORE INTO year_commission_configs (year, commission_count) VALUES (2, 1)`,
+      `INSERT OR IGNORE INTO year_commission_configs (year, commission_count) VALUES (3, 1)`
+    ]
   }
 ];
 

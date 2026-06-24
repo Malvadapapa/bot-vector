@@ -1709,6 +1709,8 @@ const GroupsManagerView: React.FC = () => {
     // Modal fields
     const [cohortYear, setCohortYear] = useState(2026);
     const [entryYear, setEntryYear] = useState(1);
+    const [yearsConfig, setYearsConfig] = useState<{ year: number; commissionCount: number }[]>([]);
+    const [commissionsCount, setCommissionsCount] = useState<number>(1);
 
     // Filtering
     const [filterType, setFilterType] = useState<'all' | 'cursada' | 'general'>('all');
@@ -1721,6 +1723,8 @@ const GroupsManagerView: React.FC = () => {
         setIsLoading(true);
         try {
             const allGroups = await groupRepository.getAll();
+            const config = await groupRepository.getYearsConfig();
+            setYearsConfig(config);
             const groupsWithCohorts = await Promise.all(
                 allGroups.map(async (g) => {
                     const cohortsList = await groupRepository.getCohorts(g.id);
@@ -1744,8 +1748,18 @@ const GroupsManagerView: React.FC = () => {
     const handleOpenEditModal = (group: Group) => {
         setEditingGroup(group);
         setCohortYear(group.cohortYear || 2026);
-        setEntryYear(group.entryYear || 1);
+        const y = group.entryYear || 1;
+        setEntryYear(y);
+        const match = yearsConfig.find(c => c.year === y);
+        setCommissionsCount(match ? match.commissionCount : 1);
         setIsModalOpen(true);
+    };
+
+    const handleEntryYearChange = (newYearVal: string) => {
+        const y = Number(newYearVal);
+        setEntryYear(y);
+        const match = yearsConfig.find(c => c.year === y);
+        setCommissionsCount(match ? match.commissionCount : 1);
     };
 
     const handleSaveGroup = async (e: React.FormEvent) => {
@@ -1755,6 +1769,7 @@ const GroupsManagerView: React.FC = () => {
             await groupRepository.update(editingGroup.id, {
                 entryYear: editingGroup.type === 'cursada' ? entryYear : undefined,
                 cohortYear,
+                commissionsCount: editingGroup.type === 'cursada' ? commissionsCount : undefined,
             });
             toast.success('Configuración de grupo guardada.');
             setIsModalOpen(false);
@@ -1904,11 +1919,28 @@ const GroupsManagerView: React.FC = () => {
                                             { value: '3', label: '3er Año' },
                                         ]}
                                         selectedValue={String(entryYear)}
-                                        onChange={(val) => setEntryYear(Number(val))}
+                                        onChange={handleEntryYearChange}
                                         required
                                     />
                                 )}
                             </div>
+
+                            {editingGroup.type === 'cursada' && (
+                                <div>
+                                    <DropdownSelector
+                                        label="Cantidad de Comisiones"
+                                        options={[
+                                            { value: '1', label: 'Única Comisión' },
+                                            { value: '2', label: '2 Comisiones' },
+                                            { value: '3', label: '3 Comisiones' },
+                                            { value: '4', label: '4 Comisiones' },
+                                        ]}
+                                        selectedValue={String(commissionsCount)}
+                                        onChange={(val) => setCommissionsCount(Number(val))}
+                                        required
+                                    />
+                                </div>
+                            )}
 
                             <p className="text-[11px] text-[var(--color-text-tertiary)] bg-[var(--color-bg-app)] p-3 border border-[var(--color-border)] rounded-lg leading-relaxed">
                                 <strong>Importante:</strong> Al modificar la cohorte o el año de cursada, se resetearán las materias, enlaces de clase y exámenes asociados a este grupo.
@@ -2325,7 +2357,7 @@ const SAAdminsTab: React.FC = () => {
                 </div>
 
                 {isLoading ? (
-                    <div className="flex justify-center py-6"><Spinner size="md" /></div>
+                    <div className="h-64 flex items-center justify-center text-[var(--color-text-secondary)]">Cargando administradores...</div>
                 ) : (
                     <div className="border border-[var(--color-border)] rounded-xl overflow-hidden divide-y divide-[var(--color-border)] bg-[var(--color-bg-card)]">
                         {admins.length === 0 ? (
@@ -2559,7 +2591,7 @@ const SAAuthorizedEmailsTab: React.FC = () => {
                 </div>
 
                 {isLoading ? (
-                    <div className="flex justify-center py-6"><Spinner size="md" /></div>
+                    <div className="h-64 flex items-center justify-center text-[var(--color-text-secondary)]">Cargando emails autorizados...</div>
                 ) : (
                     <div className="border border-[var(--color-border)] rounded-xl overflow-hidden divide-y divide-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
                         {emails.length === 0 ? (
@@ -2821,7 +2853,7 @@ export const SALifecycleTab: React.FC = () => {
             </div>
 
             {isLoading ? (
-                <div className="flex justify-center py-6"><Spinner size="md" /></div>
+                <div className="h-64 flex items-center justify-center text-[var(--color-text-secondary)]">Cargando ciclo lectivo...</div>
             ) : (
                 <>
                     <div className="grid gap-6 sm:grid-cols-2">
@@ -2945,6 +2977,7 @@ export const SASubjectsTab: React.FC = () => {
   const [yearFilter, setYearFilter] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedComm, setSelectedComm] = useState<Record<string, string>>({}); // subjectId -> commissionLabel
+  const [yearsConfig, setYearsConfig] = useState<{ year: number; commissionCount: number }[]>([]);
 
   const getHeaders = () => {
     const session = localStorage.getItem('auth_session');
@@ -2955,12 +2988,25 @@ export const SASubjectsTab: React.FC = () => {
     };
   };
 
+  const fetchYearsConfig = async () => {
+    try {
+      const data = await groupRepository.getYearsConfig();
+      setYearsConfig(data);
+    } catch (err) {
+      console.error('[SASubjectsTab] Error al obtener comisiones por año:', err);
+    }
+  };
+
   const fetchSubjects = async () => {
+    if (yearFilter === 0) {
+      setSubjects([]);
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
-      const url = yearFilter > 0
-        ? `/api/subjects/preseeded?year=${yearFilter}`
-        : '/api/subjects/preseeded';
+      await fetchYearsConfig();
+      const url = `/api/subjects/preseeded?year=${yearFilter}`;
       const res = await fetch(url, { headers: getHeaders() });
       const data = await res.json();
       const mapped: SubjectTeacherRow[] = data.map((s: any) => ({
@@ -2984,7 +3030,9 @@ export const SASubjectsTab: React.FC = () => {
     }
   };
 
-  useEffect(() => { fetchSubjects(); }, [yearFilter]);
+  useEffect(() => {
+    fetchSubjects();
+  }, [yearFilter]);
 
   const updateField = (id: string, comm: string, field: string, value: string) => {
     setSubjects(prev => prev.map(s => {
@@ -3026,6 +3074,16 @@ export const SASubjectsTab: React.FC = () => {
     }
   };
 
+  const handleUpdateCommissions = async (year: number, count: number) => {
+    try {
+      await groupRepository.updateYearConfig(year, count);
+      toast.success(`Configuración actualizada a ${count === 1 ? 'única comisión' : `${count} comisiones`}.`);
+      await fetchYearsConfig();
+    } catch {
+      toast.error('Error al actualizar comisiones por año.');
+    }
+  };
+
   const yearLabels: Record<number, string> = { 1: '1er Año', 2: '2do Año', 3: '3er Año' };
 
   const filteredSubjects = subjects.filter(s => {
@@ -3064,10 +3122,10 @@ export const SASubjectsTab: React.FC = () => {
               className="w-full sm:w-52 pl-9 pr-3 py-2 bg-[var(--color-bg-app)] border border-[var(--color-border)] rounded-lg text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-accent)]"
             />
           </div>
-          <div className="w-36">
+          <div className="w-40">
             <DropdownSelector
               options={[
-                { value: '0', label: 'Todos los Años' },
+                { value: '0', label: 'Seleccionar Año...' },
                 { value: '1', label: '1er Año' },
                 { value: '2', label: '2do Año' },
                 { value: '3', label: '3er Año' },
@@ -3079,8 +3137,47 @@ export const SASubjectsTab: React.FC = () => {
         </div>
       </div>
 
+      {/* Commission configuration per year (only if year is selected) */}
+      {yearFilter > 0 && (
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[var(--color-bg-sidebar)] p-4 border border-[var(--color-border)] rounded-xl">
+          <div className="flex flex-col">
+            <span className="text-xs font-bold text-[var(--color-text-primary)]">Cantidad de Comisiones</span>
+            <span className="text-[11px] text-[var(--color-text-tertiary)] mt-0.5">
+              Define cuántas comisiones tiene el {yearLabels[yearFilter]}. Esto afectará a todas las materias de este año.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {[1, 2, 3, 4].map(count => {
+              const currentYearConfig = yearsConfig.find(c => c.year === yearFilter) || { year: yearFilter, commissionCount: 1 };
+              const activeCommissionsCount = currentYearConfig.commissionCount;
+              return (
+                <button
+                  key={count}
+                  type="button"
+                  onClick={() => handleUpdateCommissions(yearFilter, count)}
+                  className={`
+                    px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border
+                    ${activeCommissionsCount === count
+                      ? 'bg-[var(--color-accent)] text-[var(--color-text-inverse)] border-[var(--color-accent)]'
+                      : 'bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:bg-[var(--color-bg-app)]'
+                    }
+                  `}
+                >
+                  {count === 1 ? 'Única' : `${count} comisiones`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Content */}
-      {isLoading ? (
+      {yearFilter === 0 ? (
+        <div className="h-64 flex flex-col items-center justify-center text-[var(--color-text-tertiary)] gap-2 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6">
+          <BookOpen className="w-10 h-10 opacity-40 text-[var(--color-accent)]" />
+          <p className="text-sm font-medium text-[var(--color-text-secondary)]">Por favor, seleccione un año de cursada para comenzar a gestionar sus materias y profesores.</p>
+        </div>
+      ) : isLoading ? (
         <div className="h-64 flex items-center justify-center text-[var(--color-text-secondary)]">Cargando materias...</div>
       ) : filteredSubjects.length === 0 ? (
         <div className="h-64 flex flex-col items-center justify-center text-[var(--color-text-tertiary)] gap-2">
@@ -3089,8 +3186,7 @@ export const SASubjectsTab: React.FC = () => {
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {/* Group by year */}
-          {[1, 2, 3].filter(y => yearFilter === 0 || y === yearFilter).map(year => {
+          {[1, 2, 3].filter(y => y === yearFilter).map(year => {
             const yearSubjects = filteredSubjects.filter(s => s.year === year);
             if (yearSubjects.length === 0) return null;
             return (
@@ -3105,7 +3201,10 @@ export const SASubjectsTab: React.FC = () => {
                   </span>
                 </div>
                 {yearSubjects.map(subject => {
-                  const currentComm = selectedComm[subject.id] || 'A';
+                  const currentYearConfig = yearsConfig.find(c => c.year === subject.year) || { year: subject.year, commissionCount: 1 };
+                  const activeCommissionsCount = currentYearConfig.commissionCount;
+                  const activeCommLabels = ['A', 'B', 'C', 'D'].slice(0, activeCommissionsCount);
+                  const currentComm = activeCommLabels.includes(selectedComm[subject.id]) ? selectedComm[subject.id] : 'A';
                   const commData = subject.commissions[currentComm] || { teacherName: '', teacherEmail: '', meetLink: '' };
 
                   return (
@@ -3152,27 +3251,29 @@ export const SASubjectsTab: React.FC = () => {
                       </div>
 
                       {/* Commission tabs */}
-                      <div className="flex items-center gap-1.5 mb-3.5">
-                        <span className="text-[10px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Comisión:</span>
-                        <div className="flex gap-1">
-                          {['A', 'B', 'C', 'D'].map(lbl => (
-                            <button
-                              key={lbl}
-                              type="button"
-                              onClick={() => setSelectedComm(prev => ({ ...prev, [subject.id]: lbl }))}
-                              className={`
-                                px-2.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer
-                                ${currentComm === lbl
-                                  ? 'bg-[var(--color-accent)] text-[var(--color-text-inverse)]'
-                                  : 'bg-[var(--color-bg-app)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'
-                                }
-                              `}
-                            >
-                              Comisión {lbl}
-                            </button>
-                          ))}
+                      {activeCommissionsCount > 1 && (
+                        <div className="flex items-center gap-1.5 mb-3.5">
+                          <span className="text-[10px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Comisión:</span>
+                          <div className="flex gap-1">
+                            {activeCommLabels.map(lbl => (
+                              <button
+                                key={lbl}
+                                type="button"
+                                onClick={() => setSelectedComm(prev => ({ ...prev, [subject.id]: lbl }))}
+                                className={`
+                                  px-2.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer
+                                  ${currentComm === lbl
+                                    ? 'bg-[var(--color-accent)] text-[var(--color-text-inverse)]'
+                                    : 'bg-[var(--color-bg-app)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'
+                                  }
+                                `}
+                              >
+                                Comisión {lbl}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       <div className="grid gap-3 sm:grid-cols-3">
                         <div>

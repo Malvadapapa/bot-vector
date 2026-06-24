@@ -244,6 +244,21 @@ export class HttpGroupRepository implements IGroupRepository {
   async getStudents(groupId: string): Promise<SimulatedStudent[]> {
     return [];
   }
+
+  async getYearsConfig(): Promise<{ year: number; commissionCount: number }[]> {
+    const res = await fetch('/api/subjects/years-config', { headers: this.getHeaders() });
+    if (!res.ok) throw new Error('Error al obtener la configuración de comisiones por año.');
+    return res.json();
+  }
+
+  async updateYearConfig(year: number, commissionCount: number): Promise<void> {
+    const res = await fetch('/api/subjects/years-config', {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ year, commissionCount }),
+    });
+    if (!res.ok) throw new Error('Error al actualizar la configuración de comisiones por año.');
+  }
 }
 
 // ── Exam Repository ──────────────────────────────────────────

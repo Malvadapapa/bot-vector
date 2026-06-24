@@ -655,39 +655,77 @@ export class HttpServer {
           await run(this.sqliteDb, 'UPDATE whatsapp_groups SET display_name = ? WHERE group_id = ?', [name, groupId]);
         }
 
-        // Handle commissions count
-        if (commissionsCount !== undefined && commissionsCount >= 1) {
-          const context = await this.groupContextRepository.getByGroupId(groupId);
-          if (context) {
-            const existingComms = await all<any>(
-              this.sqliteDb,
-              'SELECT c.id, c.name FROM commissions c JOIN group_context_commissions gcc ON c.id = gcc.commission_id WHERE gcc.group_context_id = ?',
-              [context.id]
-            );
-            const currentCount = existingComms.length;
-            const targetCount = Math.min(Math.max(Number(commissionsCount), 1), 4);
+        // Handle commissions count and sync to global year configs
+        const context = await this.groupContextRepository.getByGroupId(groupId);
+        if (context) {
+          const configRow = await get<any>(
+            this.sqliteDb,
+            'SELECT commission_count FROM year_commission_configs WHERE year = ?',
+            [context.year]
+          );
+          const targetCount = configRow ? Math.min(Math.max(Number(configRow.commission_count), 1), 4) : 1;
 
-            if (targetCount > currentCount) {
-              // Add missing commissions
-              const commLabels = ['A', 'B', 'C', 'D'];
-              for (let i = currentCount; i < targetCount; i++) {
-                const commName = `Comisión ${commLabels[i] || (i + 1)}`;
-                const result = await run(
+          const existingComms = await all<any>(
+            this.sqliteDb,
+            'SELECT c.id, c.name FROM commissions c JOIN group_context_commissions gcc ON c.id = gcc.commission_id WHERE gcc.group_context_id = ?',
+            [context.id]
+          );
+          const currentCount = existingComms.length;
+
+          if (currentCount === 0 || (commissionsCount !== undefined && Number(commissionsCount) !== currentCount)) {
+            const finalCount = commissionsCount !== undefined ? Math.min(Math.max(Number(commissionsCount), 1), 4) : targetCount;
+            
+            // Update global config for this year of study
+            await run(
+              this.sqliteDb,
+              'INSERT INTO year_commission_configs (year, commission_count) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET commission_count = excluded.commission_count',
+              [context.year, finalCount]
+            );
+
+            // Sync all groups of this year
+            const groupsToSync = await all<any>(
+              this.sqliteDb,
+              'SELECT id, group_id FROM group_context WHERE year = ?',
+              [context.year]
+            );
+
+            for (const gCtx of groupsToSync) {
+              const gComms = await all<any>(
+                this.sqliteDb,
+                'SELECT c.id, c.name FROM commissions c JOIN group_context_commissions gcc ON c.id = gcc.commission_id WHERE gcc.group_context_id = ?',
+                [gCtx.id]
+              );
+              const gCount = gComms.length;
+
+              if (finalCount > gCount) {
+                // Add missing commissions
+                const commLabels = ['A', 'B', 'C', 'D'];
+                const groupRow = await get<any>(
                   this.sqliteDb,
-                  'INSERT INTO commissions (name, year, shift) VALUES (?, ?, ?)',
-                  [commName, cohortYear || new Date().getFullYear(), 'General']
+                  'SELECT entry_year FROM whatsapp_groups WHERE group_id = ? LIMIT 1',
+                  [gCtx.group_id]
                 );
-                await run(
-                  this.sqliteDb,
-                  'INSERT OR IGNORE INTO group_context_commissions (group_context_id, commission_id) VALUES (?, ?)',
-                  [context.id, result.lastID]
-                );
-              }
-            } else if (targetCount < currentCount) {
-              // Remove excess commissions (from the end)
-              const toRemove = existingComms.slice(targetCount);
-              for (const comm of toRemove) {
-                await run(this.sqliteDb, 'DELETE FROM group_context_commissions WHERE group_context_id = ? AND commission_id = ?', [context.id, comm.id]);
+                const cohortYearVal = groupRow?.entry_year || new Date().getFullYear();
+
+                for (let i = gCount; i < finalCount; i++) {
+                  const commName = `Comisión ${commLabels[i] || (i + 1)}`;
+                  const result = await run(
+                    this.sqliteDb,
+                    'INSERT INTO commissions (name, year, shift) VALUES (?, ?, ?)',
+                    [commName, cohortYearVal, 'General']
+                  );
+                  await run(
+                    this.sqliteDb,
+                    'INSERT OR IGNORE INTO group_context_commissions (group_context_id, commission_id) VALUES (?, ?)',
+                    [gCtx.id, result.lastID]
+                  );
+                }
+              } else if (finalCount < gCount) {
+                // Remove excess commissions (from the end)
+                const toRemove = gComms.slice(finalCount);
+                for (const comm of toRemove) {
+                  await run(this.sqliteDb, 'DELETE FROM group_context_commissions WHERE group_context_id = ? AND commission_id = ?', [gCtx.id, comm.id]);
+                }
               }
             }
           }
@@ -936,6 +974,90 @@ export class HttpServer {
         }
 
         this.sendJson(res, 200, { success: true });
+        return;
+      }
+
+      // GET /api/subjects/years-config
+      if (pathname === '/api/subjects/years-config' && req.method === 'GET') {
+        try {
+          const rows = await all<any>(this.sqliteDb, 'SELECT year, commission_count as commissionCount FROM year_commission_configs');
+          this.sendJson(res, 200, rows);
+        } catch (err) {
+          console.error('[HTTP Server] Error getting year commission configs:', err);
+          this.sendJson(res, 500, { success: false, error: 'Error al obtener configuración de comisiones por año.' });
+        }
+        return;
+      }
+
+      // PUT /api/subjects/years-config
+      if (pathname === '/api/subjects/years-config' && req.method === 'PUT') {
+        try {
+          const { year, commissionCount } = await this.getBodyJson(req);
+          if (year === undefined || commissionCount === undefined) {
+            this.sendJson(res, 400, { success: false, error: 'Parámetros inválidos.' });
+            return;
+          }
+          const targetCount = Math.min(Math.max(Number(commissionCount), 1), 4);
+          
+          // Update global year config
+          await run(
+            this.sqliteDb,
+            'INSERT INTO year_commission_configs (year, commission_count) VALUES (?, ?) ON CONFLICT(year) DO UPDATE SET commission_count = excluded.commission_count',
+            [Number(year), targetCount]
+          );
+
+          // Sincronizar todos los grupos que tengan este año de cursada
+          const groups = await all<any>(
+            this.sqliteDb,
+            'SELECT id, group_id FROM group_context WHERE year = ?',
+            [Number(year)]
+          );
+
+          for (const context of groups) {
+            const existingComms = await all<any>(
+              this.sqliteDb,
+              'SELECT c.id, c.name FROM commissions c JOIN group_context_commissions gcc ON c.id = gcc.commission_id WHERE gcc.group_context_id = ?',
+              [context.id]
+            );
+            const currentCount = existingComms.length;
+
+            if (targetCount > currentCount) {
+              // Add missing commissions
+              const commLabels = ['A', 'B', 'C', 'D'];
+              const groupRow = await get<any>(
+                this.sqliteDb,
+                'SELECT entry_year FROM whatsapp_groups WHERE group_id = ? LIMIT 1',
+                [context.group_id]
+              );
+              const cohortYear = groupRow?.entry_year || new Date().getFullYear();
+
+              for (let i = currentCount; i < targetCount; i++) {
+                const commName = `Comisión ${commLabels[i] || (i + 1)}`;
+                const result = await run(
+                  this.sqliteDb,
+                  'INSERT INTO commissions (name, year, shift) VALUES (?, ?, ?)',
+                  [commName, cohortYear, 'General']
+                );
+                await run(
+                  this.sqliteDb,
+                  'INSERT OR IGNORE INTO group_context_commissions (group_context_id, commission_id) VALUES (?, ?)',
+                  [context.id, result.lastID]
+                );
+              }
+            } else if (targetCount < currentCount) {
+              // Remove excess commissions (from the end)
+              const toRemove = existingComms.slice(targetCount);
+              for (const comm of toRemove) {
+                await run(this.sqliteDb, 'DELETE FROM group_context_commissions WHERE group_context_id = ? AND commission_id = ?', [context.id, comm.id]);
+              }
+            }
+          }
+
+          this.sendJson(res, 200, { success: true });
+        } catch (err) {
+          console.error('[HTTP Server] Error updating year commission configs:', err);
+          this.sendJson(res, 500, { success: false, error: 'Error al actualizar configuración de comisiones por año.' });
+        }
         return;
       }
 
