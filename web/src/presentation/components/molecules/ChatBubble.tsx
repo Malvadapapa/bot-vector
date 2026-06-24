@@ -31,14 +31,27 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isSelf }) => {
       
       <div className={`flex flex-col max-w-[70%] ${isSelf ? 'items-end' : 'items-start'}`}>
         {/* Author details */}
-        {!isSelf && (
-          <span className="text-xs text-[var(--color-text-secondary)] font-medium mb-1 ml-1 flex items-center gap-1.5">
-            {message.authorName || 'Usuario'}
-            {message.authorPhone && (
-              <span className="text-[var(--color-text-tertiary)] font-normal">
-                ({message.authorPhone})
+        {isSelf ? (
+          <span className="text-[11px] text-[var(--color-text-secondary)] font-semibold mb-1 mr-1 flex items-center gap-1.5 justify-end">
+            {message.authorName || 'Tú'}
+            {message.authorId && message.authorId.includes('@') && (
+              <span className="text-[var(--color-text-tertiary)] font-normal text-[10px]">
+                ({message.authorId})
               </span>
             )}
+          </span>
+        ) : (
+          <span className="text-[11px] text-[var(--color-text-secondary)] font-semibold mb-1 ml-1 flex items-center gap-1.5">
+            {message.authorName || 'Alumno'}
+            {message.authorId && message.authorId.includes('@') ? (
+              <span className="text-[var(--color-text-tertiary)] font-normal text-[10px]">
+                ({message.authorId})
+              </span>
+            ) : message.authorPhone ? (
+              <span className="text-[var(--color-text-tertiary)] font-normal text-[10px]">
+                ({message.authorPhone})
+              </span>
+            ) : null}
           </span>
         )}
 

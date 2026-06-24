@@ -2603,13 +2603,30 @@ export class HttpServer {
             ? parentMsg.content.substring(0, 60) + '...'
             : parentMsg.content;
 
-          const formattedReply = `👨‍🏫 *Respuesta del Profesor: ${authorName}*\n\n` +
+          const roleLabels: Record<string, string> = {
+            super_admin: 'Super Administrador',
+            group_admin: 'Administrador de Grupo',
+            professor: 'Profesor',
+            institutional: 'Personal Institucional',
+          };
+          const roleEmojis: Record<string, string> = {
+            super_admin: '🛡️',
+            group_admin: '🔑',
+            professor: '👨‍🏫',
+            institutional: '🏫',
+          };
+          const roleKey = authUser.role || 'professor';
+          const roleLabel = roleLabels[roleKey] || 'Profesor';
+          const roleEmoji = roleEmojis[roleKey] || '👨‍🏫';
+
+          const formattedReply = `${roleEmoji} *Respuesta del ${roleLabel}: ${authorName}*\n\n` +
             `En relación al aviso/tema:\n` +
             `📌 *"${parentMsgSubject}"*\n\n` +
             `💬 *Respuesta:*\n` +
             `${content}\n\n` +
             `---\n` +
-            `💡 _Este es un mensaje automático del Panel de Vectorito._`;
+            `💡 Para responder a este mensaje escribí: !rid${parentMessageId} tu mensaje\n` +
+            `✉️ También puedes comunicarte con el ${roleLabel.toLowerCase()} enviando un email a ${authUser.email}`;
 
           try {
             if (parentMsg.target_type === 'cohort') {
@@ -2637,7 +2654,8 @@ export class HttpServer {
           timestamp: new Date().toISOString(),
           isFromStudent: false,
           authorId,
-          authorName
+          authorName,
+          content
         });
         return;
       }
@@ -2707,13 +2725,30 @@ export class HttpServer {
 
         if (parentNotice) {
           const parentMsgSubject = parentNotice.title || 'Aviso Institucional';
-          const formattedReply = `👨‍🏫 *Respuesta del Profesor: ${authorName}*\n\n` +
+          const roleLabels: Record<string, string> = {
+            super_admin: 'Super Administrador',
+            group_admin: 'Administrador de Grupo',
+            professor: 'Profesor',
+            institutional: 'Personal Institucional',
+          };
+          const roleEmojis: Record<string, string> = {
+            super_admin: '🛡️',
+            group_admin: '🔑',
+            professor: '👨‍🏫',
+            institutional: '🏫',
+          };
+          const roleKey = authUser.role || 'professor';
+          const roleLabel = roleLabels[roleKey] || 'Profesor';
+          const roleEmoji = roleEmojis[roleKey] || '👨‍🏫';
+
+          const formattedReply = `${roleEmoji} *Respuesta del ${roleLabel}: ${authorName}*\n\n` +
             `En relación al aviso/tema:\n` +
             `📌 *"${parentMsgSubject}"*\n\n` +
             `💬 *Respuesta:*\n` +
             `${content}\n\n` +
             `---\n` +
-            `💡 _Este es un mensaje automático del Panel de Vectorito._`;
+            `💡 Para responder a este mensaje escribí: !rid${parentMessageId} tu mensaje\n` +
+            `✉️ También puedes comunicarte con el ${roleLabel.toLowerCase()} enviando un email a ${authUser.email}`;
 
           try {
             // Find target groups
@@ -2754,7 +2789,8 @@ export class HttpServer {
           timestamp: new Date().toISOString(),
           isFromStudent: false,
           authorId,
-          authorName
+          authorName,
+          content
         });
         return;
       }
