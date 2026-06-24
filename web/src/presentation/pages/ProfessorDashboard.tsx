@@ -132,7 +132,16 @@ const useProfessorData = () => {
 
       setCohorts(cohortsList);
       setClasses(classesList);
-      setAssignments(assignmentsList || []);
+
+      // Filter assignments to the active group context
+      const filteredAssignments = (assignmentsList || []).filter((a: any) => {
+        if (a.groupId === activeGroup.id) return true;
+        if (!a.groupId || a.groupId === '') {
+          return subsList.some((s: any) => normalizeSubjectName(s.name) === normalizeSubjectName(a.subject));
+        }
+        return false;
+      });
+      setAssignments(filteredAssignments);
     } catch {
       toast.error('Error al sincronizar datos del docente.');
     } finally {
@@ -141,6 +150,7 @@ const useProfessorData = () => {
   };
 
   useEffect(() => {
+    setSelectedAssignmentId('all');
     refreshAll();
   }, [activeGroup, user]);
 
@@ -364,7 +374,7 @@ const ExamsTab: React.FC = () => {
 
 // ── SUB-VIEW: SENT MESSAGES & LIVE CHAT WINDOW ────────────────
 const MessagesTab: React.FC = () => {
-  const { user } = useAuth();
+  const { user, activeGroup } = useAuth();
   const { messages, cohorts, isLoading, refreshAll, assignments, selectedAssignmentId } = useProfessorDataContext();
   
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
@@ -379,11 +389,17 @@ const MessagesTab: React.FC = () => {
   useEffect(() => {
     if (isNewMsgModalOpen && selectedAssignmentId !== 'all') {
       const activeAssignment = assignments.find((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId);
-      if (activeAssignment && activeAssignment.groupId) {
-        setTargetId(activeAssignment.groupId);
+      if (activeAssignment) {
+        if (activeAssignment.groupId) {
+          setTargetId(activeAssignment.groupId);
+        } else if (activeGroup && activeGroup.cohortIds && activeGroup.cohortIds.length > 0) {
+          setTargetId(activeGroup.cohortIds[0]);
+        } else if (activeGroup) {
+          setTargetId(activeGroup.id);
+        }
       }
     }
-  }, [isNewMsgModalOpen, selectedAssignmentId, assignments]);
+  }, [isNewMsgModalOpen, selectedAssignmentId, assignments, activeGroup]);
 
   // Fetch replies when selected message changes
   useEffect(() => {
@@ -455,7 +471,21 @@ const MessagesTab: React.FC = () => {
     if (selectedAssignmentId === 'all') return true;
     const activeAssignment = assignments.find((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId);
     if (!activeAssignment) return true;
-    return m.targetId === activeAssignment.groupId;
+    
+    // 1. Direct group match
+    if (m.targetId === activeAssignment.groupId) return true;
+    
+    // 2. Cohort match
+    if (m.targetType === 'cohort' && activeGroup?.cohortIds?.includes(m.targetId)) {
+      return true;
+    }
+    
+    // 3. Global assignment fallback
+    if ((!activeAssignment.groupId || activeAssignment.groupId === '') && m.targetId === activeGroup?.id) {
+      return true;
+    }
+
+    return false;
   });
 
   return (
