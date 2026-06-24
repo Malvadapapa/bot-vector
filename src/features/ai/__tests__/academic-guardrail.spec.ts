@@ -3,6 +3,11 @@ import { AcademicGuardrail } from '../academic-guardrail.js';
 
 vi.mock('@huggingface/transformers', () => {
   return {
+    env: {
+      cacheDir: '',
+      localModelPath: '',
+      allowRemoteModels: true,
+    },
     pipeline: vi.fn(async () => {
       /**
        * Mock del extractor que genera vectores deterministas.

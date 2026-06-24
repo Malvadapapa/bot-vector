@@ -332,7 +332,14 @@ async function bootstrap() {
 
   // --- Inicializar AcademicGuardrail semántico local ---
   console.log('[Guardrail] Inicializando filtro semántico local (Hugging Face)...');
-  await AcademicGuardrail.getInstance().initialize();
+  try {
+    await AcademicGuardrail.getInstance().initialize();
+  } catch (guardrailError) {
+    console.error('[Guardrail] ⚠️ No se pudo inicializar el filtro semántico. El bot continuará funcionando sin él.');
+    console.error('[Guardrail] Detalle del error:', (guardrailError as any)?.message || guardrailError);
+    console.error('[Guardrail] Posibles causas: sin conexión a internet (primera ejecución), memoria insuficiente, o modelo corrupto.');
+    console.error('[Guardrail] Tip: Eliminá la carpeta node_modules/.cache/ y reiniciá para forzar la re-descarga del modelo.');
+  }
 
   const knowledgeContextService = new KnowledgeContextService(
     userProfileRepository,
@@ -533,7 +540,21 @@ async function bootstrap() {
   });
 }
 
-bootstrap().catch((err) => {
-  console.error('❌ Error durante arranque:', err);
+bootstrap().catch(async (err) => {
+  console.error('\n\n==========================================');
+  console.error('❌ ERROR FATAL DURANTE EL ARRANQUE DEL BOT');
+  console.error('==========================================');
+  console.error('Mensaje:', (err as any)?.message || 'Error desconocido');
+  console.error('Stack:', (err as any)?.stack || 'Sin stack trace');
+  console.error('==========================================\n');
+  
+  // En Windows, la ventana de PowerShell se cierra antes de que el usuario
+  // pueda leer el error. Este delay le da tiempo para ver qué pasó.
+  if (process.platform === 'win32' && process.stdout.isTTY) {
+    console.error('⏳ El proceso se cerrará en 30 segundos. Copiá el error de arriba.');
+    console.error('   Presioná Ctrl+C para cerrar ahora.\n');
+    await new Promise(resolve => setTimeout(resolve, 30000));
+  }
+  
   process.exit(1);
 });

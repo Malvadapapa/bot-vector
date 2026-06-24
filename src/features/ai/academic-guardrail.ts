@@ -1,4 +1,6 @@
-import { pipeline } from '@huggingface/transformers';
+import { env, pipeline } from '@huggingface/transformers';
+import path from 'path';
+import fs from 'fs';
 
 export class AcademicGuardrail {
   private static instance: AcademicGuardrail | null = null;
@@ -109,16 +111,52 @@ export class AcademicGuardrail {
       return; // Ya inicializado
     }
 
+    const cachePath = path.join(process.cwd(), 'data', '.hf-cache');
+
     try {
-      console.log('[AcademicGuardrail] Cargando modelo local Xenova/paraphrase-multilingual-MiniLM-L12-v2...');
-      this.extractor = await pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2');
+      console.log('[AcademicGuardrail] Configurando directorio de caché local en data/.hf-cache...');
+      env.cacheDir = cachePath;
+
+      console.log('[AcademicGuardrail] Cargando modelo Xenova/paraphrase-multilingual-MiniLM-L12-v2 (quantizado q8)...');
+      console.log('[AcademicGuardrail] Primera ejecución: el modelo se descarga de internet (~23MB). Puede tardar unos segundos...');
+
+      try {
+        this.extractor = await pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2', {
+          dtype: 'q8',  // Modelo cuantizado: ~4x más rápido y ligero que fp32
+        });
+      } catch (pipelineError) {
+        console.warn('[AcademicGuardrail] Error al cargar el modelo. Es posible que la descarga esté corrupta. Limpiando caché y reintentando...', pipelineError);
+
+        // Limpieza de caché local
+        if (fs.existsSync(cachePath)) {
+          try {
+            fs.rmSync(cachePath, { recursive: true, force: true });
+            console.log('[AcademicGuardrail] Carpeta de caché local eliminada.');
+          } catch (rmError) {
+            console.error('[AcademicGuardrail] No se pudo eliminar la carpeta de caché:', rmError);
+          }
+        }
+
+        // Segundo intento
+        console.log('[AcademicGuardrail] Reintentando carga del modelo...');
+        this.extractor = await pipeline('feature-extraction', 'Xenova/paraphrase-multilingual-MiniLM-L12-v2', {
+          dtype: 'q8',
+        });
+      }
+
       console.log('[AcademicGuardrail] Modelo cargado. Precalculando embeddings de referencia...');
 
       // Precalcular un embedding por cada anchor text
       this.referenceEmbeddings = [];
-      for (const anchor of AcademicGuardrail.ANCHOR_TEXTS) {
+      const total = AcademicGuardrail.ANCHOR_TEXTS.length;
+      for (let i = 0; i < total; i++) {
+        const anchor = AcademicGuardrail.ANCHOR_TEXTS[i];
         const embedding = await this.getEmbedding(anchor);
         this.referenceEmbeddings.push(embedding);
+        // Log de progreso cada 5 anchors para que no parezca trabado
+        if ((i + 1) % 5 === 0 || i === total - 1) {
+          console.log(`[AcademicGuardrail] Progreso: ${i + 1}/${total} anchors procesados`);
+        }
       }
       console.log(`[AcademicGuardrail] Inicialización completada. ${this.referenceEmbeddings.length} anchor embeddings precalculados.`);
     } catch (error) {
@@ -139,7 +177,9 @@ export class AcademicGuardrail {
     threshold: number = 0.42
   ): Promise<{ isValid: boolean; similarity: number }> {
     if (!this.extractor) {
-      throw new Error('AcademicGuardrail no ha sido inicializado. Llama a initialize() primero.');
+      // Si el modelo no se cargó, permitir todo (degradación graceful)
+      console.warn('[AcademicGuardrail] Modelo no inicializado. Permitiendo consulta sin filtrar.');
+      return { isValid: true, similarity: 1 };
     }
 
     const cleanPrompt = userPrompt.trim();
