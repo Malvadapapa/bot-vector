@@ -131,13 +131,22 @@ export class AcademicGuardrail {
         console.warn('[AcademicGuardrail] Error al cargar el modelo. Limpiando caché y reintentando...', pipelineError);
 
         // Limpieza de caché local
+        let cacheDeleted = false;
         if (fs.existsSync(cachePath)) {
           try {
             fs.rmSync(cachePath, { recursive: true, force: true });
             console.log('[AcademicGuardrail] Carpeta de caché local eliminada.');
+            cacheDeleted = true;
           } catch (rmError) {
-            console.error('[AcademicGuardrail] No se pudo eliminar la carpeta de caché:', rmError);
+            console.error('[AcademicGuardrail] No se pudo eliminar la carpeta de caché (posiblemente bloqueada por Windows):', rmError);
           }
+        }
+
+        // Si no se pudo eliminar la caché original, usamos una carpeta de contingencia para evitar usar el archivo bloqueado/corrupto.
+        if (!cacheDeleted) {
+          const tempCachePath = path.join(process.cwd(), 'data', '.hf-cache-temp');
+          console.log(`[AcademicGuardrail] Utilizando ruta de caché alternativa para reintento: ${tempCachePath}`);
+          env.cacheDir = tempCachePath;
         }
 
         // Segundo intento

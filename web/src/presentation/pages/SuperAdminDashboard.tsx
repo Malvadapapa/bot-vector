@@ -2850,7 +2850,7 @@ export const SALifecycleTab: React.FC = () => {
                     <label className="text-xs font-bold text-[var(--color-text-secondary)] uppercase">Año Lectivo:</label>
                     <select
                         value={selectedYear}
-                        onChange={(e) => setSelectedYear(Number(e.target.value))}
+                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedYear(Number(e.target.value))}
                         className="px-3 py-1.5 bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] rounded-lg text-xs font-semibold text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
                     >
                         {[currentYearVal - 1, currentYearVal, currentYearVal + 1, currentYearVal + 2].map((y) => (
@@ -2865,23 +2865,26 @@ export const SALifecycleTab: React.FC = () => {
             ) : (
                 <>
                     <div className="grid gap-6 sm:grid-cols-2">
-                        {Object.entries(eventDates).map(([type, data]) => (
-                            <div key={type} className="p-5 border border-[var(--color-border)] bg-[var(--color-bg-card)] rounded-xl space-y-4 flex flex-col justify-between hover:shadow-sm transition-all duration-[var(--transition-fast)]">
-                                <div>
-                                    <h4 className="text-sm font-bold text-[var(--color-text-primary)]">{data.event_name}</h4>
-                                    <div className="mt-4">
-                                        <FormField
-                                            label="Fecha"
-                                            type="date"
-                                            value={data.start_date}
-                                            onChange={(e) => handleDateChange(type, 'start_date', e.target.value)}
-                                            required
-                                            disabled={!canEdit}
-                                        />
+                        {Object.entries(eventDates).map(([type, dataVal]) => {
+                            const data = dataVal as { start_date: string; end_date: string; event_name: string };
+                            return (
+                                <div key={type} className="p-5 border border-[var(--color-border)] bg-[var(--color-bg-card)] rounded-xl space-y-4 flex flex-col justify-between hover:shadow-sm transition-all duration-[var(--transition-fast)]">
+                                    <div>
+                                        <h4 className="text-sm font-bold text-[var(--color-text-primary)]">{data.event_name}</h4>
+                                        <div className="mt-4">
+                                            <FormField
+                                                label="Fecha"
+                                                type="date"
+                                                value={data.start_date}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleDateChange(type, 'start_date', e.target.value)}
+                                                required
+                                                disabled={!canEdit}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
 
                     <div className="grid gap-6 md:grid-cols-3">
@@ -2899,7 +2902,7 @@ export const SALifecycleTab: React.FC = () => {
                                         No hay feriados cargados para este año.
                                     </div>
                                 ) : (
-                                    holidays.map((item, index) => {
+                                    holidays.map((item: { id?: number; start_date: string; event_name: string }, index: number) => {
                                         const [y, m, d] = item.start_date.split('-');
                                         const dateFormatted = `${d}/${m}/${y}`;
                                         return (
@@ -2932,13 +2935,13 @@ export const SALifecycleTab: React.FC = () => {
                                             label="Fecha del Feriado"
                                             type="date"
                                             value={newHolidayDate}
-                                            onChange={(e) => setNewHolidayDate(e.target.value)}
+                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewHolidayDate(e.target.value)}
                                             required
                                         />
                                         <FormField
                                             label="Conmemoración / Motivo"
                                             value={newHolidayName}
-                                            onChange={(e) => setNewHolidayName(e.target.value)}
+                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewHolidayName(e.target.value)}
                                             placeholder="Ej: Día de la Independencia"
                                             required
                                         />
@@ -3043,7 +3046,7 @@ export const SASubjectsTab: React.FC = () => {
   }, [yearFilter]);
 
   const updateField = (id: string, comm: string, field: string, value: string) => {
-    setSubjects(prev => prev.map(s => {
+    setSubjects((prev: SubjectTeacherRow[]) => prev.map((s: SubjectTeacherRow) => {
       if (s.id !== id) return s;
       return {
         ...s,
@@ -3061,7 +3064,7 @@ export const SASubjectsTab: React.FC = () => {
 
   const handleSave = async (subject: SubjectTeacherRow, comm: string) => {
     const commData = subject.commissions[comm] || { teacherName: '', teacherEmail: '', meetLink: '' };
-    setSubjects(prev => prev.map(s => s.id === subject.id ? { ...s, isSaving: true } : s));
+    setSubjects((prev: SubjectTeacherRow[]) => prev.map((s: SubjectTeacherRow) => s.id === subject.id ? { ...s, isSaving: true } : s));
     try {
       const res = await fetch(`/api/subjects/${subject.id}/teacher`, {
         method: 'PUT',
@@ -3075,10 +3078,10 @@ export const SASubjectsTab: React.FC = () => {
       });
       if (!res.ok) throw new Error('Error al guardar');
       toast.success(`Profesor de ${subject.name} (Comisión ${comm}) guardado.`);
-      setSubjects(prev => prev.map(s => s.id === subject.id ? { ...s, isDirty: false, isSaving: false } : s));
+      setSubjects((prev: SubjectTeacherRow[]) => prev.map((s: SubjectTeacherRow) => s.id === subject.id ? { ...s, isDirty: false, isSaving: false } : s));
     } catch {
       toast.error('Error al guardar profesor.');
-      setSubjects(prev => prev.map(s => s.id === subject.id ? { ...s, isSaving: false } : s));
+      setSubjects((prev: SubjectTeacherRow[]) => prev.map((s: SubjectTeacherRow) => s.id === subject.id ? { ...s, isSaving: false } : s));
     }
   };
 
@@ -3094,11 +3097,11 @@ export const SASubjectsTab: React.FC = () => {
 
   const yearLabels: Record<number, string> = { 1: '1er Año', 2: '2do Año', 3: '3er Año' };
 
-  const filteredSubjects = subjects.filter(s => {
+  const filteredSubjects = subjects.filter((s: SubjectTeacherRow) => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return s.name.toLowerCase().includes(q) ||
-        Object.values(s.commissions).some(c => 
+        (Object.values(s.commissions) as Array<{ teacherName: string; teacherEmail: string; meetLink: string }>).some(c => 
           c.teacherName.toLowerCase().includes(q) || 
           c.teacherEmail.toLowerCase().includes(q)
         );
@@ -3126,7 +3129,7 @@ export const SASubjectsTab: React.FC = () => {
               type="text"
               placeholder="Buscar materia o profesor..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
               className="w-full sm:w-52 pl-9 pr-3 py-2 bg-[var(--color-bg-app)] border border-[var(--color-border)] rounded-lg text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-accent)]"
             />
           </div>
@@ -3139,7 +3142,7 @@ export const SASubjectsTab: React.FC = () => {
                 { value: '3', label: '3er Año' },
               ]}
               selectedValue={String(yearFilter)}
-              onChange={(val) => setYearFilter(Number(val))}
+              onChange={(val: string) => setYearFilter(Number(val))}
             />
           </div>
         </div>
@@ -3155,8 +3158,8 @@ export const SASubjectsTab: React.FC = () => {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {[1, 2, 3, 4].map(count => {
-              const currentYearConfig = yearsConfig.find(c => c.year === yearFilter) || { year: yearFilter, commissionCount: 1 };
+            {[1, 2, 3, 4].map((count: number) => {
+              const currentYearConfig = yearsConfig.find((c: { year: number; commissionCount: number }) => c.year === yearFilter) || { year: yearFilter, commissionCount: 1 };
               const activeCommissionsCount = currentYearConfig.commissionCount;
               return (
                 <button
@@ -3194,8 +3197,8 @@ export const SASubjectsTab: React.FC = () => {
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {[1, 2, 3].filter(y => y === yearFilter).map(year => {
-            const yearSubjects = filteredSubjects.filter(s => s.year === year);
+          {[1, 2, 3].filter(y => y === yearFilter).map((year: number) => {
+            const yearSubjects = filteredSubjects.filter((s: SubjectTeacherRow) => s.year === year);
             if (yearSubjects.length === 0) return null;
             return (
               <div key={year} className="flex flex-col gap-2">
@@ -3208,8 +3211,8 @@ export const SASubjectsTab: React.FC = () => {
                     {yearSubjects.length} materias
                   </span>
                 </div>
-                {yearSubjects.map(subject => {
-                  const currentYearConfig = yearsConfig.find(c => c.year === subject.year) || { year: subject.year, commissionCount: 1 };
+                {yearSubjects.map((subject: SubjectTeacherRow) => {
+                  const currentYearConfig = yearsConfig.find((c: { year: number; commissionCount: number }) => c.year === subject.year) || { year: subject.year, commissionCount: 1 };
                   const activeCommissionsCount = currentYearConfig.commissionCount;
                   const activeCommLabels = ['A', 'B', 'C', 'D'].slice(0, activeCommissionsCount);
                   const currentComm = activeCommLabels.includes(selectedComm[subject.id]) ? selectedComm[subject.id] : 'A';
@@ -3263,11 +3266,11 @@ export const SASubjectsTab: React.FC = () => {
                         <div className="flex items-center gap-1.5 mb-3.5">
                           <span className="text-[10px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Comisión:</span>
                           <div className="flex gap-1">
-                            {activeCommLabels.map(lbl => (
+                            {activeCommLabels.map((lbl: string) => (
                               <button
                                 key={lbl}
                                 type="button"
-                                onClick={() => setSelectedComm(prev => ({ ...prev, [subject.id]: lbl }))}
+                                onClick={() => setSelectedComm((prev: Record<string, string>) => ({ ...prev, [subject.id]: lbl }))}
                                 className={`
                                   px-2.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer
                                   ${currentComm === lbl
@@ -3291,7 +3294,7 @@ export const SASubjectsTab: React.FC = () => {
                           <input
                             type="text"
                             value={commData.teacherName}
-                            onChange={(e) => updateField(subject.id, currentComm, 'teacherName', e.target.value)}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateField(subject.id, currentComm, 'teacherName', e.target.value)}
                             placeholder="Ej: Juan Pérez"
                             className="w-full px-3 py-2 bg-[var(--color-bg-app)] border border-[var(--color-border)] rounded-lg text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-accent)]"
                           />
@@ -3303,7 +3306,7 @@ export const SASubjectsTab: React.FC = () => {
                           <input
                             type="email"
                             value={commData.teacherEmail}
-                            onChange={(e) => updateField(subject.id, currentComm, 'teacherEmail', e.target.value)}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateField(subject.id, currentComm, 'teacherEmail', e.target.value)}
                             placeholder="Ej: profesor@ispc.edu.ar"
                             className="w-full px-3 py-2 bg-[var(--color-bg-app)] border border-[var(--color-border)] rounded-lg text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-accent)]"
                           />
@@ -3315,7 +3318,7 @@ export const SASubjectsTab: React.FC = () => {
                           <input
                             type="url"
                             value={commData.meetLink}
-                            onChange={(e) => updateField(subject.id, currentComm, 'meetLink', e.target.value)}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateField(subject.id, currentComm, 'meetLink', e.target.value)}
                             placeholder="https://meet.google.com/..."
                             className="w-full px-3 py-2 bg-[var(--color-bg-app)] border border-[var(--color-border)] rounded-lg text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-accent)]"
                           />

@@ -338,7 +338,7 @@ async function bootstrap() {
     console.error('[Guardrail] ⚠️ No se pudo inicializar el filtro semántico. El bot continuará funcionando sin él.');
     console.error('[Guardrail] Detalle del error:', (guardrailError as any)?.message || guardrailError);
     console.error('[Guardrail] Posibles causas: sin conexión a internet (primera ejecución), memoria insuficiente, o modelo corrupto.');
-    console.error('[Guardrail] Tip: Eliminá la carpeta node_modules/.cache/ y reiniciá para forzar la re-descarga del modelo.');
+    console.error('[Guardrail] Tip: Eliminá la carpeta data/.hf-cache/ y reiniciá para forzar la re-descarga del modelo.');
   }
 
   const knowledgeContextService = new KnowledgeContextService(
