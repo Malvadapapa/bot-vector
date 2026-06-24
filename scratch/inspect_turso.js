@@ -17,25 +17,26 @@ async function run() {
   try {
     console.log("Connecting to Turso...");
     
-    const teachers = await client.execute("SELECT * FROM managed_teachers WHERE LOWER(email) LIKE '%ramiro%'");
-    console.log("\n=== MANAGED TEACHERS IN TURSO ===");
-    console.log(teachers.rows);
-
-    const profiles = await client.execute("SELECT * FROM user_profiles WHERE LOWER(email) LIKE '%ramiro%'");
-    console.log("\n=== USER PROFILES IN TURSO ===");
-    console.log(profiles.rows);
-
-    if (profiles.rows.length > 0) {
-      const userJid = profiles.rows[0].user_id;
-      const memberships = await client.execute({
-        sql: "SELECT * FROM group_memberships WHERE user_id = ?",
-        args: [userJid]
+    console.log("\nQuery 1: SELECT * FROM teacher_messages WHERE target_id = ? OR target_id = ''");
+    try {
+      const res1 = await client.execute({
+        sql: "SELECT * FROM teacher_messages WHERE target_id = ? OR target_id = ''",
+        args: ["120363413138580513@g.us"]
       });
-      console.log(`\n=== GROUP MEMBERSHIPS IN TURSO FOR ${userJid} ===`);
-      console.log(memberships.rows);
+      console.log("Success! Row count:", res1.rows.length);
+    } catch (err) {
+      console.error("Error in Query 1:", err);
+    }
+
+    console.log("\nQuery 2: SELECT COUNT(*) as total, SUM(CASE WHEN read_by_professor = 0 AND is_from_student = 1 THEN 1 ELSE 0 END) as unread FROM teacher_message_replies");
+    try {
+      const res2 = await client.execute("SELECT COUNT(*) as total, SUM(CASE WHEN read_by_professor = 0 AND is_from_student = 1 THEN 1 ELSE 0 END) as unread FROM teacher_message_replies");
+      console.log("Success! Row:", res2.rows[0]);
+    } catch (err) {
+      console.error("Error in Query 2:", err);
     }
   } catch (err) {
-    console.error("Error:", err);
+    console.error("General error:", err);
   } finally {
     client.close();
   }

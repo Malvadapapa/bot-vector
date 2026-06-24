@@ -2742,7 +2742,7 @@ export class HttpServer {
         const cohortYear = groupRow?.entry_year || (context?.year ? (new Date().getFullYear() - context.year + 1) : null);
         const cohortId = cohortYear ? `camada:${cohortYear}` : null;
 
-        let query = 'SELECT * FROM teacher_messages WHERE target_id = ? OR target_id = ""';
+        let query = "SELECT * FROM teacher_messages WHERE target_id = ? OR target_id = ''";
         const params = [groupId];
         if (cohortId) {
           query += ' OR target_id = ?';
