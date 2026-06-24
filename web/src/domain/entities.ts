@@ -138,6 +138,8 @@ export interface Notice {
   startDate?: string;         // Optional range/vigencia start
   endDate?: string;           // Optional range/vigencia end
   frecuencia?: string;        // Optional timing/frequency (e.g. 'unica', 'diaria', etc)
+  repliesCount?: number;
+  unreadRepliesCount?: number;
 }
 
 // ── Chat / Messages ─────────────────────────────────────────
@@ -156,6 +158,8 @@ export interface ChatMessage {
   targetId?: string;
   targetName?: string;
   readByProfessor?: boolean;
+  repliesCount?: number;
+  unreadRepliesCount?: number;
 }
 
 // ── Authentication ──────────────────────────────────────────

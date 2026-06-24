@@ -462,7 +462,18 @@ const NoticesTab: React.FC = () => {
           searchFields={['title']}
           renderRowCells={(n) => [
             <div className="flex flex-col">
-              <span className="font-semibold">{n.title}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">{n.title}</span>
+                {n.unreadRepliesCount && n.unreadRepliesCount > 0 ? (
+                  <span className="inline-flex items-center justify-center px-2 py-0.5 text-[10px] font-bold leading-none text-white bg-red-500 rounded-full animate-pulse" title={`${n.unreadRepliesCount} consultas nuevas`}>
+                    {n.unreadRepliesCount}
+                  </span>
+                ) : n.repliesCount && n.repliesCount > 0 ? (
+                  <span className="inline-flex items-center justify-center px-2 py-0.5 text-[10px] font-bold leading-none text-[var(--color-text-secondary)] bg-[var(--color-border)] rounded-full" title={`${n.repliesCount} consultas`}>
+                    {n.repliesCount}
+                  </span>
+                ) : null}
+              </div>
               <span className="text-xs text-[var(--color-text-secondary)] truncate max-w-sm">{n.body}</span>
             </div>,
             <Badge variant="accent">{n.targetName}</Badge>,
@@ -519,7 +530,7 @@ const NoticesTab: React.FC = () => {
               Respuestas del Aviso: {chatNotice.title}
             </h3>
             
-            <div className="flex-1 overflow-hidden">
+            <div className="h-[500px] overflow-hidden">
               <ChatWindow
                 parentMessage={{
                   id: chatNotice.id,

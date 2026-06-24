@@ -1518,6 +1518,21 @@ export class HttpServer {
       if (pathname === '/api/notices' && req.method === 'GET') {
         const noticesList = await this.institutionalNoticeRepository.listWithIds(50);
         const mapped = await Promise.all(noticesList.map(async (n) => {
+          let repliesCount = 0;
+          let unreadRepliesCount = 0;
+          try {
+            const counts = await get<any>(
+              this.sqliteDb,
+              `SELECT COUNT(*) as total, SUM(CASE WHEN read_by_professor = 0 AND is_from_student = 1 THEN 1 ELSE 0 END) as unread
+               FROM notice_replies WHERE notice_id = ?`,
+              [n.id]
+            );
+            repliesCount = counts?.total || 0;
+            unreadRepliesCount = counts?.unread || 0;
+          } catch (e) {
+            console.error('[HTTP Server] Error al contar replicas:', e);
+          }
+
           let targetName = n.notice.grupo_selector || 'todos';
           if (targetName === 'todos') {
             targetName = 'Todos los grupos';
@@ -1582,6 +1597,8 @@ export class HttpServer {
             startDate: n.notice.start_date ? n.notice.start_date.toISOString() : undefined,
             endDate: n.notice.end_date ? n.notice.end_date.toISOString() : undefined,
             frecuencia: n.notice.frecuencia || 'unica',
+            repliesCount,
+            unreadRepliesCount,
           };
         }));
 
@@ -2419,16 +2436,34 @@ export class HttpServer {
           'SELECT * FROM teacher_messages WHERE target_id = ? OR target_id = "" ORDER BY timestamp DESC',
           [groupId]
         );
-        const mapped = rows.map((r) => ({
-          id: String(r.id),
-          authorId: r.author_id,
-          authorName: r.author_name,
-          content: r.content,
-          timestamp: r.timestamp,
-          isFromStudent: false,
-          targetType: r.target_type,
-          targetId: r.target_id,
-          targetName: r.target_name,
+        const mapped = await Promise.all(rows.map(async (r) => {
+          let repliesCount = 0;
+          let unreadRepliesCount = 0;
+          try {
+            const counts = await get<any>(
+              this.sqliteDb,
+              `SELECT COUNT(*) as total, SUM(CASE WHEN read_by_professor = 0 AND is_from_student = 1 THEN 1 ELSE 0 END) as unread
+               FROM teacher_message_replies WHERE teacher_message_id = ?`,
+              [r.id]
+            );
+            repliesCount = counts?.total || 0;
+            unreadRepliesCount = counts?.unread || 0;
+          } catch (e) {
+            console.error('[HTTP Server] Error al contar replicas de mensaje:', e);
+          }
+          return {
+            id: String(r.id),
+            authorId: r.author_id,
+            authorName: r.author_name,
+            content: r.content,
+            timestamp: r.timestamp,
+            isFromStudent: false,
+            targetType: r.target_type,
+            targetId: r.target_id,
+            targetName: r.target_name,
+            repliesCount,
+            unreadRepliesCount,
+          };
         }));
         this.sendJson(res, 200, mapped);
         return;

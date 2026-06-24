@@ -399,9 +399,20 @@ const MessagesTab: React.FC = () => {
                       `}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-[var(--color-accent)] uppercase tracking-wider">
-                          {m.targetName}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-[var(--color-accent)] uppercase tracking-wider">
+                            {m.targetName}
+                          </span>
+                          {m.unreadRepliesCount && m.unreadRepliesCount > 0 ? (
+                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-bold leading-none text-white bg-red-500 rounded-full animate-pulse">
+                              {m.unreadRepliesCount}
+                            </span>
+                          ) : m.repliesCount && m.repliesCount > 0 ? (
+                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--color-text-secondary)] bg-[var(--color-border)] rounded-full">
+                              {m.repliesCount}
+                            </span>
+                          ) : null}
+                        </div>
                         <span className="text-[10px] text-[var(--color-text-tertiary)]">
                           {new Date(m.timestamp).toLocaleDateString()}
                         </span>
@@ -424,7 +435,7 @@ const MessagesTab: React.FC = () => {
           </div>
 
           {/* Live Chat window Panel */}
-          <div className={`md:col-span-2 ${!selectedMessage ? 'hidden md:block' : 'block'}`}>
+          <div className={`md:col-span-2 h-[550px] ${!selectedMessage ? 'hidden md:block' : 'block'}`}>
             {selectedMessage ? (
               <ChatWindow
                 parentMessage={selectedMessage}
@@ -433,7 +444,7 @@ const MessagesTab: React.FC = () => {
                 onBack={() => setSelectedMessage(null)}
               />
             ) : (
-              <div className="h-[550px] border border-[var(--color-border)] rounded-xl bg-[var(--color-bg-card)] flex flex-col items-center justify-center text-center p-6 text-[var(--color-text-tertiary)]">
+              <div className="h-full border border-[var(--color-border)] rounded-xl bg-[var(--color-bg-card)] flex flex-col items-center justify-center text-center p-6 text-[var(--color-text-tertiary)]">
                 <MessageSquare className="w-12 h-12 text-[var(--color-border)] mb-3" />
                 <h4 className="text-sm font-bold text-[var(--color-text-secondary)]">Bandeja de Réplicas WhatsApp</h4>
                 <p className="text-xs mt-1.5 max-w-sm leading-relaxed">

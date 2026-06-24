@@ -36,7 +36,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[600px] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl overflow-hidden shadow-sm">
+    <div className="flex flex-col h-full min-h-[400px] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl overflow-hidden shadow-sm">
       {/* Header */}
       <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)] flex items-center justify-between">
         <div className="flex items-center gap-3">
