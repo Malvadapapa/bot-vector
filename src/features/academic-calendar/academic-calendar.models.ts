@@ -39,6 +39,11 @@ export interface ManagedExam {
   mismaHoraTodasComisiones?: boolean;
   ultimoAvisoEnviado?: Date;
   group_id?: string;
+  exam_date_end?: Date;
+  aviso_inicio_only?: number;
+  aviso_fin_pre_deadline?: number;
+  created_by_name?: string;
+  created_by_role?: string;
 }
 
 export interface ManagedClass {

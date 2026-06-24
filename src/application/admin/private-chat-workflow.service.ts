@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { DynamicMessageService } from '../../features/messages/dynamic-message.service.js';
 import { ManagedExam, ManagedClassCreateInput, ManagedTeacherCreateInput } from '../../domain/models.js';
 import { InstitutionalNotice } from '../../features/notifications/notifications.models.js';
-import { formatLocalDateOnly } from '../../shared/db/db-utils.js';
+import { formatLocalDateOnly, run } from '../../shared/db/db-utils.js';
 import {
   AdminRepository,
   AdminVerificationCodeRepository,
@@ -17,6 +17,8 @@ import {
   ClassCommissionScheduleRepository,
   CommissionRepository,
   AuthorizedEmailRepository,
+  OnboardingTokenRepository,
+  WebOtpRepository,
 } from '../../infrastructure/persistence/db/repositories.js';
 import { InstitutionalNoticeRepository } from '../../features/notifications/notifications.repository.js';
 import { UserModerationRepository } from '../../features/moderation/moderation.repository.js';
@@ -192,7 +194,42 @@ export class PrivateChatWorkflowService {
     private classCommissionScheduleRepository?: ClassCommissionScheduleRepository,
     private rateLimitService?: RateLimitService,
     private authorizedEmailRepository?: AuthorizedEmailRepository,
+    private onboardingTokenRepository?: OnboardingTokenRepository,
+    private webOtpRepository?: WebOtpRepository,
   ) {}
+
+  public async generateOnboardingLink(userId: string, groupId: string): Promise<string> {
+    if (!this.onboardingTokenRepository) {
+      return '❌ El repositorio de tokens de onboarding no está disponible.';
+    }
+
+    const token = crypto.randomBytes(16).toString('hex');
+    const expiresAt = new Date(Date.now() + 20 * 60 * 1000); // 20 min
+    await this.onboardingTokenRepository.createToken(groupId, token, expiresAt);
+
+    const db = (this.onboardingTokenRepository as any).db;
+    if (db) {
+      await run(
+        db,
+        `INSERT INTO pending_group_onboarding (group_id, super_admin_id, step, onboarding_completed)
+         VALUES (?, ?, 'ask_cohort', 0)
+         ON CONFLICT(group_id) DO UPDATE SET onboarding_completed = 0, step = 'ask_cohort'`,
+        [groupId, userId]
+      );
+    }
+
+    const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+    return [
+      `🔗 *Enlace de Onboarding del Grupo*`,
+      `Se ha generado un token temporal para configurar la web del bot.`,
+      `Grupo: ${groupId}`,
+      ``,
+      `Ingresá al siguiente enlace para configurar el grupo:`,
+      `${baseUrl}/group-onboarding?token=${token}&group_id=${groupId}`,
+      ``,
+      `⚠️ Este enlace es de un solo uso y vencerá en 20 minutos (a las ${expiresAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}).`
+    ].join('\n');
+  }
 
   private isProfilePopulated(profile?: { name?: string; birthday_day_month?: string; email?: string; user_commission_id?: number } | null): boolean {
     if (!profile) return false;
@@ -309,9 +346,7 @@ export class PrivateChatWorkflowService {
       this.clearPendingData(userId);
 
       if (await this.adminRepository.isRegistered(userId)) {
-        await this.adminRepository.setAuthenticated(userId, true);
-        const adminProfile = await this.userProfileRepository.get(userId);
-        return `🔓 *¡Bienvenido de nuevo, ${adminProfile?.name || 'Admin'}!*\n\n${await this.enterAdminWorkflow(userId)}`;
+        return await this.handleWebPanelLink(userId);
       }
 
       this.pendingAdminState.set(userId, 'await_admin_registration_code');
@@ -866,6 +901,10 @@ export class PrivateChatWorkflowService {
         return await this.impersonationMenuText(userId);
       }
 
+      if (lowered === '5') {
+        return await this.handleWebPanelLink(userId);
+      }
+
       return this.superAdminMenuText(userId);
     }
 
@@ -954,7 +993,11 @@ export class PrivateChatWorkflowService {
         return await this.impersonationMenuText(userId);
       }
 
-      return 'Opción inválida. Escribí 0 para volver o seleccioná una opción del 1 al 9.';
+      if (lowered === '10') {
+        return await this.handleWebPanelLink(userId);
+      }
+
+      return 'Opción inválida. Escribí 0 para volver o seleccioná una opción del 1 al 10.';
     }
 
     if (currentState === 'super_admin_await_select_group') {
@@ -1911,6 +1954,7 @@ export class PrivateChatWorkflowService {
       '2 - Gestionar cohortes (por entry_year)',
       '3 - Auditar grupos sin cohorte',
       '4 - Modo Simulación Alumno',
+      '5 - Administrar desde el Panel Web 🌐',
       '',
       '0 - Volver al menú admin normal',
     ].join('\n');
@@ -2049,6 +2093,32 @@ export class PrivateChatWorkflowService {
 
     this.pendingAdminState.set(userId, 'super_admin_main');
     return `Registrado con exito ✅\n${await this.superAdminMenuText(userId)}`;
+  }
+
+  private async handleWebPanelLink(userId: string): Promise<string> {
+    const adminProfile = await this.userProfileRepository.get(userId);
+    const email = adminProfile?.email || '';
+
+    if (!email) {
+      return '⚠️ Tu perfil de administrador no tiene un correo electrónico registrado en la base de datos. Por favor, contactá a soporte.';
+    }
+
+    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+
+    if (this.webOtpRepository) {
+      await this.webOtpRepository.createOtp(email, otpCode, userId, expiresAt);
+    }
+
+    const isSuper = typeof (this.adminRepository as any).isSuperAdmin === 'function'
+      ? await (this.adminRepository as any).isSuperAdmin(userId)
+      : !!(await this.adminRepository.get(userId))?.is_super_admin;
+
+    const redirectPath = isSuper ? '/super-admin/groups' : '/admin/calendar';
+    const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+    const loginUrl = `${baseUrl}/login?email=${encodeURIComponent(email)}&redirect=${encodeURIComponent(redirectPath)}`;
+
+    return `🔗 *Acceso al Panel de Control Web*\n\nHola, ${adminProfile?.name || 'Admin'}. Hacé click en el enlace para ingresar al panel:\n${loginUrl}|||SPLIT|||${otpCode}`;
   }
 
   private async handleAdminAuth(userId: string, candidate: string): Promise<string> {
@@ -2795,6 +2865,7 @@ export class PrivateChatWorkflowService {
         '7 - Moderación de usuarios (desbaneo)',
         '8 - Banear usuario',
         '9 - Modo Simulación Alumno',
+        '10 - Administrar desde el Panel Web 🌐',
         '',
         '0 - Volver al menú de gestión de grupo',
         '',
@@ -2815,6 +2886,7 @@ export class PrivateChatWorkflowService {
       '7 - Moderación de usuarios (desbaneo)',
       '8 - Banear usuario',
       '9 - Modo Simulación Alumno',
+      '10 - Administrar desde el Panel Web 🌐',
       '',
       '0 - Volver al menú principal',
       '',
@@ -4425,14 +4497,25 @@ export class PrivateChatWorkflowService {
       };
       const roleText = roleMap[senderLabel] || senderLabel;
 
+      let headerText = '📢 *AVISO INSTITUCIONAL*';
+      if (senderLabel === 'super-admin') {
+        headerText = '📢 *AVISO DEL SUPER ADMINISTRADOR*';
+      } else if (senderLabel === 'admin') {
+        headerText = '📢 *AVISO DEL ADMINISTRADOR*';
+      } else if (senderLabel === 'profe') {
+        headerText = '📢 *AVISO DE PROFESOR*';
+      }
+
       const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n\n` +
-        `*ID de mensaje:* ID: ${insertedId}  \n` +
-        `*El/La* ${roleText} ${displayName} \n` +
-        `*E- mail:* ${adminEmail || 'N/A'} \n` +
-        `*Dejo un aviso para:* ${grupoName}\n\n` +
+        `${headerText}\n\n` +
+        `*De:* ${displayName} (${roleText})\n` +
+        `*Para:* ${grupoName}\n` +
+        `*ID de mensaje:* ID: ${insertedId}\n\n` +
         `*Título:* ${pending.title}\n\n` +
         `*Mensaje:* \n` +
-        `${pending.body}`;
+        `${pending.body}\n\n` +
+        `💡 *Para responder al profesor, escribí en este grupo:*\n` +
+        `!rid${insertedId} tu mensaje para responder al profesor`;
 
       if (this.publishCallback) {
         try {

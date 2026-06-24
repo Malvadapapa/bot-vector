@@ -580,9 +580,32 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
         );
       });
 
-      it('debería rechazar si el usuario no es superadministrador', async () => {
-        const res = await calendarWithReplies.handleCommand('user123', '!responderid123 Mensaje de respuesta', new Date(), false, undefined, false, false);
-        expect(res).toBe('🔒 Este comando es solo para superadministradores.');
+      it('debería permitir que alumnos respondan a avisos y registrar la respuesta', async () => {
+        // Guardar un aviso
+        await noticeRepo.createIfNew({
+          title: 'Aviso Alumno',
+          body: 'Cuerpo original',
+          source_email: 'profesor@test.com',
+          unique_hash: 'hash-test-student',
+        });
+        const justInserted = await noticeRepo.getByUniqueHashWithId('hash-test-student');
+        expect(justInserted).not.toBeNull();
+        const noticeId = justInserted!.id;
+
+        const res = await calendarWithReplies.handleCommand('alumno123', `!rid${noticeId} Mi respuesta de alumno`, new Date(), false, undefined, false, false);
+        expect(res).toContain('tu consulta sobre el aviso fue registrada');
+        
+        // Verificar que se haya insertado en notice_replies
+        const reply = await new Promise<any>((resolve, reject) => {
+          db.get('SELECT * FROM notice_replies WHERE notice_id = ? LIMIT 1', [noticeId], (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+          });
+        });
+        expect(reply).toBeDefined();
+        expect(reply.content).toBe('Mi respuesta de alumno');
+        expect(reply.is_from_student).toBe(1);
+        expect(reply.email_sent).toBe(0);
       });
 
       it('debería retornar error si el formato es inválido', async () => {
@@ -592,7 +615,7 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
 
       it('debería retornar error si el aviso no existe', async () => {
         const res = await calendarWithReplies.handleCommand('superadmin_user', '!responderid999 Mensaje de respuesta', new Date(), true, undefined, false, true);
-        expect(res).toContain('❌ No se encontró ningún aviso con el ID 999.');
+        expect(res).toContain('❌ No se encontró ningún aviso o mensaje con el ID 999.');
       });
 
       it('debería enviar la respuesta por correo si existe el aviso y tiene email de origen', async () => {
@@ -613,6 +636,25 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
           'profesor@test.com',
           'Respuesta a tu aviso: Aviso de Prueba',
           expect.stringContaining('Todo OK, aprobado')
+        );
+      });
+
+      it('debería soportar el alias !rid para responder a un aviso', async () => {
+        await noticeRepo.createIfNew({
+          title: 'Aviso de Prueba 2',
+          body: 'Cuerpo original 2',
+          source_email: 'profesor2@test.com',
+          unique_hash: 'hash-test-rid-alias',
+        });
+        const justInserted = await noticeRepo.getByUniqueHashWithId('hash-test-rid-alias');
+        const noticeId = justInserted!.id;
+
+        const res = await calendarWithReplies.handleCommand('superadmin_user', `!rid${noticeId} Todo OK alias`, new Date(), true, undefined, false, true);
+        expect(res).toContain('✅ Respuesta enviada por correo a profesor2@test.com con éxito.');
+        expect(mockOutboundEmailService.send).toHaveBeenCalledWith(
+          'profesor2@test.com',
+          'Respuesta a tu aviso: Aviso de Prueba 2',
+          expect.stringContaining('Todo OK alias')
         );
       });
     });

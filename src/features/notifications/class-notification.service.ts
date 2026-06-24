@@ -28,6 +28,28 @@ export class ClassNotificationService {
 
     const classesToNotify: Array<ManagedClass & { id: number }> = [];
 
+    const db = (this.managedClassRepository as any).db;
+    const tz = getSettings().timezone || 'America/Argentina/Cordoba';
+    
+    // Sv-SE format produces YYYY-MM-DD
+    const formatterStr = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const todayStr = formatterStr.format(now); // "YYYY-MM-DD"
+    const currentYear = now.getFullYear();
+
+    let events: any[] = [];
+    if (db) {
+      try {
+        const { all } = await import('../../shared/db/db-utils.js');
+        events = await all<any>(
+          db,
+          'SELECT event_type, event_name, start_date, end_date FROM academic_calendar_events WHERE academic_year = ?',
+          [currentYear]
+        );
+      } catch (e) {
+        console.warn('[ClassNotification] Error querying academic_calendar_events:', e);
+      }
+    }
+
     for (const managedClass of classes) {
       if (!managedClass.id) continue;
 
@@ -46,6 +68,69 @@ export class ClassNotificationService {
         // Check if we've already sent a notification for this class today
         const lastNotif = await this.classNotificationRepository.getLastNotificationBefore(managedClass.id, 10);
         if (!lastNotif || !this.isSameDay(lastNotif, now)) {
+          
+          let skipClass = false;
+          let isHoliday = false;
+          let holidayName = '';
+
+          if (managedClass.group_id && db) {
+            try {
+              const { get } = await import('../../shared/db/db-utils.js');
+              const groupRow = await get<any>(
+                db,
+                'SELECT entry_year FROM whatsapp_groups WHERE group_id = ? LIMIT 1',
+                [managedClass.group_id]
+              );
+
+              const findDate = (type: string, fallback: string): string => {
+                const ev = events.find(e => e.event_type === type);
+                return ev ? ev.start_date : `${currentYear}-${fallback}`;
+              };
+              const findEndDate = (type: string, fallback: string): string => {
+                const ev = events.find(e => e.event_type === type);
+                return ev ? (ev.end_date || ev.start_date) : `${currentYear}-${fallback}`;
+              };
+
+              const startAdvanced = findDate('start_classes_advanced', '03-16');
+              const startFirstYear = findDate('start_classes_first_year', '04-06');
+              const endFirst = findDate('end_first_semester', '07-03');
+              const startSecond = findDate('start_second_semester', '08-10');
+              const endSecond = findDate('end_second_semester', '11-27');
+
+              const entryYear = groupRow?.entry_year;
+              const isFirstYearGroup = entryYear === currentYear;
+              const startFirstSemester = isFirstYearGroup ? startFirstYear : startAdvanced;
+
+              const isFirstSemesterActive = todayStr >= startFirstSemester && todayStr <= endFirst;
+              const isSecondSemesterActive = todayStr >= startSecond && todayStr <= endSecond;
+              const isActivePeriod = isFirstSemesterActive || isSecondSemesterActive;
+
+              if (!isActivePeriod) {
+                skipClass = true; // Recess
+              } else {
+                // Check holiday
+                const holiday = events.find(
+                  e => e.event_type === 'holiday' && todayStr >= e.start_date && todayStr <= (e.end_date || e.start_date)
+                );
+                if (holiday) {
+                  isHoliday = true;
+                  holidayName = holiday.event_name;
+                }
+              }
+            } catch (e) {
+              console.warn('[ClassNotification] Error checking active period/holiday:', e);
+            }
+          }
+
+          if (skipClass) {
+            continue; // Skip class during recess
+          }
+
+          if (isHoliday) {
+            (managedClass as any).isHoliday = true;
+            (managedClass as any).holidayName = holidayName;
+          }
+
           classesToNotify.push(managedClass as ManagedClass & { id: number });
         }
       }
@@ -55,6 +140,11 @@ export class ClassNotificationService {
   }
 
   public async buildNotificationMessage(managedClass: ManagedClass): Promise<string> {
+    if ((managedClass as any).isHoliday) {
+      const holidayName = (managedClass as any).holidayName || 'Feriado / Asueto';
+      return `🔔 *Sin clases por Feriado:* Hoy no se dictará la clase de *${managedClass.subject}* debido a: *${holidayName}*. ¡Que tengan un excelente descanso! ☀️`;
+    }
+
     const phrase = FRIENDLY_PHRASES[Math.floor(Math.random() * FRIENDLY_PHRASES.length)];
     let commissionText = '';
 

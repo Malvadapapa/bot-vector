@@ -4,6 +4,7 @@ import { InstitutionalNoticeRepository, InboundEmailRejectionRepository, Authori
 import { ReminderRepository, ManagedTeacherRepository, GroupRepository, AdminRepository } from '../../../infrastructure/persistence/db/repositories.js';
 import { EmailService, OutboundEmailService } from './email.service.js';
 import { formatLocalDateOnly, get, all } from '../../../shared/db/db-utils.js';
+import { WebOtpRepository } from '../../onboarding/web-otp.repository.js';
 
 export class InstitutionalEmailMonitor {
   private _polling = false;
@@ -21,6 +22,7 @@ export class InstitutionalEmailMonitor {
     private rejectionRepository?: InboundEmailRejectionRepository,
     private adminRepository?: AdminRepository,
     private authorizedEmailRepository?: AuthorizedEmailRepository,
+    private webOtpRepository?: WebOtpRepository,
   ) {}
 
   public async pollOnce(): Promise<number> {
@@ -167,6 +169,86 @@ export class InstitutionalEmailMonitor {
         continue;
       }
       console.log(`[EmailMonitor] [OK] Remitente autorizado: ${sourceAddr}`);
+
+      // Generar código OTP y responder al remitente con el enlace para completar la carga en el panel web
+      if (this.webOtpRepository && this.outboundEmailService) {
+        const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+        await this.webOtpRepository.createOtp(sourceAddr, otpCode, null, expiresAt);
+
+        const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+        let redirectPath = '/professor/messages';
+        if (senderLabel === 'super-admin') {
+          redirectPath = '/super-admin/groups';
+        } else if (senderLabel === 'admin') {
+          redirectPath = '/admin/calendar';
+        }
+        
+        const loginUrl = `${baseUrl}/login?email=${encodeURIComponent(sourceAddr)}&otp=${otpCode}&redirect=${encodeURIComponent(redirectPath)}`;
+        const subject = 'Acceso al Panel de Control para Publicar Aviso';
+        
+        const plainBody = `Hola.\n\n` +
+          `Para continuar con la publicación del aviso institucional en el grupo de WhatsApp, ingresá al panel de control utilizando el siguiente enlace directo (que ya incluye tu código de acceso temporal):\n\n` +
+          `${loginUrl}\n\n` +
+          `Si el enlace no se abre automáticamente, podés ir a ${baseUrl}/login, ingresar tu email (${sourceAddr}) y este código OTP temporal de 6 dígitos:\n\n` +
+          `Código OTP: ${otpCode}\n\n` +
+          `El código tiene una validez de 10 minutos.\n\n` +
+          `Una vez que hayas ingresado, podrás escribir y confirmar el texto de tu aviso, así como seleccionar el grupo o camada de destino para que Vectorito lo publique de inmediato.\n\n` +
+          `¡Muchas gracias!\n` +
+          `Equipo de Vectorito`;
+
+        const htmlBody = `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+  <h2 style="color: #4f46e5; margin-top: 0; margin-bottom: 20px;">🔑 Acceso al Panel de Control Web</h2>
+  
+  <p>Hola,</p>
+  <p>Para publicar tu aviso institucional en los grupos de WhatsApp, ingresá a la web haciendo click en el siguiente enlace de acceso directo (que ya pre-completa tu email y código temporal):</p>
+  
+  <div style="text-align: center; margin: 25px 0;">
+    <a href="${loginUrl}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Ingresar al Panel</a>
+  </div>
+  
+  <p>Si el botón anterior no funciona, copia y pega este enlace en tu navegador:</p>
+  <p style="background-color: #f3f4f6; padding: 10px; border-radius: 4px; font-size: 0.9em; word-break: break-all;">
+    <a href="${loginUrl}">${loginUrl}</a>
+  </p>
+  
+  <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+  
+  <p>O ingresá manualmente en <a href="${baseUrl}">${baseUrl}</a> con los siguientes datos:</p>
+  <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+    <tr>
+      <td style="padding: 6px 0; font-weight: bold; width: 120px;">Email:</td>
+      <td style="padding: 6px 0;"><code>${sourceAddr}</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 6px 0; font-weight: bold;">Código OTP:</td>
+      <td style="padding: 6px 0;"><code style="font-size: 1.2em; font-weight: bold; color: #4f46e5;">${otpCode}</code></td>
+    </tr>
+  </table>
+  
+  <p style="font-size: 0.9em; color: #6b7280; font-style: italic;">
+    * El código OTP es de uso único y vencerá en 10 minutos.
+  </p>
+  
+  <p style="margin-top: 20px; font-size: 0.95em;">
+    Una vez dentro, podrás redactar tu aviso, seleccionar el grupo de destino y publicarlo de forma segura en WhatsApp.
+  </p>
+  
+  <p style="margin-top: 25px; border-top: 1px solid #e5e7eb; padding-top: 15px; font-size: 0.9em; color: #4b5563;">
+    Saludos,<br>
+    <strong>Vectorito Bot</strong>
+  </p>
+</div>`;
+
+        try {
+          await this.outboundEmailService.send(sourceAddr, subject, plainBody, htmlBody);
+          console.log(`[EmailMonitor] OTP enviado por correo a ${sourceAddr}. Proceso completado para este email.`);
+        } catch (e) {
+          console.error('[EmailMonitor] Error enviando email con OTP:', e);
+        }
+        processed += 1;
+        continue;
+      }
 
       // Validate structure: at least 'cuerpo' or 'mensaje' is mandatory.
       const isPlaceholderBody = notice.body && (notice.body.includes('[Mensaje') || notice.body.includes('(obligatorio)'));
@@ -520,15 +602,26 @@ export class InstitutionalEmailMonitor {
       };
       const roleText = roleMap[senderLabel] || senderLabel;
 
+      let headerText = '📢 *AVISO INSTITUCIONAL*';
+      if (senderLabel === 'super-admin') {
+        headerText = '📢 *AVISO DEL SUPER ADMINISTRADOR*';
+      } else if (senderLabel === 'admin') {
+        headerText = '📢 *AVISO DEL ADMINISTRADOR*';
+      } else if (senderLabel === 'profe') {
+        headerText = '📢 *AVISO DE PROFESOR*';
+      }
+
       // Build the WhatsApp notice message using the requested template
       const formattedMessage = `Hola! Vectorito reporrandose\u{1F63C}\n\n` +
-        `*ID de mensaje:* ID: ${insertedId}  \n` +
-        `*El/La* ${roleText} ${displayName} \n` +
-        `*E- mail:* ${sourceAddr} \n` +
-        `*Dejo un aviso para:* ${grupoName}\n\n` +
+        `${headerText}\n\n` +
+        `*De:* ${displayName} (${roleText})\n` +
+        `*Para:* ${grupoName}\n` +
+        `*ID de mensaje:* ID: ${insertedId}\n\n` +
         `*Título:* ${notice.title}\n\n` +
         `*Mensaje:* \n` +
-        `${notice.body}`;
+        `${notice.body}\n\n` +
+        `💡 *Para responder al profesor, escribí en este grupo:*\n` +
+        `!rid${insertedId} tu mensaje para responder al profesor`;
 
       // Publish immediately on insertion
       const shouldPublishNow = true;

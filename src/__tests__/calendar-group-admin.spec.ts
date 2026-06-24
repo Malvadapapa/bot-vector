@@ -15,6 +15,6 @@ describe('AcademicCalendarService - group admin permissions', () => {
     expect(denied).toBe('🔒 Solo administradores pueden ejecutar este comando.');
 
     const allowed = await service.handleCommand('user1', '!config-grupo', new Date(), false, 'group-1', true);
-    expect(allowed).toBe('config-grupo:group-1');
+    expect(allowed).toBe('⚠️ La configuración por chat y comandos interactivos ha sido deshabilitada. Ahora podés configurar este grupo ingresando al panel de administración web centralizado.');
   });
 });

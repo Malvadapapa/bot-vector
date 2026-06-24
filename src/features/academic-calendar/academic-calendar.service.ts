@@ -3,7 +3,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { getSettings } from '../../shared/config/settings.js';
 import { DynamicMessageService } from '../messages/dynamic-message.service.js';
-import { formatLocalDateOnly, get } from '../../shared/db/db-utils.js';
+import { formatLocalDateOnly, get, run } from '../../shared/db/db-utils.js';
 import { OutboundEmailService } from '../notifications/integrations/email.service.js';
 
 import { ModerationAdminCommandService } from '../moderation/moderation-admin-command.service.js';
@@ -338,82 +338,161 @@ export class AcademicCalendarService {
       if (!groupId) {
         return '⚠️ Este comando solo funciona desde el grupo.';
       }
-      // El mensaje de retorno será devuelto por handleGroupConfigStart en gateway
-      return `config-grupo:${groupId}`;
+      return '⚠️ La configuración por chat y comandos interactivos ha sido deshabilitada. Ahora podés configurar este grupo ingresando al panel de administración web centralizado.';
     }
 
-    // Comando !responderid
-    if (commandText.trim().toLowerCase().startsWith('!responderid')) {
-      if (!isSuperAdmin) {
-        return '🔒 Este comando es solo para superadministradores.';
+    // Comando de onboarding web del grupo
+    if (resolvedCommand === '!onboarding') {
+      if (!isGroupAdmin && !isSuperAdmin) {
+        return '🔒 Solo administradores pueden ejecutar este comando.';
       }
-      
-      const restText = commandText.trim().slice('!responderid'.length).trim();
+      if (!groupId) {
+        return '⚠️ Este comando solo funciona desde el grupo.';
+      }
+      return '⚠️ El flujo de onboarding por token ha sido deshabilitado. La configuración de este grupo se realiza directamente desde el panel de administración web.';
+    }
+
+    // Comando !responderid y alias !rid
+    const lowerCmd = commandText.trim().toLowerCase();
+    const isResponderId = lowerCmd.startsWith('!responderid');
+    const isRid = lowerCmd.startsWith('!rid');
+    if (isResponderId || isRid) {
+      const cmdLength = isResponderId ? '!responderid'.length : '!rid'.length;
+      const restText = commandText.trim().slice(cmdLength).trim();
       const match = restText.match(/^(\d+)\s+(.+)$/s);
       if (!match) {
-        return '❌ Formato inválido. Usá: !responderid<ID> <mensaje> o !responderid <ID> <mensaje>';
+        const cmdName = isResponderId ? '!responderid' : '!rid';
+        return `❌ Formato inválido. Usá: ${cmdName}<ID> <mensaje> o ${cmdName} <ID> <mensaje>`;
       }
       
       const id = Number(match[1]);
       const message = match[2].trim();
-      
-      if (!this.noticeRepository) {
-        return '❌ Repositorio de avisos no disponible.';
-      }
-      
-      const notice = await this.noticeRepository.getById(id);
-      if (!notice) {
-        return `❌ No se encontró ningún aviso con el ID ${id}.`;
-      }
-      
-      if (!notice.source_email) {
-        return `❌ El aviso con ID ${id} no tiene un correo electrónico de origen asociado.`;
-      }
-      
-      if (!this.outboundEmailService) {
-        return '❌ Servicio de correo saliente no configurado.';
-      }
-      
-      // Resolve creator display name
-      let creatorName = notice.source_email;
+
       const db = (this.noticeRepository as any).db;
+
       if (db) {
-        const profile = await get<any>(
-          db,
-          'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
-          [notice.source_email.toLowerCase()]
-        );
-        if (profile && profile.name) {
-          creatorName = profile.name;
-        } else {
-          const teacher = await get<any>(
+        // Try to match teacher message
+        let teacherMsg;
+        try {
+          teacherMsg = await get<any>(
             db,
-            'SELECT name FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
-            [notice.source_email.toLowerCase()]
+            'SELECT * FROM teacher_messages WHERE id = ? LIMIT 1',
+            [id]
           );
-          if (teacher && teacher.name) {
-            creatorName = teacher.name;
+        } catch (e) {
+          console.warn('[AcademicCalendarService] Error checking teacher_messages:', e);
+        }
+
+        if (teacherMsg) {
+          let authorName = userId.split('@')[0];
+          try {
+            const profile = await get<any>(
+              db,
+              'SELECT name FROM user_profiles WHERE user_id = ? LIMIT 1',
+              [userId]
+            );
+            if (profile?.name) {
+              authorName = profile.name;
+            }
+          } catch {}
+
+          await run(
+            db,
+            `INSERT INTO teacher_message_replies (teacher_message_id, author_id, author_name, author_phone, content, is_from_student, read_by_professor)
+             VALUES (?, ?, ?, ?, ?, 1, 0)`,
+            [id, userId, authorName, userId.split('@')[0], message]
+          );
+          return `✅ Hola *${authorName}*, tu consulta fue registrada para el profesor *${teacherMsg.author_name}*. Te responderá a la brevedad.`;
+        }
+
+        // Try to match institutional notice
+        let noticeMsg;
+        try {
+          noticeMsg = await get<any>(
+            db,
+            'SELECT * FROM institutional_notices WHERE id = ? LIMIT 1',
+            [id]
+          );
+        } catch (e) {
+          console.warn('[AcademicCalendarService] Error checking institutional_notices:', e);
+        }
+
+        if (noticeMsg) {
+          let authorName = userId.split('@')[0];
+          try {
+            const profile = await get<any>(
+              db,
+              'SELECT name FROM user_profiles WHERE user_id = ? LIMIT 1',
+              [userId]
+            );
+            if (profile?.name) {
+              authorName = profile.name;
+            }
+          } catch {}
+
+          const isFromStudent = isSuperAdmin ? 0 : 1;
+          await run(
+            db,
+            `INSERT INTO notice_replies (notice_id, author_id, author_name, author_phone, content, is_from_student, read_by_professor, email_sent)
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+            [id, userId, authorName, userId.split('@')[0], message, isFromStudent, isSuperAdmin ? 1 : 0]
+          );
+
+          if (!isSuperAdmin) {
+            return `✅ Hola *${authorName}*, tu consulta sobre el aviso fue registrada. Te responderemos a la brevedad.`;
+          }
+
+          if (!noticeMsg.source_email) {
+            return `❌ El aviso con ID ${id} no tiene un correo electrónico de origen asociado.`;
+          }
+
+          if (!this.outboundEmailService) {
+            return '❌ Servicio de correo saliente no configurado.';
+          }
+
+          // Resolve creator display name
+          let creatorName = noticeMsg.source_email;
+          try {
+            const profile = await get<any>(
+              db,
+              'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+              [noticeMsg.source_email.toLowerCase()]
+            );
+            if (profile && profile.name) {
+              creatorName = profile.name;
+            } else {
+              const teacher = await get<any>(
+                db,
+                'SELECT name FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
+                [noticeMsg.source_email.toLowerCase()]
+              );
+              if (teacher && teacher.name) {
+                creatorName = teacher.name;
+              }
+            }
+          } catch {}
+
+          const emailSubject = `Respuesta a tu aviso: ${noticeMsg.title}`;
+          const emailBody = `Hola ${creatorName}.\n\nUn superadministrador ha respondido a tu aviso "${noticeMsg.title}" con el siguiente mensaje:\n\n` +
+            `----------------------------------------\n` +
+            `${message}\n` +
+            `----------------------------------------\n\n` +
+            `Datos del emisor original:\n` +
+            `- Nombre: ${creatorName}\n` +
+            `- Correo: ${noticeMsg.source_email}\n` +
+            `- Título del aviso: ${noticeMsg.title}`;
+
+          try {
+            await this.outboundEmailService.send(noticeMsg.source_email, emailSubject, emailBody);
+            return `✅ Respuesta enviada por correo a ${noticeMsg.source_email} con éxito.`;
+          } catch (err) {
+            console.error('[AcademicCalendarService] Error sending reply email:', err);
+            return `❌ Error al enviar la respuesta por correo.`;
           }
         }
       }
-      
-      const emailSubject = `Respuesta a tu aviso: ${notice.title}`;
-      const emailBody = `Hola ${creatorName}.\n\nUn superadministrador ha respondido a tu aviso "${notice.title}" con el siguiente mensaje:\n\n` +
-        `----------------------------------------\n` +
-        `${message}\n` +
-        `----------------------------------------\n\n` +
-        `Datos del emisor original:\n` +
-        `- Nombre: ${creatorName}\n` +
-        `- Correo: ${notice.source_email}\n` +
-        `- Título del aviso: ${notice.title}`;
-        
-      try {
-        await this.outboundEmailService.send(notice.source_email, emailSubject, emailBody);
-        return `✅ Respuesta enviada por correo a ${notice.source_email} con éxito.`;
-      } catch (err) {
-        console.error('[AcademicCalendarService] Error sending reply email:', err);
-        return `❌ Error al enviar la respuesta por correo.`;
-      }
+
+      return `❌ No se encontró ningún aviso o mensaje con el ID ${id}.`;
     }
 
     // Comandos de menú para exámenes

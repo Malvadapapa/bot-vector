@@ -59,11 +59,14 @@ let consoleLogSpy: any;
 beforeEach(() => {
   consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-06-10T12:00:00.000Z'));
 });
 
 afterEach(() => {
   consoleErrorSpy?.mockRestore();
   consoleLogSpy?.mockRestore();
+  vi.useRealTimers();
 });
 
 // ============================================================================

@@ -38,7 +38,10 @@ import {
   UserProfileRepository,
   InboundEmailRejectionRepository,
   AuthorizedEmailRepository,
+  OnboardingTokenRepository,
+  WebOtpRepository,
 } from './infrastructure/persistence/db/repositories.js';
+import { HttpServer } from './interfaces/http/http-server.js';
 import { ClassNotificationRepository, InstitutionalNoticeRepository } from './features/notifications/notifications.repository.js';
 import { DailyGreetingRepository, OutboxDedupRepository } from './features/messages/messages.repository.js';
 import { ConfirmationRepository } from './features/conversation/conversation.repository.js';
@@ -248,6 +251,8 @@ async function bootstrap() {
   // Repositorios de comisiones y contexto de grupo
   const commissionRepository = new CommissionRepository(sqliteDb);
   const groupContextRepository = new GroupContextRepository(sqliteDb);
+  const onboardingTokenRepository = new OnboardingTokenRepository(sqliteDb);
+  const webOtpRepository = new WebOtpRepository(sqliteDb);
 
   const allowedGroupIds = await groupRepository.getAllActiveIds();
   console.log(`[Grupos] ${allowedGroupIds.length} grupos activos cargados desde BD`);
@@ -398,6 +403,8 @@ async function bootstrap() {
     classCommissionScheduleRepository,
     rateLimitService,
     authorizedEmailRepository,
+    onboardingTokenRepository,
+    webOtpRepository,
   );
   const vectoritoWhatsAppGateway = new VectoritoWhatsAppGateway(
     messageRouter,
@@ -410,6 +417,7 @@ async function bootstrap() {
     groupMembershipRepository,
     aiQueryService,
     ambiguityStateService,
+    groupContextRepository,
   );
 
   privateChatWorkflow.setPublishCallback(async (text: string, groupId?: string) => {
@@ -465,6 +473,7 @@ async function bootstrap() {
       inboundEmailRejectionRepository,
       adminRepository,
       authorizedEmailRepository,
+      webOtpRepository,
     )
     : undefined;
 
@@ -487,7 +496,30 @@ async function bootstrap() {
     ragPipeline,
     emailMonitor,
     institutionalNoticeRepository,
+    outboundEmailService,
+    sqliteDb,
   );
+
+  const httpServer = new HttpServer(
+    onboardingTokenRepository,
+    webOtpRepository,
+    groupRepository,
+    groupContextRepository,
+    commissionRepository,
+    managedClassRepository,
+    classCommissionScheduleRepository,
+    managedExamRepository,
+    institutionalNoticeRepository,
+    adminRepository,
+    userProfileRepository,
+    managedTeacherRepository,
+    authorizedEmailRepository,
+    outboundEmailService,
+    vectoritoWhatsAppGateway,
+    sqliteDb,
+    3000
+  );
+  await httpServer.start();
 
   await vectoritoWhatsAppGateway.startConnection();
   await scheduler.startJobs();
@@ -495,6 +527,7 @@ async function bootstrap() {
   process.on('SIGINT', () => {
     console.log('\n=== Cerrando Vectorito ===');
     vectoritoWhatsAppGateway.close();
+    httpServer.stop().catch(() => {});
     databaseConnection.close();
     process.exit(0);
   });

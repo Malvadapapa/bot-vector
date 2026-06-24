@@ -111,8 +111,9 @@ export class ManagedExamRepository {
       this.db,
       `INSERT INTO managed_exams(
          subject, exam_date, exam_time, exam_type, observations, created_by,
-         tipo_disponibilidad, hora_inicio, hora_fin, frecuencia_avisos, ultimo_aviso_enviado, exam_commission_id, group_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         tipo_disponibilidad, hora_inicio, hora_fin, frecuencia_avisos, ultimo_aviso_enviado, exam_commission_id, group_id,
+         exam_date_end, aviso_inicio_only, aviso_fin_pre_deadline, created_by_name, created_by_role
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         exam.subject,
         formatLocalDateOnly(exam.exam_date),
@@ -127,6 +128,11 @@ export class ManagedExamRepository {
         exam.ultimoAvisoEnviado ? exam.ultimoAvisoEnviado.toISOString() : null,
         exam.exam_commission_id ?? null,
         exam.group_id ?? null,
+        exam.exam_date_end ? formatLocalDateOnly(exam.exam_date_end) : null,
+        exam.aviso_inicio_only ?? 0,
+        exam.aviso_fin_pre_deadline ?? 0,
+        exam.created_by_name ?? null,
+        exam.created_by_role ?? null,
       ]
     );
     return result.lastID;
@@ -230,6 +236,26 @@ export class ManagedExamRepository {
     if (data.ultimoAvisoEnviado !== undefined) {
       updates.push('ultimo_aviso_enviado = ?');
       values.push(data.ultimoAvisoEnviado ? data.ultimoAvisoEnviado.toISOString() : null);
+    }
+    if (data.exam_date_end !== undefined) {
+      updates.push('exam_date_end = ?');
+      values.push(data.exam_date_end ? formatLocalDateOnly(data.exam_date_end) : null);
+    }
+    if (data.aviso_inicio_only !== undefined) {
+      updates.push('aviso_inicio_only = ?');
+      values.push(data.aviso_inicio_only);
+    }
+    if (data.aviso_fin_pre_deadline !== undefined) {
+      updates.push('aviso_fin_pre_deadline = ?');
+      values.push(data.aviso_fin_pre_deadline);
+    }
+    if (data.created_by_name !== undefined) {
+      updates.push('created_by_name = ?');
+      values.push(data.created_by_name);
+    }
+    if (data.created_by_role !== undefined) {
+      updates.push('created_by_role = ?');
+      values.push(data.created_by_role);
     }
 
     if (updates.length === 0) return;
@@ -738,6 +764,11 @@ function rowToExam(row: any): ManagedExam {
     exam_commission_id: row.exam_commission_id ? Number(row.exam_commission_id) : undefined,
     ultimoAvisoEnviado,
     group_id: row.group_id ? String(row.group_id) : undefined,
+    exam_date_end: row.exam_date_end ? new Date(String(row.exam_date_end)) : undefined,
+    aviso_inicio_only: row.aviso_inicio_only !== undefined ? Number(row.aviso_inicio_only) : 0,
+    aviso_fin_pre_deadline: row.aviso_fin_pre_deadline !== undefined ? Number(row.aviso_fin_pre_deadline) : 0,
+    created_by_name: row.created_by_name ? String(row.created_by_name) : undefined,
+    created_by_role: row.created_by_role ? String(row.created_by_role) : undefined,
   };
 }
 

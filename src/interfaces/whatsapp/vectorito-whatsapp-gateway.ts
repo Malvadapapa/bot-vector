@@ -15,8 +15,9 @@ import { AmbiguityStateService } from '../../features/conversation/ambiguity-sta
 import { PrivateChatWorkflowService } from '../../application/admin/private-chat-workflow.service.js';
 import { RateLimitService } from '../../features/ai/rate-limit.service.js';
 import { UserModerationService } from '../../features/moderation/user-moderation.service.js';
-import { AdminRepository, GroupRepository, UserProfileRepository, GroupMembershipRepository } from '../../infrastructure/persistence/db/repositories.js';
+import { AdminRepository, GroupRepository, UserProfileRepository, GroupMembershipRepository, GroupContextRepository } from '../../infrastructure/persistence/db/repositories.js';
 import { logTuiChatMessage, logTuiProcessTrace } from '../../shared/config/tui-shared.js';
+import { get, run } from '../../shared/db/db-utils.js';
 
 const nodeRequire = createRequire(import.meta.url);
 const qrcodeTerminal = nodeRequire('qrcode-terminal');
@@ -80,6 +81,7 @@ export class VectoritoWhatsAppGateway {
     private groupMembershipRepository: GroupMembershipRepository,
     private aiQueryService: AIQueryService,
     private ambiguityStateService: AmbiguityStateService,
+    private groupContextRepository?: GroupContextRepository,
   ) {
     this.installConsoleNoiseFilter();
   }
@@ -286,10 +288,10 @@ export class VectoritoWhatsAppGateway {
               }
             }
 
-            // Auto-registro en primera activación: si el grupo no existe, registrarlo y notificar super-admins
+            // Auto-registro en primera activación o manejo de onboarding pendiente
             if (isGroup && !isActiveGroup) {
               const existing = await this.groupRepository.findByGroupId(chatId);
-              if (!existing) {
+              if (!existing || !existing.is_active) {
                 let groupName = `Grupo ${chatId}`;
                 try {
                   if (this.whatsappSocket && typeof this.whatsappSocket.groupMetadata === 'function') {
@@ -308,40 +310,31 @@ export class VectoritoWhatsAppGateway {
                   console.warn('[Gateway] No se pudo registrar el grupo automáticamente:', (e as any)?.message || e);
                 }
 
-                // Notificar super-admins para que completen la configuración por privado
-                let superAdmins: string[] = [];
+                // Crear registro de onboarding pendiente
                 try {
-                  if (typeof (this.adminRepository as any).listSuperAdminIds === 'function') {
-                    superAdmins = await (this.adminRepository as any).listSuperAdminIds();
-                  } else {
-                    superAdmins = await this.adminRepository.listAllAdminIds();
-                  }
+                  await run(
+                    (this.groupRepository as any).db,
+                    `INSERT INTO pending_group_onboarding (group_id, super_admin_id, step, onboarding_completed)
+                     VALUES (?, ?, 'pending_setup', 0)
+                     ON CONFLICT(group_id) DO UPDATE SET onboarding_completed = 0, step = 'pending_setup'`,
+                    [chatId, senderJid]
+                  );
                 } catch (e) {
-                  console.warn('[Gateway] Error obteniendo super-admins:', (e as any)?.message || e);
+                  console.warn('[Gateway] No se pudo crear registro de onboarding pendiente:', (e as any)?.message || e);
                 }
 
-                for (const sa of superAdmins) {
-                  try {
-                    const cfgMsg = await this.privateChatWorkflow.startGroupContextConfiguration(sa, chatId);
-                    await this.sendTextMessage(sa, `Nuevo grupo detectado: ${chatId}\nSe creó un registro mínimo.\n\n${cfgMsg}`, undefined, true);
-                  } catch (e) {
-                    console.warn('[Gateway] No se pudo notificar super-admin', sa, (e as any)?.message || e);
-                  }
-                }
-
-                // Informar al grupo que fue registrado y que los super-admins fueron notificados
+                // Informar al grupo con el mensaje de onboarding aprobado
                 try {
                   const welcomeMsg = [
-                    '👋 ¡Hola a todos! Soy Vectorito, el asistente académico diseñado para ayudarlos en el cursado de su tecnicatura 😌.',
+                    '🤖✨ *¡Hola a todos! Soy Vectorito, su asistente académico.*',
                     '',
-                    'Puedo avisarles cuándo tienen clases, mostrarles los enlaces de Meet,',
-                    'recordarles exámenes y mantenerlos al día de los avisos institucionales.',
+                    'Me acaban de agregar a este grupo, ¡qué bueno! 🎉',
                     '',
-                    '📌Para empezar, cada alumno tiene que registrarse una sola vez.',
-                    '   Escribime por privado un: *hola*',
+                    'Antes de poder ayudarlos con horarios de clases, recordatorios de exámenes y avisos académicos, necesito que un administrador me configure desde el panel web 🔧',
                     '',
-                    '⚙️ Si sos Admin del grupo y tenés los permisos,',
-                    ' Envía mensaje con *!config-grupo* para configurar las materias y horarios.'
+                    'Mientras tanto, voy a estar en silencio por acá 🤫',
+                    '',
+                    '¡Nos vemos pronto!'
                   ].join('\n');
                   await this.sendTextMessage(chatId, welcomeMsg, undefined, false);
                 } catch {}
@@ -349,7 +342,20 @@ export class VectoritoWhatsAppGateway {
                 continue;
               }
 
-              // Si existe pero está inactivo, permitir registro si quien envía es admin
+              // Si el grupo existe pero no está activo en el bot (isActiveGroup es false), verificar si tiene onboarding pendiente
+              const onboarding = await get<any>(
+                (this.groupRepository as any).db,
+                'SELECT onboarding_completed FROM pending_group_onboarding WHERE group_id = ?',
+                [chatId]
+              );
+              const isPendingOnboarding = onboarding && Number(onboarding.onboarding_completed) === 0;
+
+              if (isPendingOnboarding) {
+                // Permanecer en silencio total: no responder y no salir del grupo
+                continue;
+              }
+
+              // Si existe pero está verdaderamente inactivo (no por onboarding), permitir registro si quien envía es admin
               if (!isAdmin) {
                 await this.handleUnauthorizedGroup(chatId);
                 continue;
@@ -485,6 +491,16 @@ export class VectoritoWhatsAppGateway {
             continue;
           }
 
+          // REGLA DE RESTRICCIÓN ABSOLUTA PARA GRUPOS SIN CONFIGURAR
+          if (isGroup && !isAdmin && this.groupContextRepository) {
+            const context = await this.groupContextRepository.getByGroupId(chatId);
+            if (!context || !context.year) {
+              const warningMsg = '⚠️ Este grupo aún no ha sido configurado en el sistema. Los comandos y la interacción con la IA están deshabilitados. Solicitá a un administrador del grupo que realice la configuración inicial.';
+              await this.sendTextMessage(chatId, warningMsg, senderJid, false);
+              continue;
+            }
+          }
+
           if (!isAdmin) {
             const commissionWarning = await this.privateChatWorkflow.getGroupCommissionMissingWarning(senderJid, chatId);
             if (commissionWarning !== null) {
@@ -570,11 +586,15 @@ export class VectoritoWhatsAppGateway {
             this.ambiguityStateService.save(senderJid, groupRouteResult.clarifyContext);
           }
 
-          // Manejar comando de configuración de grupo
+          // Manejar comando de configuración de grupo (deshabilitado)
           if (groupRouteResult.reply.startsWith('config-grupo:')) {
-            const groupId = groupRouteResult.reply.substring('config-grupo:'.length);
-            const configReply = await this.privateChatWorkflow.startGroupContextConfiguration(senderJid, groupId);
-            await this.sendTextMessage(senderJid, configReply, undefined, true);
+            await this.sendTextMessage(senderJid, '⚠️ La configuración de grupo interactiva por chat ha sido deshabilitada. Por favor, utilizá el panel web.', undefined, true);
+            continue;
+          }
+
+          // Manejar comando de onboarding de grupo (deshabilitado)
+          if (groupRouteResult.reply.startsWith('onboarding:')) {
+            await this.sendTextMessage(senderJid, '⚠️ El flujo de onboarding por token ha sido deshabilitado. La configuración de este grupo se realiza desde el panel de administración web.', undefined, true);
             continue;
           }
 
@@ -1145,19 +1165,31 @@ export class VectoritoWhatsAppGateway {
         }
         console.log(`✅ Bot agregado al nuevo grupo por admin: ${groupId}`);
 
-        // Enviar mensaje de bienvenida Flujo 1
+        // Crear registro de onboarding pendiente
+        try {
+          await run(
+            (this.groupRepository as any).db,
+            `INSERT INTO pending_group_onboarding (group_id, super_admin_id, step, onboarding_completed)
+             VALUES (?, ?, 'pending_setup', 0)
+             ON CONFLICT(group_id) DO UPDATE SET onboarding_completed = 0, step = 'pending_setup'`,
+            [groupId, actor || 'admin']
+          );
+        } catch (e) {
+          console.warn('[Gateway] No se pudo crear registro de onboarding pendiente:', (e as any)?.message || e);
+        }
+
+        // Enviar mensaje de bienvenida Flujo Nuevo
         try {
           const welcomeMsg = [
-            '👋 ¡Hola a todos! Soy Vectorito, el asistente académico diseñado para ayudarlos en el cursado de su tecnicatura 😌.',
+            '🤖✨ *¡Hola a todos! Soy Vectorito, su asistente académico.*',
             '',
-            'Puedo avisarles cuándo tienen clases, mostrarles los enlaces de Meet,',
-            'recordarles exámenes y mantenerlos al día de los avisos institucionales.',
+            'Me acaban de agregar a este grupo, ¡qué bueno! 🎉',
             '',
-            '📌Para empezar, cada alumno tiene que registrarse una sola vez.',
-            '   Escribime por privado un: *hola*',
+            'Antes de poder ayudarlos con horarios de clases, recordatorios de exámenes y avisos académicos, necesito que un administrador me configure desde el panel web 🔧',
             '',
-            '⚙️ Si sos Admin del grupo y tenés los permisos,',
-            ' Envía mensaje con *!config-grupo* para configurar las materias y horarios.'
+            'Mientras tanto, voy a estar en silencio por acá 🤫',
+            '',
+            '¡Nos vemos pronto!'
           ].join('\n');
           await this.sendTextMessage(groupId, welcomeMsg, undefined, false);
         } catch {}

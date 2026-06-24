@@ -506,6 +506,184 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE institutional_notices ADD COLUMN last_sent_at TEXT`
     ]
   },
+  {
+    version: 31,
+    description: 'Create onboarding_tokens table for group onboarding and setup',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS onboarding_tokens (
+        token TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(group_id) REFERENCES whatsapp_groups(group_id) ON DELETE CASCADE
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_onboarding_tokens_token ON onboarding_tokens(token)`
+    ]
+  },
+  {
+    version: 32,
+    description: 'Create and seed academic_subjects table',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS academic_subjects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        year INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS web_otp_sessions (
+        email TEXT PRIMARY KEY,
+        code TEXT NOT NULL,
+        user_id TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-1', 'Elementos de Matemática y Lógica', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-2', 'Sistemas y Organizaciones', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-3', 'Programación I', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-4', 'Base de Datos', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-5', 'Inglés I', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-6', 'Competencias Comunicacionales I', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-7', 'Ética y Deontología Profesional', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-8', 'Arquitectura de las Computadoras', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-9', 'Competencias Comunicacionales II', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-1-10', 'Aproximación al Mundo del Trabajo', 1)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-2-1', 'Inglés II', 2)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-2-2', 'Estadística y Probabilidad Aplicadas', 2)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-2-3', 'Modelado y Arquitectura de Software', 2)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-2-4', 'Programación II', 2)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-2-5', 'Práctica Profesionalizante I', 2)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-2-6', 'Sistemas Operativos', 2)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-2-7', 'Redes', 2)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-1', 'Interfaz de Usuario', 3)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-2', 'Ingeniería de Software', 3)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-3', 'Programación III', 3)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-4', 'Práctica Profesionalizante II', 3)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-5', 'Gestión de Proyectos', 3)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-6', 'Ciencia de Datos', 3)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-7', 'Verificación y Validación de Programas', 3)`,
+      `INSERT OR IGNORE INTO academic_subjects(id, name, year) VALUES ('sub-3-8', 'Desarrollo de Inteligencia Artificial', 3)`
+    ]
+  },
+  {
+    version: 33,
+    description: 'Create web panel sessions, teacher messages and replies, academic calendar events, pending onboarding, and managed exams new columns',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS web_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        user_role TEXT NOT NULL,
+        otp_code TEXT,
+        otp_expires_at TEXT,
+        otp_consumed INTEGER NOT NULL DEFAULT 0,
+        jwt_token TEXT,
+        user_id TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS teacher_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        author_id TEXT NOT NULL,
+        author_name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        target_name TEXT NOT NULL,
+        timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS teacher_message_replies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        teacher_message_id INTEGER NOT NULL,
+        author_id TEXT NOT NULL,
+        author_name TEXT NOT NULL,
+        author_phone TEXT,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        is_from_student INTEGER NOT NULL DEFAULT 1,
+        read_by_professor INTEGER NOT NULL DEFAULT 0,
+        email_sent INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(teacher_message_id) REFERENCES teacher_messages(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS academic_calendar_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        event_name TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        academic_year INTEGER NOT NULL,
+        confirmed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS pending_group_onboarding (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL UNIQUE,
+        super_admin_id TEXT NOT NULL,
+        step TEXT NOT NULL,
+        selected_type TEXT,
+        selected_year INTEGER,
+        onboarding_token TEXT,
+        onboarding_completed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `ALTER TABLE managed_exams ADD COLUMN exam_date_end TEXT`,
+      `ALTER TABLE managed_exams ADD COLUMN aviso_inicio_only INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE managed_exams ADD COLUMN aviso_fin_pre_deadline INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE managed_exams ADD COLUMN created_by_name TEXT`,
+      `ALTER TABLE managed_exams ADD COLUMN created_by_role TEXT`
+    ]
+  },
+  {
+    version: 34,
+    description: 'Remove legacy academic subjects that are not in the official degree plan',
+    sql: [
+      `DELETE FROM academic_subjects WHERE id IN ('sub-3-9', 'sub-3-10', 'sub-3-11')`
+    ]
+  },
+  {
+    version: 35,
+    description: 'Create notice_replies table for institutional notices',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS notice_replies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        notice_id INTEGER NOT NULL,
+        author_id TEXT NOT NULL,
+        author_name TEXT NOT NULL,
+        author_phone TEXT,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        is_from_student INTEGER NOT NULL DEFAULT 1,
+        read_by_professor INTEGER NOT NULL DEFAULT 0,
+        email_sent INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(notice_id) REFERENCES institutional_notices(id) ON DELETE CASCADE
+      )`
+    ]
+  },
+  {
+    version: 36,
+    description: 'Add teacher phone and notification settings and replies whatsapp tracking',
+    sql: [
+      `ALTER TABLE managed_teachers ADD COLUMN phone TEXT`,
+      `ALTER TABLE managed_teachers ADD COLUMN notify_email INTEGER NOT NULL DEFAULT 1`,
+      `ALTER TABLE managed_teachers ADD COLUMN notify_whatsapp INTEGER NOT NULL DEFAULT 1`,
+      `ALTER TABLE teacher_message_replies ADD COLUMN whatsapp_sent INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE notice_replies ADD COLUMN whatsapp_sent INTEGER NOT NULL DEFAULT 0`
+    ]
+  },
+  {
+    version: 37,
+    description: 'Add commission_label to managed_teachers for global commissions mapping',
+    sql: [
+      `ALTER TABLE managed_teachers ADD COLUMN commission_label TEXT DEFAULT NULL`
+    ]
+  },
+  {
+    version: 38,
+    description: 'Add meet_link to managed_teachers',
+    sql: [
+      `ALTER TABLE managed_teachers ADD COLUMN meet_link TEXT DEFAULT NULL`
+    ]
+  }
 ];
 
 function isIgnorableMigrationError(err: unknown): boolean {

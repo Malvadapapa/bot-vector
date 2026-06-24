@@ -9,6 +9,8 @@
     "start": "node dist/main.js",
     "dev": "node scripts/dev.mjs",
     "build": "tsc",
+    "build:web": "npm run build --prefix web",
+    "install:web": "npm install --prefix web",
     "cleanup:data": "node scripts/cleanup-bot-data.mjs",
     "rag:index": "node dist/features/ai/rag/cli.js index",
     "rag:check": "node dist/features/ai/rag/cli.js check",

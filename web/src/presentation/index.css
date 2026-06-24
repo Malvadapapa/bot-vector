@@ -1,0 +1,687 @@
+/* ============================================================
+   Vectorito Admin Panel — Design System
+   TailwindCSS v4 + Custom Properties
+   ============================================================ */
+
+/* ── Google Fonts ─────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@import "tailwindcss";
+
+/* ── Theme Configuration ──────────────────────────────────── */
+@theme {
+  /* Colors - Dark mode first, WhatsApp-inspired palette */
+  --color-bg-primary: #0a0e17;
+  --color-bg-secondary: #111827;
+  --color-bg-tertiary: #1a2332;
+  --color-bg-card: #151f2e;
+  --color-bg-card-hover: #1c2840;
+  --color-bg-input: #0f1724;
+  --color-bg-overlay: rgba(0, 0, 0, 0.6);
+  --color-bg-app: #0b1120;
+  --color-bg-sidebar: #0d1526;
+  --color-bg-sidebar-footer: #0a0f1d;
+  
+  /* Accent - Emerald/Green (WhatsApp vibe) */
+  --color-accent: #10b981;
+  --color-accent-hover: #059669;
+  --color-accent-light: #34d399;
+  --color-accent-muted: rgba(16, 185, 129, 0.15);
+  --color-accent-glow: rgba(16, 185, 129, 0.3);
+  
+  /* Secondary - Violet */
+  --color-secondary: #8b5cf6;
+  --color-secondary-hover: #7c3aed;
+  --color-secondary-light: #a78bfa;
+  --color-secondary-muted: rgba(139, 92, 246, 0.15);
+  
+  /* Semantic colors */
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-danger-muted: rgba(239, 68, 68, 0.15);
+  --color-warning: #f59e0b;
+  --color-warning-muted: rgba(245, 158, 11, 0.15);
+  --color-info: #3b82f6;
+  --color-info-muted: rgba(59, 130, 246, 0.15);
+  --color-success: #10b981;
+  --color-success-muted: rgba(16, 185, 129, 0.15);
+
+  /* Text */
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-tertiary: #64748b;
+  --color-text-inverse: #0f172a;
+  --color-text-accent: #34d399;
+  --color-text-danger: #fca5a5;
+
+  /* Borders — WCAG §1.4.11 compliant (≥3:1 vs backgrounds) */
+  --color-border: #557093;
+  --color-border-hover: #6c8ab2;
+  --color-border-focus: #10b981;
+  --color-border-danger: #ef4444;
+
+  /* Accessible text variants for light-mode contexts */
+  --color-accent-text: #10b981;
+  --color-warning-text: #f59e0b;
+  --color-success-text: #10b981;
+  --color-info-text: #3b82f6;
+
+  /* Calendar event colors (dark-mode) */
+  --color-cal-class: #0ea5e9;
+  --color-cal-evidence: #10b981;
+  --color-cal-abp: #6366f1;
+  --color-cal-final: #f43f5e;
+  --color-cal-colloquium: #f59e0b;
+  --color-cal-notice-general: #d946ef;
+  --color-cal-notice-professor: #a855f7;
+
+  /* Architectural Palette 01: Urban (Earth & Water) */
+  --color-arch-urban-light: #F0DED0;
+  --color-arch-urban-warm: #E1C49C;
+  --color-arch-urban-earth: #C58D5C;
+  --color-arch-urban-sky: #B3C7E0;
+  --color-arch-urban-deep: #345288;
+
+  /* Architectural Palette 02: Hillside (Warm Monochromatic) */
+  --color-arch-hill-cream: #F2E6D9;
+  --color-arch-hill-sand: #D4B896;
+  --color-arch-hill-tan: #B08D6E;
+  --color-arch-hill-brown: #8A7260;
+  --color-arch-hill-coffee: #5A4D42;
+
+  /* Architectural Palette 03: Nordic (Blue-Gray + Accent) */
+  --color-arch-nord-ice: #D6DDE3;
+  --color-arch-nord-mist: #A0B3C2;
+  --color-arch-nord-steel: #688098;
+  --color-arch-nord-slate: #456179;
+  --color-arch-nord-accent: #DC9D68;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  --shadow-glow-accent: 0 0 20px rgba(16, 185, 129, 0.2), 0 0 6px rgba(16, 185, 129, 0.1);
+  --shadow-glow-secondary: 0 0 20px rgba(139, 92, 246, 0.2), 0 0 6px rgba(139, 92, 246, 0.1);
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  
+  /* Spacing */
+  --sidebar-width: 260px;
+  --sidebar-collapsed-width: 72px;
+  --header-height: 64px;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-index */
+  --z-sidebar: 40;
+  --z-header: 30;
+  --z-modal: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
+}
+
+/* ── Additional Themes (Color Palettes) ─────────────────────── */
+
+html[data-theme="nord-dark"] {
+  --color-glass-card-bg-start: rgba(30, 41, 59, 0.9);
+  --color-glass-card-bg-end: rgba(30, 41, 59, 0.7);
+  --color-glass-card-border: rgba(119, 143, 169, 0.3);
+  --color-bg-primary: #0f172a;
+  --color-bg-secondary: #1e293b;
+  --color-bg-tertiary: #334155;
+  --color-bg-card: #1e293b;
+  --color-bg-card-hover: #334155;
+  --color-bg-input: #0f172a;
+  --color-bg-app: #0f172a;
+  --color-bg-sidebar: #1e293b;
+  --color-bg-sidebar-footer: #0f172a;
+  --color-accent: #5c5feb;
+  --color-accent-hover: #4f46e5;
+  --color-accent-light: #818cf8;
+  --color-accent-muted: rgba(99, 102, 241, 0.15);
+  --color-accent-glow: rgba(99, 102, 241, 0.3);
+  --color-accent-text: #818cf8; /* Use lighter variant for text (5.98:1 AA) */
+  --color-secondary: #06b6d4;
+  --color-secondary-hover: #0891b2;
+  --color-secondary-light: #67e8f9;
+  --color-secondary-muted: rgba(6, 182, 212, 0.15);
+  --color-border: #778fa9; /* WCAG §1.4.11: ≈3.1:1 vs #0f172a */
+  --color-border-hover: #8fa8c4;
+  --color-text-tertiary: #8899aa;
+  --color-text-inverse: #ffffff;
+}
+
+html[data-theme="midnight-purple"] {
+  --color-glass-card-bg-start: rgba(15, 17, 26, 0.9);
+  --color-glass-card-bg-end: rgba(31, 18, 53, 0.7);
+  --color-glass-card-border: rgba(95, 102, 146, 0.3);
+  --color-bg-primary: #030712;
+  --color-bg-secondary: #0b0f19;
+  --color-bg-tertiary: #1f1b2e;
+  --color-bg-card: #0f111a;
+  --color-bg-card-hover: #1f1235;
+  --color-bg-input: #05070c;
+  --color-bg-app: #030712;
+  --color-bg-sidebar: #0b0f19;
+  --color-bg-sidebar-footer: #030712;
+  --color-accent: #a855f7;
+  --color-accent-hover: #9333ea;
+  --color-accent-light: #c084fc;
+  --color-accent-muted: rgba(168, 85, 247, 0.15);
+  --color-accent-glow: rgba(168, 85, 247, 0.3);
+  --color-secondary: #db2777;
+  --color-secondary-hover: #c026d3;
+  --color-secondary-light: #f472b6;
+  --color-secondary-muted: rgba(219, 39, 119, 0.15);
+  --color-border: #5f6692; /* WCAG §1.4.11: ≈3.1:1 vs #030712 */
+  --color-border-hover: #747ba9;
+}
+
+html[data-theme="emerald-light"] {
+  --color-glass-card-bg-start: rgba(255, 255, 255, 0.88);
+  --color-glass-card-bg-end: rgba(255, 255, 255, 0.78);
+  --color-glass-card-border: rgba(107, 125, 144, 0.3);
+  --color-bg-primary: #f8fafc;
+  --color-bg-secondary: #f1f5f9;
+  --color-bg-tertiary: #e2e8f0;
+  --color-bg-card: #ffffff;
+  --color-bg-card-hover: #f8fafc;
+  --color-bg-input: #ffffff;
+  --color-bg-app: #f8fafc;
+  --color-bg-sidebar: #f1f5f9;
+  --color-bg-sidebar-footer: #e2e8f0;
+  --color-accent: #047857; /* WCAG fix: 5.9:1 AA vs #fff (was #10b981 FAIL 2.54:1) */
+  --color-accent-hover: #065f46;
+  --color-accent-light: #10b981; /* Decorative only, not for text */
+  --color-accent-muted: rgba(4, 120, 87, 0.08);
+  --color-accent-glow: rgba(4, 120, 87, 0.15);
+  --color-accent-text: #047857; /* AA text on white */
+  --color-secondary: #7c3aed;
+  --color-secondary-hover: #6d28d9;
+  --color-secondary-light: #7c3aed; /* Use hover as light fallback (5.70:1 AA) */
+  --color-secondary-muted: rgba(124, 58, 237, 0.08);
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #64748b;
+  --color-text-inverse: #ffffff;
+  --color-text-accent: #047857; /* WCAG fix for accent text in light */
+  --color-text-danger: #dc2626; /* WCAG fix: 4.83:1 AA vs white (was #fca5a5 FAIL) */
+  --color-border: #6b7d90; /* WCAG §1.4.11: ≈3.1:1 vs #ffffff */
+  --color-border-hover: #536275;
+  --color-border-focus: #047857;
+  --color-danger: #dc2626; /* 4.83:1 AA vs white (was #ef4444, 3.76:1) */
+  --color-danger-hover: #b91c1c;
+  --color-warning: #b45309; /* WCAG fix: 4.6:1 AA vs white (was #f59e0b FAIL) */
+  --color-warning-muted: rgba(180, 83, 9, 0.08);
+  --color-success: #047857; /* WCAG fix: 5.9:1 vs white */
+  --color-success-muted: rgba(4, 120, 87, 0.08);
+  --color-info: #2563eb; /* 5.17:1 AA vs white (was #3b82f6, 3.68:1 borderline) */
+  --color-info-muted: rgba(37, 99, 235, 0.08);
+  --color-warning-text: #b45309;
+  --color-success-text: #047857;
+  --color-info-text: #2563eb;
+  /* Calendar light-mode accessible colors */
+  --color-cal-class: #0369a1; /* 7.0:1 AAA vs white */
+  --color-cal-evidence: #047857; /* 5.9:1 AA vs white */
+  --color-cal-abp: #4338ca; /* 7.8:1 AAA vs white */
+  --color-cal-final: #be123c; /* 5.7:1 AA vs white */
+  --color-cal-colloquium: #b45309; /* 4.6:1 AA vs white */
+  --color-cal-notice-general: #a21caf; /* 5.6:1 AA vs white */
+  --color-cal-notice-professor: #7e22ce; /* 6.6:1 AA vs white */
+}
+
+html[data-theme="oceanic-light"] {
+  --color-glass-card-bg-start: rgba(255, 255, 255, 0.88);
+  --color-glass-card-bg-end: rgba(255, 255, 255, 0.78);
+  --color-glass-card-border: rgba(107, 125, 144, 0.3);
+  --color-bg-primary: #f0f4f8;
+  --color-bg-secondary: #e2ecf5;
+  --color-bg-tertiary: #d0e1f0;
+  --color-bg-card: #ffffff;
+  --color-bg-card-hover: #f0f4f8;
+  --color-bg-input: #ffffff;
+  --color-bg-app: #f0f4f8;
+  --color-bg-sidebar: #e2ecf5;
+  --color-bg-sidebar-footer: #d0e1f0;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-light: #60a5fa; /* Decorative only */
+  --color-accent-muted: rgba(37, 99, 235, 0.08);
+  --color-accent-glow: rgba(37, 99, 235, 0.15);
+  --color-accent-text: #1d4ed8; /* 6.7:1 AA for text */
+  --color-secondary: #0369a1; /* WCAG fix: 7.0:1 AAA (was #0ea5e9, 2.77:1 FAIL) */
+  --color-secondary-hover: #075985;
+  --color-secondary-light: #0ea5e9; /* Decorative only */
+  --color-secondary-muted: rgba(3, 105, 161, 0.08);
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #334155;
+  --color-text-tertiary: #64748b;
+  --color-text-inverse: #ffffff;
+  --color-text-accent: #1d4ed8;
+  --color-text-danger: #dc2626;
+  --color-border: #6b7d90; /* WCAG §1.4.11: ≈3.1:1 vs #ffffff */
+  --color-border-hover: #536275;
+  --color-border-focus: #2563eb;
+  --color-danger: #dc2626;
+  --color-danger-hover: #b91c1c;
+  --color-warning: #b45309;
+  --color-warning-muted: rgba(180, 83, 9, 0.08);
+  --color-success: #047857;
+  --color-success-muted: rgba(4, 120, 87, 0.08);
+  --color-info: #2563eb;
+  --color-info-muted: rgba(37, 99, 235, 0.08);
+  --color-warning-text: #b45309;
+  --color-success-text: #047857;
+  --color-info-text: #1d4ed8;
+  /* Calendar light-mode accessible colors */
+  --color-cal-class: #0369a1;
+  --color-cal-evidence: #047857;
+  --color-cal-abp: #4338ca;
+  --color-cal-final: #be123c;
+  --color-cal-colloquium: #b45309;
+  --color-cal-notice-general: #a21caf;
+  --color-cal-notice-professor: #7e22ce;
+}
+
+
+html[data-theme="urban-light"] {
+  --color-glass-card-bg-start: rgba(255, 255, 255, 0.88);
+  --color-glass-card-bg-end: rgba(255, 255, 255, 0.78);
+  --color-glass-card-border: rgba(146, 96, 60, 0.3);
+  --color-bg-primary: #F0DED0;
+  --color-bg-secondary: #E1C49C;
+  --color-bg-tertiary: #B3C7E0;
+  --color-bg-card: #ffffff;
+  --color-bg-card-hover: #faf5f0;
+  --color-bg-input: #ffffff;
+  --color-bg-app: #F0DED0;
+  --color-bg-sidebar: #B3C7E0;
+  --color-bg-sidebar-footer: #9fb5d0;
+  --color-accent: #345288;
+  --color-accent-hover: #273e67;
+  --color-accent-light: #4c6fa8;
+  --color-accent-muted: rgba(52, 82, 136, 0.12);
+  --color-accent-glow: rgba(52, 82, 136, 0.2);
+  --color-accent-text: #345288;
+  --color-secondary: #C58D5C;
+  --color-secondary-hover: #a67347;
+  --color-secondary-light: #db9d6d;
+  --color-secondary-muted: rgba(197, 141, 92, 0.12);
+  --color-text-primary: #345288;
+  --color-text-secondary: #273e67;
+  --color-text-tertiary: #405880;
+  --color-text-inverse: #ffffff;
+  --color-text-accent: #345288;
+  --color-text-danger: #dc2626;
+  --color-border: #92603c;
+  --color-border-hover: #7b4f30;
+  --color-border-focus: #345288;
+  --color-danger: #dc2626;
+  --color-danger-hover: #b91c1c;
+  --color-warning: #b45309;
+  --color-warning-muted: rgba(180, 83, 9, 0.08);
+  --color-success: #047857;
+  --color-success-muted: rgba(4, 120, 87, 0.08);
+  --color-info: #2563eb;
+  --color-info-muted: rgba(37, 99, 235, 0.08);
+  --color-warning-text: #b45309;
+  --color-success-text: #047857;
+  --color-info-text: #2563eb;
+  /* Calendar light-mode accessible colors */
+  --color-cal-class: #0369a1;
+  --color-cal-evidence: #047857;
+  --color-cal-abp: #4338ca;
+  --color-cal-final: #be123c;
+  --color-cal-colloquium: #b45309;
+  --color-cal-notice-general: #a21caf;
+  --color-cal-notice-professor: #7e22ce;
+}
+
+html[data-theme="hillside-dark"] {
+  --color-glass-card-bg-start: rgba(82, 66, 53, 0.9);
+  --color-glass-card-bg-end: rgba(57, 44, 34, 0.7);
+  --color-glass-card-border: rgba(182, 154, 130, 0.3);
+  --color-bg-primary: #45372c;
+  --color-bg-secondary: #392c22;
+  --color-bg-tertiary: #2e2219;
+  --color-bg-card: #524235;
+  --color-bg-card-hover: #5d4c3d;
+  --color-bg-input: #392c22;
+  --color-bg-app: #45372c;
+  --color-bg-sidebar: #2e2219;
+  --color-bg-sidebar-footer: #251b14;
+  --color-accent: #EED9BE;
+  --color-accent-hover: #fff3e3;
+  --color-accent-light: #f6e5cd;
+  --color-accent-muted: rgba(238, 217, 190, 0.15);
+  --color-accent-glow: rgba(238, 217, 190, 0.3);
+  --color-accent-text: #EED9BE;
+  --color-secondary: #C7AB96;
+  --color-secondary-hover: #d8bcab;
+  --color-secondary-light: #e4d1c3;
+  --color-secondary-muted: rgba(199, 171, 150, 0.15);
+  --color-text-primary: #F2E6D9;
+  --color-text-secondary: #D4B896;
+  --color-text-tertiary: #c2a286;
+  --color-text-inverse: #2e2219;
+  --color-text-accent: #EED9BE;
+  --color-text-danger: #fca5a5;
+  --color-border: #b69a82;
+  --color-border-hover: #d4b79e;
+  --color-border-focus: #EED9BE;
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-danger-muted: rgba(239, 68, 68, 0.15);
+  --color-warning: #f59e0b;
+  --color-warning-muted: rgba(245, 158, 11, 0.15);
+  --color-info: #3b82f6;
+  --color-info-muted: rgba(59, 130, 246, 0.15);
+  --color-success: #10b981;
+  --color-success-muted: rgba(16, 185, 129, 0.15);
+  --color-warning-text: #fbbf24;
+  --color-success-text: #34d399;
+  --color-info-text: #60a5fa;
+  --color-cal-class: #38bdf8;
+  --color-cal-evidence: #34d399;
+  --color-cal-abp: #a78bfa;
+  --color-cal-final: #fb7185;
+  --color-cal-colloquium: #fbbf24;
+  --color-cal-notice-general: #f472b6;
+  --color-cal-notice-professor: #c084fc;
+}
+
+html[data-theme="nordic-accent"] {
+  --color-glass-card-bg-start: rgba(52, 68, 84, 0.9);
+  --color-glass-card-bg-end: rgba(26, 37, 48, 0.7);
+  --color-glass-card-border: rgba(140, 163, 184, 0.3);
+  --color-bg-primary: #253341;
+  --color-bg-secondary: #1a2530;
+  --color-bg-tertiary: #131b23;
+  --color-bg-card: #344454;
+  --color-bg-card-hover: #3d4f62;
+  --color-bg-input: #1a2530;
+  --color-bg-app: #253341;
+  --color-bg-sidebar: #1a2530;
+  --color-bg-sidebar-footer: #131b23;
+  --color-accent: #DC9D68;
+  --color-accent-hover: #ebb68c;
+  --color-accent-light: #f2c7a5;
+  --color-accent-muted: rgba(220, 157, 104, 0.15);
+  --color-accent-glow: rgba(220, 157, 104, 0.3);
+  --color-accent-text: #DC9D68;
+  --color-secondary: #A0B3C2;
+  --color-secondary-hover: #b8c9d6;
+  --color-secondary-light: #d1dce5;
+  --color-secondary-muted: rgba(160, 179, 194, 0.15);
+  --color-text-primary: #D6DDE3;
+  --color-text-secondary: #b0c1cf;
+  --color-text-tertiary: #94a7b7;
+  --color-text-inverse: #1a2530;
+  --color-text-accent: #DC9D68;
+  --color-text-danger: #fca5a5;
+  --color-border: #8ca3b8;
+  --color-border-hover: #a3b7c8;
+  --color-border-focus: #DC9D68;
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-danger-muted: rgba(239, 68, 68, 0.15);
+  --color-warning: #f59e0b;
+  --color-warning-muted: rgba(245, 158, 11, 0.15);
+  --color-info: #3b82f6;
+  --color-info-muted: rgba(59, 130, 246, 0.15);
+  --color-success: #10b981;
+  --color-success-muted: rgba(16, 185, 129, 0.15);
+  --color-warning-text: #fbbf24;
+  --color-success-text: #34d399;
+  --color-info-text: #60a5fa;
+  --color-cal-class: #38bdf8;
+  --color-cal-evidence: #34d399;
+  --color-cal-abp: #a78bfa;
+  --color-cal-final: #fb7185;
+  --color-cal-colloquium: #fbbf24;
+  --color-cal-notice-general: #f472b6;
+  --color-cal-notice-professor: #c084fc;
+}
+
+/* ── Base Styles ──────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  line-height: 1.6;
+}
+
+/* ── Scrollbar Styles ─────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+/* ── Focus Styles ─────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ── Selection ────────────────────────────────────────────── */
+
+::selection {
+  background: var(--color-accent-muted);
+  color: var(--color-accent-light);
+}
+
+/* ── Link Reset ───────────────────────────────────────────── */
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* ── Input Reset ──────────────────────────────────────────── */
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* ── Utility Classes ──────────────────────────────────────── */
+
+.glass {
+  background: rgba(21, 31, 46, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(30, 41, 59, 0.5);
+}
+
+.glass-card {
+  background: linear-gradient(
+    135deg,
+    var(--color-glass-card-bg-start, rgba(21, 31, 46, 0.9)) 0%,
+    var(--color-glass-card-bg-end, rgba(26, 35, 50, 0.7)) 100%
+  );
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-glass-card-border, rgba(30, 41, 59, 0.6));
+  border-radius: var(--radius-lg);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-accent-light) 0%, var(--color-secondary-light) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-border {
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  margin: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-secondary) 100%);
+  opacity: 0.4;
+}
+
+/* ── Animations ───────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--color-accent-glow); }
+  50% { box-shadow: 0 0 20px var(--color-accent-glow), 0 0 40px rgba(16, 185, 129, 0.1); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-fade-in-scale {
+  animation: fadeInScale 0.25s ease-out forwards;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.3s ease-out forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s ease-out forwards;
+}
+
+.animate-slide-in-up {
+  animation: slideInUp 0.3s ease-out forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 25%, rgba(255, 255, 255, 0.05) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* ── Calendar Overrides (Schedule-X) ──────────────────────── */
+
+.sx__calendar {
+  --sx-color-primary: var(--color-accent) !important;
+  --sx-color-on-primary: #ffffff !important;
+  --sx-color-surface: var(--color-bg-card) !important;
+  --sx-color-on-surface: var(--color-text-primary) !important;
+  --sx-color-surface-variant: var(--color-bg-tertiary) !important;
+  --sx-color-on-surface-variant: var(--color-text-secondary) !important;
+  font-family: var(--font-sans) !important;
+  border-radius: var(--radius-lg) !important;
+  border: 1px solid var(--color-border) !important;
+}
+
+/* ── Sonner Toast Overrides ───────────────────────────────── */
+
+[data-sonner-toaster] {
+  --normal-bg: var(--color-bg-card) !important;
+  --normal-text: var(--color-text-primary) !important;
+  --normal-border: var(--color-border) !important;
+  --success-bg: var(--color-success-muted) !important;
+  --success-text: var(--color-accent-light) !important;
+  --error-bg: var(--color-danger-muted) !important;
+  --error-text: var(--color-text-danger) !important;
+  font-family: var(--font-sans) !important;
+}

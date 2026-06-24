@@ -374,7 +374,14 @@ export class GroupRepository {
 
   async isActive(groupId: string): Promise<boolean> {
     const row = await get<any>(this.db, 'SELECT is_active FROM whatsapp_groups WHERE group_id = ?', [groupId]);
-    return !!row && Number(row.is_active) === 1;
+    if (!row || Number(row.is_active) !== 1) {
+      return false;
+    }
+    const onboarding = await get<any>(this.db, 'SELECT onboarding_completed FROM pending_group_onboarding WHERE group_id = ?', [groupId]);
+    if (onboarding && Number(onboarding.onboarding_completed) === 0) {
+      return false;
+    }
+    return true;
   }
 
   async getActiveCount(): Promise<number> {
@@ -399,3 +406,5 @@ function rowToWhatsAppGroup(row: any): WhatsAppGroup {
 export { InstitutionalNoticeRepository, ClassNotificationRepository, InboundEmailRejectionRepository, AuthorizedEmailRepository } from '../../../features/notifications/notifications.repository.js';
 export { DailyGreetingRepository, OutboxDedupRepository } from '../../../features/messages/messages.repository.js';
 export { ReminderRepository, ManagedExamRepository, ManagedClassRepository, ManagedTeacherRepository, CommissionRepository, GroupContextRepository, ClassCommissionScheduleRepository, CohortConfigRepository } from '../../../features/academic-calendar/academic-calendar.repository.js';
+export { OnboardingTokenRepository } from '../../../features/onboarding/onboarding-token.repository.js';
+export { WebOtpRepository } from '../../../features/onboarding/web-otp.repository.js';

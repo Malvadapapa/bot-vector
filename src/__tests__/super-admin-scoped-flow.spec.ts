@@ -148,10 +148,10 @@ describe('Super-Admin and Admin Role / Menu Separation Spec', () => {
 
     // Group admin: isGroupAdmin = true, isSuperAdmin = false
     const allowedGroupAdmin = await calendarSvc.handleCommand('user1', '!config-grupo', new Date(), false, 'g1@g.us', true, false);
-    expect(allowedGroupAdmin).toBe('config-grupo:g1@g.us');
+    expect(allowedGroupAdmin).toBe('⚠️ La configuración por chat y comandos interactivos ha sido deshabilitada. Ahora podés configurar este grupo ingresando al panel de administración web centralizado.');
 
     // SuperAdmin: isGroupAdmin = false, isSuperAdmin = true (even if not group admin!)
     const allowedSuperAdmin = await calendarSvc.handleCommand('sa1', '!config-grupo', new Date(), false, 'g1@g.us', false, true);
-    expect(allowedSuperAdmin).toBe('config-grupo:g1@g.us');
+    expect(allowedSuperAdmin).toBe('⚠️ La configuración por chat y comandos interactivos ha sido deshabilitada. Ahora podés configurar este grupo ingresando al panel de administración web centralizado.');
   });
 });
