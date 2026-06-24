@@ -3661,7 +3661,12 @@ export class PrivateChatWorkflowService {
     for (const m of memberships) {
       if (!m.is_active) continue;
       const membershipDetails = await this.groupMembershipRepository.getMembership(m.group_id, userId);
-      if (membershipDetails && membershipDetails.commission_id) continue;
+      if (membershipDetails && (
+        membershipDetails.commission_id || 
+        membershipDetails.role === 'teacher' || 
+        membershipDetails.role === 'admin' || 
+        membershipDetails.role === 'super_admin'
+      )) continue;
 
       const group = await this.groupRepository.findByGroupId(m.group_id);
       const context = await this.groupContextRepository.getByGroupId(m.group_id);
@@ -3702,7 +3707,33 @@ export class PrivateChatWorkflowService {
     if (!this.groupMembershipRepository || !this.groupRepository || !this.groupContextRepository) return null;
 
     const membership = await this.groupMembershipRepository.getMembership(groupId, userId);
-    if (!membership || !membership.is_active || membership.commission_id) return null;
+    if (!membership || !membership.is_active) return null;
+    if (membership.role === 'teacher' || membership.role === 'admin' || membership.role === 'super_admin') return null;
+    if (membership.commission_id) return null;
+
+    // Check if the user is admin or teacher to skip warning and correct their role
+    const isAdmin = (this.adminRepository && (
+      (typeof this.adminRepository.isAuthenticated === 'function' && await this.adminRepository.isAuthenticated(userId)) || 
+      (typeof this.adminRepository.isGroupAdmin === 'function' && await this.adminRepository.isGroupAdmin(userId, groupId))
+    ));
+    if (isAdmin) {
+      await this.groupMembershipRepository.addMembership(groupId, userId, 'admin');
+      return null;
+    }
+
+    if (this.userProfileRepository && this.managedTeacherRepository) {
+      const profile = await this.userProfileRepository.get(userId);
+      if (profile && profile.email) {
+        const teacher = await this.managedTeacherRepository.getByEmail(profile.email);
+        if (teacher) {
+          await this.groupMembershipRepository.addMembership(groupId, userId, 'teacher');
+          if (typeof (this.managedTeacherRepository as any).updatePhone === 'function') {
+            await (this.managedTeacherRepository as any).updatePhone(profile.email, userId);
+          }
+          return null;
+        }
+      }
+    }
 
     const context = await this.groupContextRepository.getByGroupId(groupId);
     if (!context || context.id === undefined) return null;

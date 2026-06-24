@@ -539,22 +539,36 @@ export class HttpServer {
 
         let groupIds: string[] = [];
         if (role === 'group_admin') {
-          const adminRows = await all<any>(
-            this.sqliteDb,
-            `SELECT ga.group_id 
-             FROM group_admins ga
-             LEFT JOIN user_profiles p ON ga.user_id = p.user_id
-             WHERE LOWER(p.email) = LOWER(?) OR ga.user_id = ?`,
-            [normalizedEmail, normalizedEmail]
-          );
-          groupIds = adminRows.map(r => r.group_id);
+          try {
+            const adminRows = await all<any>(
+              this.sqliteDb,
+              `SELECT ga.group_id 
+               FROM group_admins ga
+               LEFT JOIN user_profiles p ON ga.user_id = p.user_id
+               WHERE LOWER(p.email) = LOWER(?) OR ga.user_id = ?`,
+              [normalizedEmail, normalizedEmail]
+            );
+            groupIds = adminRows.map(r => r.group_id);
+          } catch (e) {
+            console.warn('[HTTP Server] Error al cargar groupIds para admin:', e);
+          }
         } else if (role === 'professor') {
-          const teacherRows = await all<any>(
-            this.sqliteDb,
-            'SELECT DISTINCT group_id FROM managed_teachers WHERE LOWER(email) = LOWER(?)',
-            [normalizedEmail]
-          );
-          groupIds = teacherRows.map(r => r.group_id).filter(Boolean);
+          try {
+            const teacherRows = await all<any>(
+              this.sqliteDb,
+              `SELECT DISTINCT group_id FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '') AND group_id != '' AND group_id IS NOT NULL
+               UNION
+               SELECT DISTINCT gc.group_id
+               FROM group_context gc
+               JOIN academic_subjects asub ON gc.year = asub.year
+               JOIN managed_teachers mt ON (mt.group_id = '' OR mt.group_id IS NULL) AND LOWER(mt.subject) = LOWER(asub.name)
+               WHERE REPLACE(LOWER(mt.email), '.', '') = REPLACE(LOWER(?), '.', '')`,
+              [normalizedEmail, normalizedEmail]
+            );
+            groupIds = teacherRows.map(r => r.group_id).filter(Boolean);
+          } catch (e) {
+            console.warn('[HTTP Server] Error al cargar groupIds para profesor:', e);
+          }
         }
 
         const token = JwtUtils.sign({ email: normalizedEmail, role, name });
@@ -1160,7 +1174,9 @@ export class HttpServer {
         const rows = await all<any>(this.sqliteDb, 'SELECT * FROM academic_subjects WHERE year = ?', [year]);
         const teacherRows = await all<any>(
           this.sqliteDb,
-          'SELECT LOWER(email) as email, subject FROM managed_teachers WHERE group_id = ?',
+          `SELECT LOWER(email) as email, subject 
+           FROM managed_teachers 
+           WHERE group_id = ? OR group_id = '' OR group_id IS NULL`,
           [groupId]
         );
         const mappedSubjects = rows.map((r) => {
@@ -2161,18 +2177,36 @@ export class HttpServer {
       if (pathname === '/api/profile/me' && req.method === 'GET') {
         let groupIds: string[] = [];
         if (authUser.role === 'group_admin') {
-          const adminRows = await all<any>(
-            this.sqliteDb,
-            `SELECT ga.group_id 
-             FROM group_admins ga
-             LEFT JOIN user_profiles p ON ga.user_id = p.user_id
-             WHERE LOWER(p.email) = LOWER(?) OR ga.user_id = ?`,
-            [authUser.email, authUser.email]
-          );
-          groupIds = adminRows.map(r => r.group_id);
+          try {
+            const adminRows = await all<any>(
+              this.sqliteDb,
+              `SELECT ga.group_id 
+               FROM group_admins ga
+               LEFT JOIN user_profiles p ON ga.user_id = p.user_id
+               WHERE LOWER(p.email) = LOWER(?) OR ga.user_id = ?`,
+              [authUser.email, authUser.email]
+            );
+            groupIds = adminRows.map(r => r.group_id);
+          } catch (e) {
+            console.warn('[HTTP Server] Error al obtener groupIds de admin:', e);
+          }
         } else if (authUser.role === 'professor') {
-          const teacherRows = await all<any>(this.sqliteDb, 'SELECT DISTINCT group_id FROM managed_teachers WHERE LOWER(email) = LOWER(?)', [authUser.email]);
-          groupIds = teacherRows.map(r => r.group_id).filter(Boolean);
+          try {
+            const teacherRows = await all<any>(
+              this.sqliteDb,
+              `SELECT DISTINCT group_id FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '') AND group_id != '' AND group_id IS NOT NULL
+               UNION
+               SELECT DISTINCT gc.group_id
+               FROM group_context gc
+               JOIN academic_subjects asub ON gc.year = asub.year
+               JOIN managed_teachers mt ON (mt.group_id = '' OR mt.group_id IS NULL) AND LOWER(mt.subject) = LOWER(asub.name)
+               WHERE REPLACE(LOWER(mt.email), '.', '') = REPLACE(LOWER(?), '.', '')`,
+              [authUser.email, authUser.email]
+            );
+            groupIds = teacherRows.map(r => r.group_id).filter(Boolean);
+          } catch (e) {
+            console.warn('[HTTP Server] Error al obtener groupIds de profesor:', e);
+          }
         }
 
         this.sendJson(res, 200, {
@@ -2189,7 +2223,7 @@ export class HttpServer {
       if (pathname === '/api/profile/settings' && req.method === 'GET') {
         const profile = await get<any>(
           this.sqliteDb,
-          'SELECT name, email FROM user_profiles WHERE LOWER(email) = LOWER(?) LIMIT 1',
+          "SELECT name, email FROM user_profiles WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '') LIMIT 1",
           [authUser.email]
         );
 
@@ -2201,7 +2235,7 @@ export class HttpServer {
         if (authUser.role === 'professor') {
           const teacher = await get<any>(
             this.sqliteDb,
-            'SELECT phone, notify_email, notify_whatsapp FROM managed_teachers WHERE LOWER(email) = LOWER(?) LIMIT 1',
+            "SELECT phone, notify_email, notify_whatsapp FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '') LIMIT 1",
             [authUser.email]
           );
           if (teacher) {
@@ -2229,7 +2263,7 @@ export class HttpServer {
 
         let profile = await get<any>(
           this.sqliteDb,
-          'SELECT user_id FROM user_profiles WHERE LOWER(email) = LOWER(?) LIMIT 1',
+          "SELECT user_id FROM user_profiles WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '') LIMIT 1",
           [authUser.email]
         );
 
@@ -2253,7 +2287,7 @@ export class HttpServer {
         if (authUser.role === 'professor') {
           const teacher = await get<any>(
             this.sqliteDb,
-            'SELECT id FROM managed_teachers WHERE LOWER(email) = LOWER(?) LIMIT 1',
+            "SELECT id FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '') LIMIT 1",
             [authUser.email]
           );
 
@@ -2303,13 +2337,13 @@ export class HttpServer {
           const emailToFilter = emailParam ? emailParam.toLowerCase().trim() : authUser.email.toLowerCase().trim();
           teacherRows = await all<any>(
             this.sqliteDb,
-            'SELECT id, name, email, subject, group_id, commission_id, commission_label FROM managed_teachers WHERE LOWER(email) = ?',
+            "SELECT id, name, email, subject, group_id, commission_id, commission_label FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '')",
             [emailToFilter]
           );
         } else {
           teacherRows = await all<any>(
             this.sqliteDb,
-            'SELECT id, name, email, subject, group_id, commission_id, commission_label FROM managed_teachers WHERE LOWER(email) = ?',
+            "SELECT id, name, email, subject, group_id, commission_id, commission_label FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '')",
             [authUser.email.toLowerCase().trim()]
           );
         }
@@ -2410,7 +2444,7 @@ export class HttpServer {
         // Update phone in managed_teachers
         await run(
           this.sqliteDb,
-          'UPDATE managed_teachers SET phone = ? WHERE LOWER(email) = ?',
+          "UPDATE managed_teachers SET phone = ? WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '')",
           [jid, authUser.email.toLowerCase().trim()]
         );
 

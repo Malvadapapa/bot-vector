@@ -451,12 +451,20 @@ export class ManagedTeacherRepository {
   }
 
   async getByEmail(email: string): Promise<ManagedTeacher | null> {
-    const row = await get<any>(this.db, `SELECT * FROM managed_teachers WHERE LOWER(email) = LOWER(?) LIMIT 1`, [email]);
+    const row = await get<any>(this.db, `SELECT * FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '') LIMIT 1`, [email]);
     return row ? rowToTeacher(row) : null;
   }
 
+  async updatePhone(email: string, phone: string): Promise<void> {
+    await run(
+      this.db,
+      `UPDATE managed_teachers SET phone = ?, updated_at = CURRENT_TIMESTAMP WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '')`,
+      [phone, email]
+    );
+  }
+
   async listByEmail(email: string): Promise<ManagedTeacher[]> {
-    const rows = await all<any>(this.db, `SELECT * FROM managed_teachers WHERE LOWER(email) = LOWER(?)`, [email]);
+    const rows = await all<any>(this.db, `SELECT * FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '')`, [email]);
     return rows.map(rowToTeacher);
   }
 
