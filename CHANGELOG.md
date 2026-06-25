@@ -99,7 +99,26 @@ Todas las modificaciones notables de este proyecto serán documentadas en este a
 - **Dockerización**:
   - Dockerfile multi-stage optimizado con Node.js 24 Alpine: compilación de dependencias nativas (`sqlite3`) en stage de build, frontend React/Vite en stage separado, imagen de producción limpia sin herramientas de desarrollo.
   - `docker-compose.yml` con volumes para persistencia de base de datos SQLite (`./data`) y sesión de WhatsApp Baileys (`./session`), carga de variables de entorno desde `.env`, healthcheck HTTP y límite de memoria.
-  - `.dockerignore` para excluir `node_modules`, `dist`, `.git`, `session`, `data`, tests y archivos de IDE del build context.
+- **Modo Feria de Ciencias (Science Fair Mode)**:
+  - Activación por variable de entorno `FERIA_MODE=true` en `.env`.
+  - Elevación de cuota diaria de preguntas de 2 a 50 consultas por usuario.
+  - Suspensión de la clasificación de intención, guardrails semánticos locales y bloqueos de moderación ordinarios para permitir interacción fluida de visitantes no registrados.
+  - Respuestas directas y educadas ante preguntas fuera de lugar u ofensivas en lugar de bloqueos silenciosos.
+  - Instrucciones dinámicas extendidas (`FERIA_BOT_INSTRUCTIONS`) para responder consultas sobre programación, tecnología y ciencia de datos.
+  - Restricción del saludo de bienvenida a la feria a una única vez por sesión/historial del usuario.
+- **Priorización Dinámica Multi-API e Inteligencia Superior**:
+  - Soporte de múltiples API Keys numeradas (`GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`...) para evitar el agotamiento de cuotas gratuitas.
+  - Integración del método `listAvailableModels` para consultar dinámicamente modelos habilitados en Google AI Studio, seleccionando de forma inteligente la versión más potente disponible (ej: Gemini 3.5 o superior) antes de usar fallbacks de Groq.
+- **Avisos Integrados de Docentes**:
+  - Unificación de los avisos creados por profesores desde el Dashboard web en la base de datos de WhatsApp.
+  - Visualización integrada en comandos `!avisos`, `!semana` y agendas del día, con regla de expiración temporal al lunes 00:00 de la semana posterior.
+- **Mejoras Estéticas y Contraste de Consola (TUI)**:
+  - Remoción de fondos de color (`{yellow-bg}` / `{green-bg}`) en la barra de estado inferior para asegurar máxima legibilidad y contraste en terminales claras y oscuras de Windows.
+  - Impresión en logs de TUI del nombre exacto del modelo que resolvió la consulta de IA.
+- **Sincronización Bidireccional de Horarios y Docentes**:
+  - Sincronización automática local-a-global (ediciones de horario propagan el docente asignado) y global-a-local (ediciones de docente propagan su email y enlace Meet a todos sus horarios de clase).
+- **Protección en Simulación de Alumnos**:
+  - Exclusión explícita de endpoints de administración y de la API de simulación de la cabecera `x-simulate-user`, previniendo errores de acceso denegado (403/502) para superadministradores.
 
 ### Corregido
 - **Parser de Avisos por Email Rechazaba Correos Reenviados/Respondidos (BUG-014)**: Corrección del analizador de campos estructurados (`parseStructuredFields`) que rompía prematuramente al encontrar la dirección del bot (`bot.vectoritotsds@gmail.com`) en las cabeceras `To:` de emails reenviados/respondidos por Gmail, o al encontrar la línea `---------- Forwarded message ---------` (que matcheaba `startsWith('---')`). Ambos casos provocaban que el parser abandonara el cuerpo antes de leer ningún campo, generando falsos rechazos por "falta el campo cuerpo". Se reemplazó `startsWith('---')` por `/^-{3,}\s*$/` (solo líneas compuestas enteramente por guiones), se eliminó el check de email del bot, y se agregaron detecciones para bloques citados (`>`), encabezados `Original Message`/`Mensaje Original` y patrones `escribió:`/`wrote:` con case-insensitive.

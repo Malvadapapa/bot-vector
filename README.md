@@ -10,7 +10,20 @@
 [![License](https://img.shields.io/badge/License-MIT-gray)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Alpha%200.2.1--alpha.3-yellow)](CHANGELOG.md)
 
-Bot Vectorito es un asistente acadÃ©mico automatizado diseÃ±ado para centralizar y simplificar el acceso a la informaciÃ³n de cursada para los estudiantes de la Tecnicatura Superior en Desarrollo de Software del ISPC (Instituto Superior PolitÃ©cnico CÃ³rdoba).
+> [!NOTE]
+> ### 📢 Código Libre y Propósito de Apoyo Estudiantil
+> Este proyecto ha sido desarrollado bajo una filosofía de código abierto y colaboración comunitaria. Su principal y único propósito es brindar soporte a nuestros compañeros/as de cursada, facilitando el acceso a la información y optimizando la experiencia académica diaria en la Tecnicatura Superior en Desarrollo de Software del ISPC.
+> 
+> Por lo tanto, **el código fuente es completamente libre**: tienes total libertad de copiar, estudiar, distribuir, modificar o utilizar esta base de código para adaptarla a tus propias necesidades o crear nuevos proyectos derivados. Invitamos a toda la comunidad estudiantil a colaborar y seguir mejorando estas herramientas de forma colectiva.
+> 
+> **Colaboradores Destacados:**
+> - 👩‍💻 **Karina Del Valle Quinteros** ([@KaryQuinteros](https://github.com/KaryQuinteros)) - Collaborator
+> - 👩‍💻 **Laura Zarate** ([@lauzarg](https://github.com/lauzarg)) - Collaborator
+> 
+> **Mención Especial:**
+> - 👨‍🏫 **Ramiro Ceballes** ([@RamiroCeballes](https://github.com/RamiroCeballes)) - Collaborator y Tutor del proyecto en la Feria de Ciencias, quien impulsó esta iniciativa con su apoyo constante, valiosas sugerencias y una calidez excepcional.
+
+Bot Vectorito es un asistente académico automatizado diseñado para centralizar y simplificar el acceso a la información de cursada para los estudiantes de la Tecnicatura Superior en Desarrollo de Software del ISPC (Instituto Superior Politécnico Córdoba).
 
 ## ðŸ“– Contenido
 
@@ -55,21 +68,20 @@ MÃ¡s que un bot de comandos, Vectorito actÃºa como un asistente acadÃ©mico
 
 ---
 
-## âœ¨ CaracterÃ­sticas Principales
+## ✨ Características Principales
 
-| CaracterÃ­stica | DescripciÃ³n |
+| Característica | Descripción |
 | --- | --- |
-| ðŸ¤– **Respuestas con IA** | GeneraciÃ³n de respuestas con contexto acadÃ©mico + RAG. Rigurosa objetividad (sin especulaciones ni antropomorfismo) y trato personal obligatorio por nombre de usuario. |
-| ðŸ“… **AutomatizaciÃ³n** | Recordatorios automÃ¡ticos de clases, exÃ¡menes y avisos. |
-| ðŸ—‚ï¸� **Contexto dinÃ¡mico** | Perfiles, comisiones, profesores y agenda almacenados en base de datos. |
-| ðŸ”� **GestiÃ³n Privada** | Chat privado por cÃ³digo para completar perfiles y ejecutar flujos de administraciÃ³n. |
-| âš¡ **Comandos RÃ¡pidos** | Accesos directos sin IA (`!hoy`, `!examenes`, `!avisos`) para respuestas inmediatas. |
-| ðŸ›¡ï¸� **ModeraciÃ³n** | DetecciÃ³n de off-topic, advertencias, bloqueos progresivos y rate limiting. |
-
----
-
-**Nota de administraciÃ³n:** Ahora el panel admin permite *editar* una materia ya cargada (nombre, dÃ­a/hora y enlace de Meet) desde el submenÃº de `Configurar avisos de clase` â†’ `Editar materia/horario/enlace`.
-
+| 🤖 **Respuestas con IA** | Generación de respuestas con contexto académico + RAG. Rigurosa objetividad (sin especulaciones ni antropomorfismo) y trato personal obligatorio por nombre de usuario. |
+| 🎪 **Modo Feria** | Modo configurable (`FERIA_MODE=true`) que amplía cuotas de preguntas (50/usuario), relaja filtros de moderación y responde consultas generales de tecnología/programación. |
+| 🔑 **Multi-API & Modelos** | Gestión de múltiples API keys de Gemini/Groq y autodescubrimiento del modelo de inteligencia superior disponible. |
+| 📢 **Avisos de Docentes** | Publicación de avisos desde el panel docente que se integran automáticamente en WhatsApp (`!avisos`, `!semana`) con expiración temporal semanal. |
+| 🔄 **Sincronización** | Sincronización bidireccional local/global en cambios de docentes, horarios y enlaces de clases. |
+| 🔔 **Automatización** | Recordatorios automáticos de clases, exámenes y avisos. |
+| 🗂️ **Contexto dinámico** | Perfiles, comisiones, profesores y agenda almacenados en base de datos. |
+| 🔑 **Gestión Privada** | Chat privado por código para completar perfiles y ejecutar flujos de administración. |
+| ⚡ **Comandos Rápidos** | Accesos directos sin IA (`!hoy`, `!examenes`, `!avisos`) para respuestas inmediatas. |
+| 🛡️ **Moderación** | Detección de off-topic, advertencias, bloqueos progresivos y rate limiting. |
 
 ## ðŸ›  Stack TecnolÃ³gico
 
@@ -153,18 +165,21 @@ src/
    ```
 2. **Configurar entorno:**
    Copia `.env.example` a `.env` y completa las variables clave:
-   ```env
-   ADMIN_PASSWORD=tu_password_fuerte
-   ADMIN_SEED_CODES=123456,654321
-   GEMINI_API_KEY=tu_gemini_api_key
-   SQLITE_PATH=data/chatbot.db
-   BASE_URL=http://localhost:3000
-   ```
+    ```env
+    ADMIN_PASSWORD=tu_password_fuerte
+    ADMIN_SEED_CODES=123456,654321
+    GEMINI_API_KEY=tu_gemini_api_key_principal
+    GEMINI_API_KEY_1=tu_gemini_api_key_secundaria_opcional
+    GROQ_API_KEY=tu_groq_api_key_fallback
+    FERIA_MODE=false
+    SQLITE_PATH=data/chatbot.db
+    BASE_URL=http://localhost:3000
+    ```
 3. **Compilar e iniciar:**
    ```bash
    npm run build        # Compilar backend (TypeScript)
    npm run build:web    # Compilar panel web (React/Vite)
-   npm start            # Iniciar en producciÃ³n
+   npm start            # Iniciar en producción
    # Para desarrollo con hot-reload: npm run dev
    ```
 4. **Vincular WhatsApp:** Escanea el cÃ³digo QR que aparecerÃ¡ en la terminal desde `Dispositivos vinculados` en tu app de WhatsApp. Escribe `!menu` en el grupo para verificar.
@@ -314,7 +329,24 @@ Los documentos que ya estaban en `data/ai-context/` antes de esta versiÃ³n se 
 
 ---
 
-## ðŸŒ� Panel Web de AdministraciÃ³n
+## 🎪 Modo Feria de Ciencias
+
+El bot incluye un **Modo Feria de Ciencias** especial, diseñado para cuando se expone el proyecto al público o a evaluadores, flexibilizando las restricciones habituales para permitir una interacción rápida, fluida y sin bloqueos.
+
+### ¿Cómo se activa?
+Se activa definiendo la variable de entorno `FERIA_MODE=true` en el archivo `.env`.
+
+### Comportamiento del Bot en Modo Feria:
+1. **Límites de Preguntas Ampliados**: La cuota diaria por usuario de WhatsApp se eleva automáticamente de 2 preguntas regulares a **50 preguntas**, permitiendo que los visitantes prueben el bot repetidamente.
+2. **Relajación de Filtros y Moderación**: Se suspenden temporalmente el guardrail semántico local de desvío de tema (off-topic), la validación de comisión de cursado (cualquier usuario no registrado puede consultar) y las penalizaciones por spam o warnings.
+3. **Instrucciones de IA Extendidas**: Se inyectan directivas dinámicas (`FERIA_BOT_INSTRUCTIONS`) para que el bot responda con solvencia preguntas generales sobre tecnología, lenguajes de programación, inteligencia artificial, RAG y ciencia de datos, vinculándolas al contexto académico del ISPC.
+4. **Control del Saludo de Feria**: Para evitar que la IA mencione repetitivamente la feria en cada mensaje, el bot está instruido a saludar y dar la bienvenida a la feria únicamente en el primer mensaje de la sesión de chat del usuario.
+5. **Respuestas Educadas ante Preguntas Inapropiadas**: En lugar de ignorar o bloquear silenciosamente las consultas con groserías o fuera de lugar, el bot responde directamente de manera educada que no puede contestar ese tipo de preguntas.
+6. **Priorización de API Keys y Modelos**: Admite múltiples API keys (`GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`...) y consulta de forma dinámica los modelos autorizados en tu cuenta de Google AI Studio, seleccionando la versión más inteligente disponible en orden de prioridad de razonamiento (ej: Gemini 3.5 Pro -> Gemini 3.5 Flash -> fallback de Groq).
+
+---
+
+## ðŸŒ Panel Web de AdministraciÃ³n
 
 El bot incluye un panel web embebido accesible en `http://localhost:3000` (o la URL configurada en `BASE_URL`).
 
