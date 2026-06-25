@@ -87,7 +87,7 @@ Más que un bot de comandos, Vectorito actúa como un asistente académico autom
 | ⚡ **Comandos Rápidos** | Accesos directos sin IA (`!hoy`, `!examenes`, `!avisos`) para respuestas inmediatas. |
 | 🛡️ **Moderación** | Detección de off-topic, advertencias, bloqueos progresivos y rate limiting. |
 
-## ðŸ›  Stack Tecnológico
+## 🛠️ Stack Tecnológico
 
 | Capa | Tecnología | Propósito |
 | --- | --- | --- |
@@ -102,7 +102,7 @@ Más que un bot de comandos, Vectorito actúa como un asistente académico autom
 
 ---
 
-## ðŸ�—ï¸� Arquitectura & Diseño
+## 🏗️ Arquitectura & Diseño
 
 El sistema emplea una combinación de **Vertical Slicing**, **Screaming Architecture** y **Hexagonal (Ports & Adapters)** para lograr módulos autocontenidos, alta cohesión y bajo acoplamiento.
 
@@ -112,45 +112,49 @@ El sistema emplea una combinación de **Vertical Slicing**, **Screaming Architec
 
 ```text
 src/
-â”œâ”€â”€ main.ts                         # Composición raíz y bootstrap
-â”œâ”€â”€ features/                       # â”€â”€ SLICES VERTICALES DE NEGOCIO â”€â”€
-â”‚   â”œâ”€â”€ academic-calendar/          # Clases, exámenes, profesores, comisiones
-â”‚   â”‚   â”œâ”€â”€ academic-calendar.models.ts
-â”‚   â”‚   â”œâ”€â”€ academic-calendar.repository.ts
-â”‚   â”‚   â”œâ”€â”€ academic-calendar.service.ts
-â”‚   â”‚   â”œâ”€â”€ exam-menu.service.ts / edit-exam-menu.service.ts
-â”‚   â”‚   â”œâ”€â”€ comision-management.service.ts
-â”‚   â”‚   â””â”€â”€ __tests__/
-â”‚   â”œâ”€â”€ ai/                         # IA conversacional, RAG, rate limiting
-â”‚   â”‚   â”œâ”€â”€ ai-query.service.ts / knowledge-context.service.ts
-â”‚   â”‚   â”œâ”€â”€ rate-limit.service.ts / rate-limit.repository.ts
-â”‚   â”‚   â”œâ”€â”€ providers/              # Gemini, Groq, Fallback, Embeddings
-â”‚   â”‚   â”œâ”€â”€ rag/                    # Pipeline, consulta semántica, CLI
-â”‚   â”‚   â””â”€â”€ __tests__/
-â”‚   â”œâ”€â”€ moderation/                 # Warnings, baneos, detección off-topic
-â”‚   â”‚   â”œâ”€â”€ moderation.models.ts / moderation.repository.ts
-â”‚   â”‚   â”œâ”€â”€ user-moderation.service.ts / ban-warning-system.ts
-â”‚   â”‚   â””â”€â”€ __tests__/
-â”‚   â”œâ”€â”€ conversation/               # Estado de conversación y confirmaciones
-â”‚   â”‚   â”œâ”€â”€ conversation.models.ts / conversation.repository.ts
-â”‚   â”‚   â”œâ”€â”€ conversation-state.service.ts
-â”‚   â”‚   â””â”€â”€ __tests__/
-â”‚   â”œâ”€â”€ notifications/              # Alertas, recordatorios, IMAP, RSS, email
-â”‚   â”‚   â”œâ”€â”€ notifications.repository.ts / class-notification.service.ts
-â”‚   â”‚   â”œâ”€â”€ exam-notification.service.ts / scheduled-reminder.service.ts
-â”‚   â”‚   â”œâ”€â”€ integrations/           # EmailService, IMAP monitor, RSS parser
-â”‚   â”‚   â””â”€â”€ __tests__/
-â”‚   â””â”€â”€ messages/                   # Enrutamiento, intenciones, de-duplicación
-â”‚       â”œâ”€â”€ message-router.service.ts / message-intent-parser.service.ts
-â”‚       â”œâ”€â”€ dynamic-message.service.ts
-â”‚       â””â”€â”€ __tests__/
-â”œâ”€â”€ shared/                         # â”€â”€ COMPONENTES TRANSVERSALES â”€â”€
-â”‚   â”œâ”€â”€ config/                     # Configuración de entorno
-â”‚   â”œâ”€â”€ db/                         # SQLite: database, migrations, db-utils
-â”‚   â””â”€â”€ logging/                    # Servicio de logs
-â”œâ”€â”€ interfaces/                     # â”€â”€ ADAPTADORES DE ENTRADA/SALIDA â”€â”€
-â”‚   â””â”€â”€ whatsapp/                   # Baileys gateway
-â””â”€â”€ scheduler/                      # â## âš™ï¸� Instalación y Configuración
+├── main.ts                         # Composición raíz y bootstrap
+├── features/                       # ── SLICES VERTICALES DE NEGOCIO ──
+│   ├── academic-calendar/          # Clases, exámenes, profesores, comisiones
+│   │   ├── academic-calendar.models.ts
+│   │   ├── academic-calendar.repository.ts
+│   │   ├── academic-calendar.service.ts
+│   │   ├── exam-menu.service.ts / edit-exam-menu.service.ts
+│   │   ├── comision-management.service.ts
+│   │   └── __tests__/
+│   ├── ai/                         # IA conversacional, RAG, rate limiting
+│   │   ├── ai-query.service.ts / knowledge-context.service.ts
+│   │   ├── rate-limit.service.ts / rate-limit.repository.ts
+│   │   ├── providers/              # Gemini, Groq, Fallback, Embeddings
+│   │   ├── rag/                    # Pipeline, consulta semántica, CLI
+│   │   └── __tests__/
+│   ├── moderation/                 # Warnings, baneos, detección off-topic
+│   │   ├── moderation.models.ts / moderation.repository.ts
+│   │   ├── user-moderation.service.ts / ban-warning-system.ts
+│   │   └── __tests__/
+│   ├── conversation/               # Estado de conversación y confirmaciones
+│   │   ├── conversation.models.ts / conversation.repository.ts
+│   │   ├── conversation-state.service.ts
+│   │   └── __tests__/
+│   ├── notifications/              # Alertas, recordatorios, IMAP, RSS, email
+│   │   ├── notifications.repository.ts / class-notification.service.ts
+│   │   ├── exam-notification.service.ts / scheduled-reminder.service.ts
+│   │   ├── integrations/           # EmailService, IMAP monitor, RSS parser
+│   │   └── __tests__/
+│   └── messages/                   # Enrutamiento, intenciones, de-duplicación
+│       ├── message-router.service.ts / message-intent-parser.service.ts
+│       ├── dynamic-message.service.ts
+│       └── __tests__/
+├── shared/                         # ── COMPONENTES TRANSVERSALES ──
+│   ├── config/                     # Configuración de entorno
+│   ├── db/                         # SQLite: database, migrations, db-utils
+│   └── logging/                    # Servicio de logs
+├── interfaces/                     # ── ADAPTADORES DE ENTRADA/SALIDA ──
+│   └── whatsapp/                   # Baileys gateway
+└── scheduler/                      # Planificador y tareas programadas
+
+---
+
+## 🛠️ Instalación y Configuración
 
 ### Requisitos Previos
 * Node.js 24.x+ y npm 10.x+
@@ -189,7 +193,7 @@ src/
 4. **Vincular WhatsApp:** Escanea el código QR que aparecerá en la terminal desde `Dispositivos vinculados` en tu app de WhatsApp. Escribe `!menu` en el grupo para verificar.
 5. **Acceder al panel web:** Abrí `http://localhost:3000` en tu navegador.
 
-### Opción 2: Despliegue con Docker ðŸ�³
+### Opción 2: Despliegue con Docker 🐳
 
 La forma más simple y portable de desplegar el bot.
 
@@ -366,9 +370,9 @@ El acceso se realiza mediante **autenticación OTP por correo electrónico**:
 | Rol | Funcionalidades |
 | --- | --- |
 | 🛡️� **Super Admin** | Gestión global de grupos, materias, profesores, comisiones, calendario académico, ciclo lectivo, administradores, emails autorizados, simulación de alumnos, ajustes y temas |
-| 🔍‘ **Admin de Grupo** | Vista acotada a su grupo con lectura de calendario, administradores y horarios |
-| ðŸ�« **Personal Institucional** | Edición de hitos del ciclo lectivo, feriados, horarios de clase, enlaces de Meet y datos docentes |
-| ðŸ‘¨â€�ðŸ�« **Profesor** | Calendario de evaluaciones, registro/edición de exámenes propios, agenda de clases, mensajería bidireccional con alumnos vía WhatsApp, verificación de teléfono OTP |
+| 🔑 **Admin de Grupo** | Vista acotada a su grupo con lectura de calendario, administradores y horarios |
+| 🏫 **Personal Institucional** | Edición de hitos del ciclo lectivo, feriados, horarios de clase, enlaces de Meet y datos docentes |
+| 👨‍🏫 **Profesor** | Calendario de evaluaciones, registro/edición de exámenes propios, agenda de clases, mensajería bidireccional con alumnos vía WhatsApp, verificación de teléfono OTP |
 
 ### Compilación del Frontend
 
@@ -395,7 +399,7 @@ npm run rag:index     # Indexa PDFs nuevos en data/ai-context/
 npm run rag:test      # Prueba interactiva del motor RAG
 npm run rag:status    # Estado del índice RAG
 npm run rag:reindex   # Re-indexar todo el contenido RAG
-npm run cleanup:data  # âš ï¸� Limpia la BD y vectores
+npm run cleanup:data  # ⚠️ Limpia la BD y vectores
 ```
 
 ### ¿Por qué esta arquitectura?
@@ -408,7 +412,7 @@ npm run cleanup:data  # âš ï¸� Limpia la BD y vectores
 
 ---
 
-## â�“ FAQ
+## ❓ FAQ
 
 * **¿Necesito Docker para usar el bot?** No. Docker es opcional. Podés instalar Node.js y ejecutar el bot directamente con `npm start`.
 * **¿Cómo accedo al panel web?** Abrí `http://localhost:3000` y logueate con tu email usando el código OTP que recibís al escribir `!panel` al bot.
