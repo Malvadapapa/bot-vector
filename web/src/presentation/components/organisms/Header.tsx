@@ -42,9 +42,11 @@ export const Header: React.FC<HeaderProps> = ({ title, onMenuClick }) => {
                   Panel: <strong className="text-[var(--color-text-primary)]">{user.role === 'group_admin' ? 'Administrador' : user.role === 'professor' ? 'Docente' : 'Institución'}</strong>
                 </span>
               )}
-              <span className="bg-[var(--color-accent-muted)] text-[var(--color-accent)] px-1.5 py-0.5 rounded-md border border-[var(--color-accent)]/20" title={activeGroup.name}>
-                Grupo: <strong>{activeGroup.name}</strong>
-              </span>
+              {user.role !== 'professor' && (
+                <span className="bg-[var(--color-accent-muted)] text-[var(--color-accent)] px-1.5 py-0.5 rounded-md border border-[var(--color-accent)]/20" title={activeGroup.name}>
+                  Grupo: <strong>{activeGroup.name}</strong>
+                </span>
+              )}
             </div>
           )}
         </div>

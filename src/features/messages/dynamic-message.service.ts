@@ -30,23 +30,40 @@ export class DynamicMessageService {
   }
 
   public async getValidNotices(limit = 10): Promise<InstitutionalNotice[]> {
-    const notices = await this.noticeRepository.listRecent(limit);
+    const notices = await this.noticeRepository.listRecent(100);
     const now = new Date();
     const today = new Date(now.toISOString().slice(0, 10));
 
-    return notices.filter((n) => {
+    const valid = notices.filter((n) => {
+      // 1. Must be published
+      if (!n.published_at) {
+        return false;
+      }
+
+      const published = new Date(n.published_at.toISOString().slice(0, 10));
+      const start = n.start_date ? new Date(n.start_date.toISOString().slice(0, 10)) : published;
+
+      // 2. Start date cannot be in the future
+      if (start > today) {
+        return false;
+      }
+
+      // 3. Expiration logic
       if (n.end_date) {
         const end = new Date(n.end_date.toISOString().slice(0, 10));
         return end >= today;
-      }
-      if (n.start_date) {
-        const start = new Date(n.start_date.toISOString().slice(0, 10));
+      } else {
+        // Single notices: valid only during the calendar week they were published.
+        // Expire on Monday at 00:00 of the next week (upcoming Monday).
+        const startDay = start.getDay(); // 0 is Sunday, 1 is Monday, etc.
+        const daysToMonday = startDay === 1 ? 7 : (8 - startDay) % 7;
         const expiration = new Date(start);
-        expiration.setDate(expiration.getDate() + 7);
-        return expiration >= today;
+        expiration.setDate(expiration.getDate() + daysToMonday);
+        return today < expiration;
       }
-      return true;
     });
+
+    return valid.slice(0, limit);
   }
 
   public async getUpcomingExams(limit = 10, groupId?: string): Promise<ManagedExam[]> {

@@ -54,7 +54,8 @@ export class AIQueryService {
 
     // 0) Compruebo bloqueo a través del servicio de moderación (envía notificación privada si corresponde)
     const evalResult = await this.userModerationService.evaluate(userId, prompt, isRealAdmin, nowResolved);
-    if (evalResult.blocked) {
+    const isFeriaMode = process.env.FERIA_MODE === 'true' && process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true';
+    if (evalResult.blocked && !isFeriaMode) {
       logTuiProcessTrace(`Acceso denegado: El usuario ${userId} se encuentra suspendido por moderación.`);
       return '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.';
     }
@@ -76,6 +77,14 @@ export class AIQueryService {
         : await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin);
       const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
       return `${prefix} ${decision.message}`;
+    }
+
+    // 0.3) Modo Feria: omitir filtros de intención, validaciones académicas y clasificación
+    if (isFeriaMode) {
+      const feriaLog = `[Gateway] [Modo Feria] Filtros de intención suspendidos. Procesando consulta directamente.`;
+      console.log(feriaLog);
+      logTuiProcessTrace(feriaLog);
+      return (await this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit)).response;
     }
 
     if (!effectiveIsAdmin && this.isAcademicScheduleOrLinkQuery(prompt)) {
@@ -264,7 +273,7 @@ export class AIQueryService {
       this.aiProvider.generateContent(userId, mergedPrompt, prompt),
       AIQueryService.RESPONSE_TIMEOUT_MS,
     );
-    logTuiProcessTrace(`Respuesta del modelo recibida con éxito.`);
+    logTuiProcessTrace(`Respuesta del modelo recibida con éxito. Modelo: ${this.aiProvider.getModelName()}`);
 
     const normalizedAiText = String(aiText || '').trim();
     if (!normalizedAiText) {
@@ -647,27 +656,35 @@ export class AIQueryService {
     const effectiveIsAdmin = impersonation.isActive ? false : isAdmin;
     const customLimit = impersonation.isActive ? impersonation.maxQuestions ?? undefined : undefined;
 
-    // Chequeos previos — si alguno falla, retornamos el string de error envuelto en AIQueryResult
-    const evalResult = await this.userModerationService.evaluate(userId, prompt, isRealAdmin, nowResolved);
-    if (evalResult.blocked) {
-      return { response: '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.', ragContext: '', dbContext: '' };
-    }
-    if (this.isPromptLeakageAttempt(prompt)) {
-      return { response: '¡Hola! Como asistente virtual del ISPC, estoy para ayudarte con consultas sobre materias, horarios, exámenes y temas académicos del instituto. No puedo compartir mis reglas de comportamiento ni configuraciones internas. ¿En qué te puedo ayudar hoy con respecto al ISPC?', ragContext: '', dbContext: '' };
-    }
-
-    const isExhausted = customLimit !== undefined
-      ? await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin, customLimit)
-      : await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin);
-    if (isExhausted) {
-      const decision = customLimit !== undefined
-        ? await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin, customLimit)
-        : await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin);
-      const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
-      return { response: `${prefix} ${decision.message}`, ragContext: '', dbContext: '' };
-    }
-
-    const cls = await this.classifyPromptQualityAndTopic(prompt);
+     // Chequeos previos — si alguno falla, retornamos el string de error envuelto en AIQueryResult
+     const evalResult = await this.userModerationService.evaluate(userId, prompt, isRealAdmin, nowResolved);
+     const isFeriaMode = process.env.FERIA_MODE === 'true' && process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true';
+     if (evalResult.blocked && !isFeriaMode) {
+       return { response: '[MODERATION::BAN] Estás temporalmente restringido de usar la IA.', ragContext: '', dbContext: '' };
+     }
+     if (this.isPromptLeakageAttempt(prompt)) {
+       return { response: '¡Hola! Como asistente virtual del ISPC, estoy para ayudarte con consultas sobre materias, horarios, exámenes y temas académicos del instituto. No puedo compartir mis reglas de comportamiento ni configuraciones internas. ¿En qué te puedo ayudar hoy con respecto al ISPC?', ragContext: '', dbContext: '' };
+     }
+ 
+     const isExhausted = customLimit !== undefined
+       ? await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin, customLimit)
+       : await this.rateLimitService.isQuotaExhausted(userId, nowResolved, effectiveIsAdmin);
+     if (isExhausted) {
+       const decision = customLimit !== undefined
+         ? await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin, customLimit)
+         : await this.rateLimitService.checkAndConsume(userId, nowResolved, effectiveIsAdmin);
+       const prefix = decision.newly_pending ? '[QUOTA_BLOCKED::NEW]' : '[QUOTA_BLOCKED::PENDING]';
+       return { response: `${prefix} ${decision.message}`, ragContext: '', dbContext: '' };
+     }
+ 
+     if (isFeriaMode) {
+       const feriaLog = `[Gateway] [Modo Feria] Filtros de intención suspendidos en consulta enriquecida. Procesando directamente.`;
+       console.log(feriaLog);
+       logTuiProcessTrace(feriaLog);
+       return this.generateAnswer(userId, prompt, nowResolved, effectiveIsAdmin, groupId, customLimit);
+     }
+ 
+     const cls = await this.classifyPromptQualityAndTopic(prompt);
     if (cls.status === 'unclear') {
       return { response: this.generateClarifyingQuestion(prompt), ragContext: '', dbContext: '' };
     }

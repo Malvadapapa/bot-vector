@@ -7,6 +7,7 @@ import { DataTable } from '../components/organisms/DataTable';
 import { ExamForm } from '../components/organisms/ExamForm';
 import { ChatWindow } from '../components/organisms/ChatWindow';
 import { SettingsPage } from './SettingsPage';
+import { SALifecycleTab } from './SuperAdminDashboard';
 import { Button } from '../components/atoms/Button';
 import { FormField } from '../components/molecules/FormField';
 import { DropdownSelector } from '../components/molecules/DropdownSelector';
@@ -39,6 +40,15 @@ function normalizeSubjectName(name: string): string {
   normalized = normalized.replace(/\biii\b/g, '3');
   normalized = normalized.replace(/\bii\b/g, '2');
   normalized = normalized.replace(/\bi\b/g, '1');
+  if (normalized.includes('practica 3') || normalized.includes('practica profesionalizante 3') || normalized.includes('practica profesionalizante iii')) {
+    return 'practica profesionalizante 2';
+  }
+  if (normalized.includes('practica 2') || normalized.includes('practica profesionalizante 2') || normalized.includes('practica profesionalizante ii')) {
+    return 'practica profesionalizante 2';
+  }
+  if (normalized.includes('practica 1') || normalized.includes('practica profesionalizante 1') || normalized.includes('practica profesionalizante i')) {
+    return 'practica profesionalizante 1';
+  }
   return normalized.replace(/[^a-z0-9]/g, '');
 }
 
@@ -55,29 +65,67 @@ export const useProfessorDataContext = () => {
 export const ProfessorDashboard: React.FC = () => {
   const data = useProfessorData();
   const location = useLocation();
-  const showFilter = !location.pathname.endsWith('settings') && data.assignments.length > 1;
+  const showFilter = !location.pathname.endsWith('settings') && !location.pathname.endsWith('lifecycle') && data.assignments.length > 1;
+
+  const showGroupFilter = (() => {
+    if (data.selectedAssignmentId === 'all') return false;
+    const matching = data.assignments.filter((a: any) => `${a.subject}_${a.commissionId || 'all'}` === data.selectedAssignmentId);
+    const uniqueGroupIds = Array.from(new Set(matching.map((a: any) => a.groupId).filter(Boolean)));
+    return uniqueGroupIds.length > 1;
+  })();
+
+  const matchingAssignments = data.selectedAssignmentId === 'all'
+    ? data.assignments
+    : data.assignments.filter((a: any) => `${a.subject}_${a.commissionId || 'all'}` === data.selectedAssignmentId);
+  const uniqueGroupIds = Array.from(new Set(matchingAssignments.map((a: any) => a.groupId).filter(Boolean)));
 
   return (
     <ProfessorDataContext.Provider value={data}>
       <DashboardLayout title="Panel Docente">
         {showFilter && (
-          <div className="mb-6 p-4 bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] rounded-xl flex items-center gap-4">
-            <label className="text-xs font-bold text-[var(--color-text-secondary)] uppercase whitespace-nowrap">
-              Filtrar por Materia / Comisión:
-            </label>
-            <div className="w-64">
-              <DropdownSelector
-                options={[
-                  { value: 'all', label: 'Todas mis materias / comisiones' },
-                  ...data.assignments.map((a: any) => ({
-                    value: `${a.subject}_${a.commissionId || 'all'}`,
-                    label: `${a.subject} - Comisión ${a.commissionLabel || a.commissionId || 'Única'}`
-                  }))
-                ]}
-                selectedValue={data.selectedAssignmentId}
-                onChange={data.setSelectedAssignmentId}
-              />
+          <div className="mb-6 p-4 bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] rounded-xl flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-[var(--color-text-secondary)] uppercase whitespace-nowrap">
+                Filtrar por Materia / Comisión:
+              </label>
+              <div className="w-64">
+                <DropdownSelector
+                  options={[
+                    { value: 'all', label: 'Todas mis materias / comisiones' },
+                    ...Array.from(new Map(data.assignments.map((a: any) => [
+                      `${a.subject}_${a.commissionId || 'all'}`,
+                      {
+                        value: `${a.subject}_${a.commissionId || 'all'}`,
+                        label: `${a.subject} - Comisión ${a.commissionLabel || a.commissionId || 'Única'}`
+                      }
+                    ])).values())
+                  ]}
+                  selectedValue={data.selectedAssignmentId}
+                  onChange={data.setSelectedAssignmentId}
+                />
+              </div>
             </div>
+
+            {showGroupFilter && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-bold text-[var(--color-text-secondary)] uppercase whitespace-nowrap">
+                  Grupo de Cursada:
+                </label>
+                <div className="w-64">
+                  <DropdownSelector
+                    options={[
+                      { value: 'all', label: 'Todos los grupos' },
+                      ...uniqueGroupIds.map((gId: any) => {
+                        const gName = data.groups.find((g: any) => g.groupId === gId)?.groupName || gId;
+                        return { value: gId, label: gName };
+                      })
+                    ]}
+                    selectedValue={data.selectedGroupId}
+                    onChange={data.setSelectedGroupId}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -86,6 +134,7 @@ export const ProfessorDashboard: React.FC = () => {
           <Route path="exams" element={<ExamsTab />} />
           <Route path="classes" element={<ClassesTab />} />
           <Route path="messages" element={<MessagesTab />} />
+          <Route path="lifecycle" element={<SALifecycleTab />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<CalendarTab />} />
         </Routes>
@@ -104,16 +153,19 @@ const useProfessorData = () => {
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>('all');
+  const [selectedGroupId, setSelectedGroupId] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshAll = async () => {
     if (!user) return;
     setIsLoading(true);
     try {
-      const [latestProfile, assignmentsList] = await Promise.all([
+      const [latestProfile, assignmentsList, allGroupsList] = await Promise.all([
         profileRepository.getProfileMe().catch(() => null),
-        profileRepository.getMyAssignments().catch(() => [])
+        profileRepository.getMyAssignments().catch(() => []),
+        groupRepository.getAll().catch(() => [])
       ]);
 
       const groupIdsSet = new Set<string>();
@@ -171,6 +223,7 @@ const useProfessorData = () => {
       setCohorts(uniqueCohorts);
       setClasses(classesList);
       setAssignments(assignmentsList || []);
+      setGroups(allGroupsList);
     } catch {
       toast.error('Error al sincronizar datos del docente.');
     } finally {
@@ -183,6 +236,20 @@ const useProfessorData = () => {
     refreshAll();
   }, [activeGroup, user]);
 
+  useEffect(() => {
+    if (selectedAssignmentId === 'all') {
+      setSelectedGroupId('all');
+    } else {
+      const matching = assignments.filter((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId);
+      const uniqueGroupIds = Array.from(new Set(matching.map((a: any) => a.groupId).filter(Boolean)));
+      if (uniqueGroupIds.length === 1) {
+        setSelectedGroupId(uniqueGroupIds[0]);
+      } else {
+        setSelectedGroupId('all');
+      }
+    }
+  }, [selectedAssignmentId, assignments]);
+
   return {
     subjects,
     allSubjects,
@@ -191,6 +258,9 @@ const useProfessorData = () => {
     cohorts,
     classes,
     assignments,
+    groups,
+    selectedGroupId,
+    setSelectedGroupId,
     selectedAssignmentId,
     setSelectedAssignmentId,
     isLoading,
@@ -199,7 +269,7 @@ const useProfessorData = () => {
 };
 
 const CalendarTab: React.FC = () => {
-  const { exams, allSubjects, isLoading, selectedAssignmentId, assignments } = useProfessorDataContext();
+  const { exams, allSubjects, isLoading, selectedAssignmentId, selectedGroupId, assignments } = useProfessorDataContext();
   const { user } = useAuth();
 
   const isMyExam = (e: any) => {
@@ -217,7 +287,8 @@ const CalendarTab: React.FC = () => {
         const sub = allSubjects.find((s: any) => s.id === e.subjectId);
         const nameMatches = sub && normalizeSubjectName(sub.name) === normalizeSubjectName(selSubject);
         const commMatches = selComm === 'all' || !e.commissionId || String(e.commissionId) === String(selComm);
-        return nameMatches && commMatches;
+        const groupMatches = selectedGroupId === 'all' || !e.groupId || String(e.groupId) === String(selectedGroupId);
+        return nameMatches && commMatches && groupMatches;
       });
     }
 
@@ -256,7 +327,7 @@ const CalendarTab: React.FC = () => {
 // ── SUB-VIEW: EXAMS LIST ─────────────────────────────────────
 const ExamsTab: React.FC = () => {
   const { activeGroup, user } = useAuth();
-  const { exams, subjects, allSubjects, isLoading, refreshAll, assignments, selectedAssignmentId } = useProfessorDataContext();
+  const { exams, subjects, allSubjects, isLoading, refreshAll, assignments, selectedAssignmentId, selectedGroupId } = useProfessorDataContext();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingExam, setEditingExam] = useState<Exam | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -320,7 +391,8 @@ const ExamsTab: React.FC = () => {
         const [selSubject, selComm] = selectedAssignmentId.split('_');
         const nameMatches = normalizeSubjectName(sub.name) === normalizeSubjectName(selSubject);
         const commMatches = selComm === 'all' || !e.commissionId || String(e.commissionId) === String(selComm);
-        return nameMatches && commMatches;
+        const groupMatches = selectedGroupId === 'all' || !e.groupId || String(e.groupId) === String(selectedGroupId);
+        return nameMatches && commMatches && groupMatches;
       });
 
   const headers = ['Título Examen', 'Materia', 'Tipo', 'Fecha / Plazo'];
@@ -422,7 +494,7 @@ const ExamsTab: React.FC = () => {
 // ── SUB-VIEW: SENT MESSAGES & LIVE CHAT WINDOW ────────────────
 const MessagesTab: React.FC = () => {
   const { user, activeGroup } = useAuth();
-  const { messages, cohorts, isLoading, refreshAll, assignments, selectedAssignmentId } = useProfessorDataContext();
+  const { messages, cohorts, isLoading, refreshAll, assignments, selectedAssignmentId, selectedGroupId } = useProfessorDataContext();
   
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
   const [replies, setReplies] = useState<ChatMessage[]>([]);
@@ -436,14 +508,24 @@ const MessagesTab: React.FC = () => {
     ? assignments.find((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId) 
     : null;
 
-  const availableCohorts = activeAssignment 
-    ? cohorts.filter((c: any) => c.groupId === activeAssignment.groupId)
-    : cohorts.filter((c: any) => assignments.some((a: any) => a.groupId === c.groupId));
+  const availableCohorts = (() => {
+    let list = cohorts;
+    if (selectedGroupId !== 'all') {
+      list = list.filter((c: any) => c.groupId === selectedGroupId);
+    } else if (activeAssignment) {
+      list = list.filter((c: any) => c.groupId === activeAssignment.groupId);
+    } else {
+      list = list.filter((c: any) => assignments.some((a: any) => a.groupId === c.groupId));
+    }
+    return list;
+  })();
 
   // Auto-select target cohort if a specific assignment filter is active
   useEffect(() => {
     if (isNewMsgModalOpen) {
-      if (selectedAssignmentId !== 'all') {
+      if (availableCohorts.length === 1) {
+        setTargetId(availableCohorts[0].id);
+      } else if (selectedAssignmentId !== 'all') {
         const actAssign = assignments.find((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId);
         if (actAssign) {
           const matchedCohort = cohorts.find((c: any) => c.groupId === actAssign.groupId);
@@ -457,7 +539,7 @@ const MessagesTab: React.FC = () => {
         setTargetId(availableCohorts[0].id);
       }
     }
-  }, [isNewMsgModalOpen, selectedAssignmentId, assignments, cohorts]);
+  }, [isNewMsgModalOpen, selectedAssignmentId, assignments, cohorts, availableCohorts]);
 
   // Fetch replies when selected message changes
   useEffect(() => {
@@ -495,6 +577,7 @@ const MessagesTab: React.FC = () => {
         targetId,
         targetType: 'cohort',
         targetName: cohort?.name || 'Cohorte',
+        subject: activeAssignment?.subject || undefined,
       });
       toast.success('Mensaje transmitido por WhatsApp.');
       setIsNewMsgModalOpen(false);
@@ -526,6 +609,12 @@ const MessagesTab: React.FC = () => {
   };
 
     const filteredMessages = messages.filter((m: any) => {
+    if (selectedGroupId !== 'all') {
+      const cohortObj = cohorts.find((c: any) => c.id === m.targetId);
+      const matchesGroup = m.targetId === selectedGroupId || (cohortObj && cohortObj.groupId === selectedGroupId);
+      if (!matchesGroup) return false;
+    }
+
     if (selectedAssignmentId === 'all') return true;
     const actAssign = assignments.find((a: any) => `${a.subject}_${a.commissionId || 'all'}` === selectedAssignmentId);
     if (!actAssign) return true;
@@ -556,12 +645,21 @@ const MessagesTab: React.FC = () => {
           {/* Sent Messages Sidebar Panel */}
           <div className={`md:col-span-1 space-y-4 ${selectedMessage ? 'hidden md:block' : 'block'}`}>
             <div className="flex justify-between items-center pb-2 border-b border-[var(--color-border)]">
-              <h4 className="text-sm font-bold text-[var(--color-text-primary)]">Mensajes Enviados</h4>
+              <div>
+                <h4 className="text-sm font-bold text-[var(--color-text-primary)]">Mensajes Enviados</h4>
+                {selectedAssignmentId === 'all' && (
+                  <p className="text-[10px] text-[var(--color-text-tertiary)] italic mt-0.5 animate-pulse">
+                    Seleccioná una materia para redactar
+                  </p>
+                )}
+              </div>
               <Button
                 variant="primary"
                 size="sm"
                 onClick={() => setIsNewMsgModalOpen(true)}
-                className="flex items-center gap-1 text-xs"
+                disabled={selectedAssignmentId === 'all'}
+                className="flex items-center gap-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                title={selectedAssignmentId === 'all' ? "Seleccioná una materia específica en el filtro superior para redactar" : ""}
               >
                 <Plus className="w-3.5 h-3.5" />
                 Redactar
@@ -576,6 +674,9 @@ const MessagesTab: React.FC = () => {
               ) : (
                 filteredMessages.map((m: any) => {
                   const isSelected = selectedMessage?.id === m.id;
+                  const hasUnread = m.unreadRepliesCount && m.unreadRepliesCount > 0;
+                  const hasReplies = m.repliesCount && m.repliesCount > 0;
+
                   return (
                     <button
                       key={m.id}
@@ -584,7 +685,11 @@ const MessagesTab: React.FC = () => {
                         w-full text-left p-4 rounded-xl border transition-all duration-150 cursor-pointer flex flex-col gap-1.5 relative overflow-hidden group
                         ${isSelected
                           ? 'bg-[var(--color-accent-muted)]/40 border-[var(--color-accent)]'
-                          : 'bg-[var(--color-bg-card)] border-[var(--color-border)] hover:border-[var(--color-border-hover)]'
+                          : hasUnread
+                            ? 'bg-[var(--color-success-muted)]/30 border-[var(--color-success)] hover:border-[var(--color-success)]'
+                            : hasReplies
+                              ? 'bg-[var(--color-bg-card)] border-[var(--color-accent-muted)] hover:border-[var(--color-accent)]'
+                              : 'bg-[var(--color-bg-card)] border-[var(--color-border)]/40 hover:border-[var(--color-border-hover)]'
                         }
                       `}
                     >
@@ -593,12 +698,12 @@ const MessagesTab: React.FC = () => {
                           <span className="text-[10px] font-bold text-[var(--color-accent)] uppercase tracking-wider">
                             {m.targetName}
                           </span>
-                          {m.unreadRepliesCount && m.unreadRepliesCount > 0 ? (
-                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-bold leading-none text-white bg-red-500 rounded-full animate-pulse">
+                          {hasUnread ? (
+                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-bold leading-none text-white bg-[var(--color-success)] rounded-full animate-pulse">
                               {m.unreadRepliesCount}
                             </span>
-                          ) : m.repliesCount && m.repliesCount > 0 ? (
-                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--color-text-secondary)] bg-[var(--color-border)] rounded-full">
+                          ) : hasReplies ? (
+                            <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-bold leading-none text-[var(--color-accent-text)] bg-[var(--color-accent-muted)] rounded-full">
                               {m.repliesCount}
                             </span>
                           ) : null}
@@ -652,13 +757,27 @@ const MessagesTab: React.FC = () => {
                 <h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-4">Enviar Mensaje de WhatsApp</h3>
 
                 <form onSubmit={handleSendBroadcast} className="space-y-4">
-                                    <DropdownSelector
-                    label="Enviar a (Destinatario)"
-                    options={availableCohorts.map((c: any) => ({ value: c.id, label: `${c.name} (${c.year})` }))}
-                    selectedValue={targetId}
-                    onChange={setTargetId}
-                    required
-                  />
+                  {availableCohorts.length === 1 ? (
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-[var(--color-text-secondary)] uppercase">
+                        Enviar a (Destinatario)
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full p-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-sidebar)] text-[var(--color-text-primary)] text-sm outline-none cursor-default"
+                        value={`${availableCohorts[0].name} (${availableCohorts[0].year})`}
+                        readOnly
+                      />
+                    </div>
+                  ) : (
+                    <DropdownSelector
+                      label="Enviar a (Destinatario)"
+                      options={availableCohorts.map((c: any) => ({ value: c.id, label: `${c.name} (${c.year})` }))}
+                      selectedValue={targetId}
+                      onChange={setTargetId}
+                      required
+                    />
+                  )}
 
                   <FormField
                     label="Cuerpo del Mensaje"
@@ -688,7 +807,7 @@ const MessagesTab: React.FC = () => {
 );
 };
 export const ClassesTab: React.FC = () => {
-  const { classes, subjects, allSubjects, cohorts, isLoading, refreshAll, assignments, selectedAssignmentId } = useProfessorDataContext();
+  const { classes, subjects, allSubjects, cohorts, isLoading, refreshAll, assignments, selectedAssignmentId, selectedGroupId } = useProfessorDataContext();
   const { user } = useAuth();
   
   const [selectedYear, setSelectedYear] = useState('all');
@@ -773,8 +892,9 @@ export const ClassesTab: React.FC = () => {
   };
  
   const filteredCohorts = cohorts.filter((coh: any) => {
-    if (selectedYear === 'all') return true;
-    return getCohortYear(coh) === Number(selectedYear);
+    const matchYear = selectedYear === 'all' || getCohortYear(coh) === Number(selectedYear);
+    const matchGroup = selectedGroupId === 'all' || coh.groupId === selectedGroupId;
+    return matchYear && matchGroup;
   });
  
   const isMyClass = (c: any) => {

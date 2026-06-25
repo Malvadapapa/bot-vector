@@ -430,6 +430,7 @@ export class VectoritoWhatsAppGateway {
           const cleanForApproval = this.stripBotMentions(normalizedGroupText.trim()).trim();
 
           if (isAdmin && /^\!(si|sí|aprobado)$/i.test(cleanForApproval)) {
+            console.log(`[Gateway] 📥 [Mensaje dirigido al bot] (Aprobación) chat=${chatId} sender=${senderJid} text="${incomingText}"`);
             const approval = await this.rateLimitService.approveNextPendingRequest(new Date());
             if (!approval) {
               await this.sendTextMessage(chatId, this.pickOne(NO_PENDING_APPROVAL_MESSAGES), senderJid, false);
@@ -452,6 +453,7 @@ export class VectoritoWhatsAppGateway {
           const hasPendingMenu = this.router.hasActiveMenuState(senderJid);
 
           if (isGroup && isCommand && normalizedGroupText.toLowerCase().startsWith('!soyadmin ')) {
+            console.log(`[Gateway] 📥 [Mensaje dirigido al bot] (Registro admin) chat=${chatId} sender=${senderJid} text="${incomingText}"`);
             const result = await this.privateChatWorkflow.handleGroupAdminLink(senderJid, normalizedGroupText);
             if (result) {
               await this.sendTextMessage(chatId, result, senderJid, false);
@@ -473,6 +475,7 @@ export class VectoritoWhatsAppGateway {
           }
 
           if (messageMentionsBot && !isRegisteredUser && !isCommand) {
+            console.log(`[Gateway] 📥 [Mensaje dirigido al bot] (Usuario no registrado) chat=${chatId} sender=${senderJid} text="${incomingText}"`);
             // Solo interrumpir si es una pregunta de IA, no si es un comando público
             const messages = isNewUser ? NEW_USER_REGISTRATION_MESSAGES : PROFILE_UPDATE_GROUP_MESSAGES;
             await this.sendTextMessage(
@@ -487,9 +490,10 @@ export class VectoritoWhatsAppGateway {
           // Procesar solo comandos, menciones al bot o números dentro de un menú activo.
           const shouldProcess = isCommand || messageMentionsBot || (hasPendingMenu && isNumericReply);
           if (!shouldProcess) {
-            console.warn(`⚠️ [Gateway] Mensaje de grupo descartado antes del router: chat=${chatId} sender=${senderJid} command=${isCommand} mentioned=${messageMentionsBot} menu=${hasPendingMenu} text="${incomingText}"`);
             continue;
           }
+
+          console.log(`[Gateway] 📥 [Mensaje dirigido al bot] chat=${chatId} sender=${senderJid} command=${isCommand} mentioned=${messageMentionsBot} menu=${hasPendingMenu} text="${incomingText}"`);
 
           // REGLA DE RESTRICCIÓN ABSOLUTA PARA GRUPOS SIN CONFIGURAR
           if (isGroup && !isAdmin && this.groupContextRepository) {

@@ -3,6 +3,7 @@ import { RateLimitRepository } from './rate-limit.repository.js';
 
 export class RateLimitService {
   private static readonly DAILY_LIMIT = 2;
+  private static readonly FERIA_DAILY_LIMIT = 50;
   private static readonly EXTRA_APPROVAL_QUOTA = 2;
   private static readonly APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
   private static readonly LIMIT_NOTICE_TEMPLATES = [
@@ -74,7 +75,8 @@ export class RateLimitService {
         return false;
       }
 
-      const effectiveLimit = customDailyLimit ?? RateLimitService.DAILY_LIMIT;
+      const defaultLimit = (process.env.FERIA_MODE === 'true' && process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') ? RateLimitService.FERIA_DAILY_LIMIT : RateLimitService.DAILY_LIMIT;
+      const effectiveLimit = customDailyLimit ?? defaultLimit;
       return current.question_count >= effectiveLimit && current.bonus_questions_remaining <= 0;
     } finally {
       release();
@@ -117,7 +119,8 @@ export class RateLimitService {
         current.last_reset_date = localDate;
       }
 
-      const effectiveLimit = customDailyLimit ?? RateLimitService.DAILY_LIMIT;
+      const defaultLimit = (process.env.FERIA_MODE === 'true' && process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') ? RateLimitService.FERIA_DAILY_LIMIT : RateLimitService.DAILY_LIMIT;
+      const effectiveLimit = customDailyLimit ?? defaultLimit;
 
       if (current.question_count < effectiveLimit) {
         current.question_count += 1;

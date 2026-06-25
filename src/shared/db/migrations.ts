@@ -726,6 +726,21 @@ const MIGRATIONS: Migration[] = [
          WHERE LOWER(email) = LOWER(NEW.email);
        END`
     ]
+  },
+  {
+    version: 41,
+    description: 'Backfill class_commission_schedule for classes with no commission associations',
+    sql: [
+      `INSERT INTO class_commission_schedule (managed_class_id, commission_id, schedule_day, schedule_time, meet_link)
+       SELECT mc.id, c.id, mc.schedule_day, mc.schedule_time, mc.meet_link
+       FROM managed_classes mc
+       JOIN group_context gc ON mc.group_id = gc.group_id
+       JOIN group_context_commissions gcc ON gc.id = gcc.group_context_id
+       JOIN commissions c ON gcc.commission_id = c.id
+       WHERE NOT EXISTS (
+         SELECT 1 FROM class_commission_schedule ccs WHERE ccs.managed_class_id = mc.id
+       )`
+    ]
   }
 ];
 

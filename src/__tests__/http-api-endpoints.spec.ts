@@ -74,7 +74,14 @@ describe('HTTP REST API Endpoints', () => {
             email TEXT,
             subject TEXT,
             group_id TEXT,
-            commission_id INTEGER
+            commission_id INTEGER,
+            commission_label TEXT,
+            phone TEXT,
+            notify_email INTEGER DEFAULT 1,
+            notify_whatsapp INTEGER DEFAULT 1,
+            meet_link TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
           )
         `);
         db.run(`

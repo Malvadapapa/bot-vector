@@ -658,6 +658,72 @@ describe('Slice de Academic Calendar - Pruebas de Integración y Unitarias', () 
         );
       });
     });
+
+    describe('Formato de avisos con metadatos del emisor', () => {
+      it('debería formatear correctamente los avisos incluyendo fecha, emisor y correo', async () => {
+        const mockNotice = {
+          title: 'Aviso Importante Formateado',
+          body: 'Este es el cuerpo del aviso.',
+          source_email: 'profesortest@example.com',
+          unique_hash: 'hash-test-format-avisos',
+          published_at: new Date('2026-06-25T10:00:00Z'),
+          grupo_selector: 'todos',
+        };
+
+        mockDynamicMessageService.getValidNotices = vi.fn().mockResolvedValue([mockNotice]);
+
+        await run(
+          db,
+          "INSERT INTO managed_teachers (name, email) VALUES ('Docente Prueba', 'profesortest@example.com')"
+        );
+
+        const res = await calendarService.handleCommand(
+          'user123',
+          '!avisos',
+          new Date('2026-06-25T12:00:00Z'),
+          false,
+          undefined,
+          false,
+          false
+        );
+
+        expect(res).toContain('Aviso Importante Formateado');
+        expect(res).toContain('fecha: 2026-06-25');
+        expect(res).toContain('De: Docente Prueba');
+        expect(res).toContain('email: profesortest@example.com');
+        expect(res).toContain('Este es el cuerpo del aviso.');
+      });
+
+      it('debería incluir mensajes de profesores dirigidos a la comision/camada del grupo', async () => {
+        await run(db, "INSERT INTO whatsapp_groups (group_id, display_name, entry_year, is_active) VALUES ('grupo-aplicadito@g.us', 'Aplicadito 3er', 2024, 1)");
+        
+        await run(
+          db,
+          `INSERT INTO teacher_messages (author_id, author_name, content, target_type, target_id, target_name, created_at)
+           VALUES ('ramiro@test.com', 'Ramiro Profe', 'Hola chicos, este es el aviso de Practica 2', 'cohort', 'camada:2024', 'Camada 2024', '2026-06-24 10:00:00')`
+        );
+        
+        await run(
+          db,
+          "INSERT INTO managed_teachers (name, email, subject) VALUES ('Ramiro Profe', 'ramiro@test.com', 'Practica 2')"
+        );
+
+        const res = await calendarService.handleCommand(
+          'student123',
+          '!avisos',
+          new Date('2026-06-25T12:00:00Z'),
+          false,
+          'grupo-aplicadito@g.us',
+          false,
+          false
+        );
+
+        expect(res).toContain('Mensaje de Profesor: Practica 2');
+        expect(res).toContain('De: Ramiro Profe');
+        expect(res).toContain('email: ramiro@test.com');
+        expect(res).toContain('Hola chicos, este es el aviso de Practica 2');
+      });
+    });
   });
 });
 

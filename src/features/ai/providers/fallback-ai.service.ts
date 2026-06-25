@@ -12,9 +12,11 @@ export class FallbackAIService implements AIProvider {
   public async generateContent(userId: string, prompt: string, rawPrompt?: string): Promise<string> {
     let lastError: any = null;
 
+    const isFeriaMode = process.env.FERIA_MODE === 'true';
+    const startIndex = isFeriaMode ? 0 : this.activeProviderIndex;
+
     for (let i = 0; i < this.providers.length; i++) {
-      // Intentamos con el proveedor activo actual, si falla probamos el siguiente (round-robin parcial)
-      const attemptIndex = (this.activeProviderIndex + i) % this.providers.length;
+      const attemptIndex = (startIndex + i) % this.providers.length;
       const provider = this.providers[attemptIndex];
 
       try {

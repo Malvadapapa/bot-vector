@@ -68,6 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ className = '', onClose }) => 
           { to: '/professor/classes', label: 'Horarios', icon: <Clock className="w-5 h-5" /> },
           { to: '/professor/exams', label: 'Exámenes', icon: <FileText className="w-5 h-5" /> },
           { to: '/professor/messages', label: 'Mensajes / Chat', icon: <MessageSquare className="w-5 h-5" /> },
+          { to: '/professor/lifecycle', label: 'Ciclo Lectivo', icon: <GraduationCap className="w-5 h-5" /> },
           { to: '/professor/settings', label: 'Ajustes', icon: <Settings className="w-5 h-5" /> },
         ];
       case 'institutional':

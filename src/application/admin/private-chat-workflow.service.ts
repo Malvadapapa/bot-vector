@@ -330,6 +330,30 @@ export class PrivateChatWorkflowService {
     return `Enlace actualizado ✅`;
   }
 
+  public async isUserTeacher(userId: string): Promise<boolean> {
+    const db = (this.userProfileRepository as any).db;
+    if (!db) return false;
+
+    const teacherByPhone = await get<any>(
+      db,
+      'SELECT id FROM managed_teachers WHERE phone = ? LIMIT 1',
+      [userId]
+    );
+    if (teacherByPhone) return true;
+
+    const profile = await this.userProfileRepository.get(userId);
+    if (profile && profile.email) {
+      const teacherByEmail = await get<any>(
+        db,
+        'SELECT id FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
+        [profile.email.trim().toLowerCase()]
+      );
+      if (teacherByEmail) return true;
+    }
+
+    return false;
+  }
+
   public async handlePrivateMessage(userId: string, text: string): Promise<string> {
     const cleaned = text.trim();
     if (!cleaned) return 'Te leo, pero necesito que me mandes un mensaje con contenido 🙂';
@@ -358,6 +382,12 @@ export class PrivateChatWorkflowService {
     if (lowerCleaned === '!panel' || lowerCleaned === 'panel' || lowerCleaned.startsWith('!panel ') || lowerCleaned.startsWith('panel ')) {
       this.clearPendingData(userId);
       return await this.handleTeacherPanelCommand(userId, cleaned);
+    }
+
+    const isTeacher = await this.isUserTeacher(userId);
+    if (isTeacher) {
+      this.clearPendingData(userId);
+      return `¡Hola! Reconocemos tu número como docente registrado. 👨‍🏫\n\nPodés ingresar al panel de control web del bot escribiendo *panel* o *!panel*.`;
     }
 
     // Verificar inactividad de 15 minutos en el registro de estudiante
@@ -3722,6 +3752,19 @@ export class PrivateChatWorkflowService {
     }
 
     if (this.userProfileRepository && this.managedTeacherRepository) {
+      const db = (this.userProfileRepository as any).db;
+      if (db) {
+        const teacherByPhone = await get<any>(
+          db,
+          'SELECT email FROM managed_teachers WHERE phone = ? LIMIT 1',
+          [userId]
+        );
+        if (teacherByPhone) {
+          await this.groupMembershipRepository.addMembership(groupId, userId, 'teacher');
+          return null;
+        }
+      }
+
       const profile = await this.userProfileRepository.get(userId);
       if (profile && profile.email) {
         const teacher = await this.managedTeacherRepository.getByEmail(profile.email);

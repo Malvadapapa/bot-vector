@@ -88,6 +88,9 @@ function normalizeSubjectName(name: string): string {
   normalized = normalized.replace(/\biii\b/g, '3');
   normalized = normalized.replace(/\bii\b/g, '2');
   normalized = normalized.replace(/\bi\b/g, '1');
+  if (normalized.includes('practica 3') || normalized.includes('practica profesionalizante 3') || normalized.includes('practica profesionalizante iii')) {
+    return 'practica profesionalizante 2';
+  }
   if (normalized.includes('practica 2') || normalized.includes('practica profesionalizante 2') || normalized.includes('practica profesionalizante ii')) {
     return 'practica profesionalizante 2';
   }
@@ -213,6 +216,122 @@ export class HttpServer {
       });
     } catch (err) {
       console.error('[Tunnel] Error al iniciar el túnel ngrok:', err);
+    }
+  }
+
+  private async syncGroupTeachersToGlobal(subject: string, gId: string): Promise<void> {
+    if (!gId) return;
+    try {
+      const context = await get<any>(this.sqliteDb, 'SELECT id FROM group_context WHERE group_id = ? LIMIT 1', [gId]);
+      if (!context) return;
+
+      const existingComms = await all<any>(
+        this.sqliteDb,
+        `SELECT c.id, c.name FROM commissions c 
+         JOIN group_context_commissions gcc ON c.id = gcc.commission_id 
+         WHERE gcc.group_context_id = ?`,
+        [context.id]
+      );
+      existingComms.sort((a, b) => a.name.localeCompare(b.name));
+
+      const groupTeachers = await all<any>(
+        this.sqliteDb,
+        'SELECT name, email, commission_id, meet_link, phone, notify_email, notify_whatsapp FROM managed_teachers WHERE subject = ? AND group_id = ?',
+        [subject, gId]
+      );
+
+      // Clear global assignments for this subject
+      await run(
+        this.sqliteDb,
+        "DELETE FROM managed_teachers WHERE subject = ? AND (group_id IS NULL OR group_id = '')",
+        [subject]
+      );
+
+      // Re-insert global assignments based on group-specific rows
+      for (const gt of groupTeachers) {
+        let commLabel = 'A';
+        if (gt.commission_id) {
+          const idx = existingComms.findIndex(c => c.id === gt.commission_id);
+          if (idx >= 0) {
+            commLabel = ['A', 'B', 'C', 'D'][idx] || 'A';
+          }
+        }
+        await run(
+          this.sqliteDb,
+          'INSERT INTO managed_teachers (name, email, subject, group_id, meet_link, commission_label, phone, notify_email, notify_whatsapp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [gt.name, gt.email, subject, '', gt.meet_link || '', commLabel, gt.phone || null, gt.notify_email !== undefined ? gt.notify_email : 1, gt.notify_whatsapp !== undefined ? gt.notify_whatsapp : 1]
+        );
+      }
+    } catch (err) {
+      console.error('[HTTP Server] Error in syncGroupTeachersToGlobal:', err);
+    }
+  }
+
+  private async syncGlobalTeacherToGroups(
+    subject: string,
+    commLabel: string,
+    tName: string,
+    tEmail: string,
+    mLink: string
+  ): Promise<void> {
+    try {
+      const normSub = normalizeSubjectName(subject);
+      const allSubjects = await all<any>(this.sqliteDb, 'SELECT name, year FROM academic_subjects');
+      const matchedSub = allSubjects.find(s => normalizeSubjectName(s.name) === normSub);
+      if (!matchedSub) return;
+      const subYear = matchedSub.year;
+
+      const groups = await all<any>(
+        this.sqliteDb,
+        'SELECT id, group_id FROM group_context WHERE year = ?',
+        [subYear]
+      );
+
+      for (const context of groups) {
+        const existingComms = await all<any>(
+          this.sqliteDb,
+          `SELECT c.id, c.name FROM commissions c 
+           JOIN group_context_commissions gcc ON c.id = gcc.commission_id 
+           WHERE gcc.group_context_id = ?`,
+          [context.id]
+        );
+        existingComms.sort((a, b) => a.name.localeCompare(b.name));
+
+        const labelIdx = ['A', 'B', 'C', 'D'].indexOf(commLabel);
+        if (labelIdx >= 0 && labelIdx < existingComms.length) {
+          const matchedComm = existingComms[labelIdx];
+          const commId = matchedComm.id;
+
+          // Delete existing group-specific teacher assignment
+          await run(
+            this.sqliteDb,
+            'DELETE FROM managed_teachers WHERE subject = ? AND group_id = ? AND commission_id = ?',
+            [subject, context.group_id, commId]
+          );
+
+          // If email is provided, insert group-specific teacher assignment
+          if (tEmail) {
+            await run(
+              this.sqliteDb,
+              'INSERT INTO managed_teachers (name, email, subject, group_id, commission_id, meet_link) VALUES (?, ?, ?, ?, ?, ?)',
+              [tName, tEmail.toLowerCase().trim(), subject, context.group_id, commId, mLink || '']
+            );
+          }
+
+          // Update meet links in class schedules for this commission
+          await run(
+            this.sqliteDb,
+            `UPDATE class_commission_schedule
+             SET meet_link = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE commission_id = ? AND managed_class_id IN (
+               SELECT id FROM managed_classes WHERE subject = ? AND group_id = ?
+             )`,
+            [mLink || '', commId, subject, context.group_id]
+          );
+        }
+      }
+    } catch (err) {
+      console.error('[HTTP Server] Error in syncGlobalTeacherToGroups:', err);
     }
   }
 
@@ -1068,6 +1187,23 @@ export class HttpServer {
           );
         }
 
+        if (meetLink) {
+          await run(
+            this.sqliteDb,
+            "UPDATE managed_classes SET meet_link = ?, updated_at = CURRENT_TIMESTAMP WHERE subject = ?",
+            [meetLink, subject.name]
+          );
+          await run(
+            this.sqliteDb,
+            `UPDATE class_commission_schedule 
+             SET meet_link = ?, updated_at = CURRENT_TIMESTAMP 
+             WHERE managed_class_id IN (SELECT id FROM managed_classes WHERE subject = ?)`,
+            [meetLink, subject.name]
+          );
+        }
+
+        await this.syncGlobalTeacherToGroups(subject.name, labelToSave, teacherName || '', teacherEmail || '', meetLink || '');
+
         this.sendJson(res, 200, { success: true });
         return;
       }
@@ -1128,15 +1264,39 @@ export class HttpServer {
 
               for (let i = currentCount; i < targetCount; i++) {
                 const commName = `Comisión ${commLabels[i] || (i + 1)}`;
-                const result = await run(
+                const altCommName1 = String(i + 1);
+                const altCommName2 = commLabels[i] || '';
+
+                let existingComm = await get<any>(
                   this.sqliteDb,
-                  'INSERT INTO commissions (name, year, shift) VALUES (?, ?, ?)',
-                  [commName, cohortYear, 'General']
+                  `SELECT id FROM commissions 
+                   WHERE year = ? 
+                     AND (LOWER(name) = ? OR LOWER(name) = ? OR LOWER(name) = ?) 
+                   LIMIT 1`,
+                  [cohortYear, commName.toLowerCase(), altCommName1.toLowerCase(), altCommName2.toLowerCase()]
                 );
+
+                let commId;
+                if (existingComm) {
+                  commId = existingComm.id;
+                  await run(
+                    this.sqliteDb,
+                    'UPDATE commissions SET name = ? WHERE id = ?',
+                    [commName, commId]
+                  );
+                } else {
+                  const result = await run(
+                    this.sqliteDb,
+                    'INSERT INTO commissions (name, year, shift) VALUES (?, ?, ?)',
+                    [commName, cohortYear, 'General']
+                  );
+                  commId = result.lastID;
+                }
+
                 await run(
                   this.sqliteDb,
                   'INSERT OR IGNORE INTO group_context_commissions (group_context_id, commission_id) VALUES (?, ?)',
-                  [context.id, result.lastID]
+                  [context.id, commId]
                 );
               }
             } else if (targetCount < currentCount) {
@@ -1386,8 +1546,23 @@ export class HttpServer {
         });
 
         // Insert commission schedules
-        if (Array.isArray(commissionIds) && commissionIds.length > 0) {
-          for (const commId of commissionIds) {
+        let finalCommIds = commissionIds;
+        if ((!Array.isArray(finalCommIds) || finalCommIds.length === 0) && groupId) {
+          const context = await this.groupContextRepository.getByGroupId(groupId);
+          if (context) {
+            const rows = await all<any>(
+              this.sqliteDb,
+              `SELECT c.id FROM commissions c
+               JOIN group_context_commissions gcc ON c.id = gcc.commission_id
+               WHERE gcc.group_context_id = ?`,
+              [context.id]
+            );
+            finalCommIds = rows.map(r => String(r.id));
+          }
+        }
+
+        if (Array.isArray(finalCommIds) && finalCommIds.length > 0) {
+          for (const commId of finalCommIds) {
             const override = commissionOverrides?.[commId];
             const finalDay = override?.dayOfWeek !== undefined ? DAYS_ES[override.dayOfWeek] : dayName;
             const finalTime = override?.startTime || startTime;
@@ -1412,6 +1587,7 @@ export class HttpServer {
 
             const finalEmail = (override?.teacherEmail || teacherEmail || '').trim().toLowerCase();
             const finalName = (override?.teacherName || teacherName || 'Docente').trim();
+            const finalMeetLink = override?.meetLink !== undefined ? override.meetLink : (meetLink || '');
 
             if (finalEmail) {
               await run(
@@ -1421,11 +1597,12 @@ export class HttpServer {
               );
               await run(
                 this.sqliteDb,
-                'INSERT INTO managed_teachers (name, email, subject, group_id, commission_id) VALUES (?, ?, ?, ?, ?)',
-                [finalName, finalEmail, subjectName, groupId || null, parsedCommId]
+                'INSERT INTO managed_teachers (name, email, subject, group_id, commission_id, meet_link) VALUES (?, ?, ?, ?, ?, ?)',
+                [finalName, finalEmail, subjectName, groupId || null, parsedCommId, finalMeetLink]
               );
             }
           }
+          await this.syncGroupTeachersToGlobal(subjectName, groupId || '');
         }
 
         this.sendJson(res, 201, {
@@ -1453,22 +1630,47 @@ export class HttpServer {
         if (!isNaN(slotId)) {
           if (meetLink !== undefined) {
             await this.managedClassRepository.updateMeetLink(slotId, meetLink);
+            const mClass = await this.managedClassRepository.getById(slotId);
+            if (mClass) {
+              await run(
+                this.sqliteDb,
+                "UPDATE managed_teachers SET meet_link = ?, updated_at = CURRENT_TIMESTAMP WHERE subject = ? AND (group_id = ? OR group_id IS NULL OR group_id = '')",
+                [meetLink, mClass.subject, mClass.group_id]
+              );
+            }
           }
           if (startTime !== undefined && dayOfWeek !== undefined) {
             const dayName = DAYS_ES[dayOfWeek] || 'Lunes';
             await this.managedClassRepository.updateSchedule(slotId, dayName, startTime);
           }
 
-          // Sync commission schedules
+           // Sync commission schedules
           if (commissionIds !== undefined) {
             await run(this.sqliteDb, 'DELETE FROM class_commission_schedule WHERE managed_class_id = ?', [slotId]);
-            if (Array.isArray(commissionIds) && commissionIds.length > 0) {
-              const managedClass = await this.managedClassRepository.getById(slotId);
+            let finalCommIds = commissionIds;
+            const managedClass = await this.managedClassRepository.getById(slotId);
+            const classGroupId = managedClass?.group_id;
+
+            if (Array.isArray(finalCommIds) && finalCommIds.length === 0 && classGroupId) {
+              const context = await this.groupContextRepository.getByGroupId(classGroupId);
+              if (context) {
+                const rows = await all<any>(
+                  this.sqliteDb,
+                  `SELECT c.id FROM commissions c
+                   JOIN group_context_commissions gcc ON c.id = gcc.commission_id
+                   WHERE gcc.group_context_id = ?`,
+                  [context.id]
+                );
+                finalCommIds = rows.map(r => String(r.id));
+              }
+            }
+
+            if (Array.isArray(finalCommIds) && finalCommIds.length > 0) {
               const defaultDayName = managedClass ? managedClass.schedule_day : (dayOfWeek !== undefined ? DAYS_ES[dayOfWeek] : 'Lunes');
               const defaultStartTime = managedClass ? managedClass.schedule_time : (startTime !== undefined ? startTime : '09:00');
               const defaultMeetLink = meetLink !== undefined ? meetLink : (managedClass ? managedClass.meet_link : '');
 
-              for (const commId of commissionIds) {
+              for (const commId of finalCommIds) {
                 const override = commissionOverrides?.[commId];
                 const finalDay = override?.dayOfWeek !== undefined ? DAYS_ES[override.dayOfWeek] : defaultDayName;
                 const finalTime = override?.startTime || defaultStartTime;
@@ -1499,15 +1701,17 @@ export class HttpServer {
 
               const finalEmail = (override?.teacherEmail || teacherEmail || '').trim().toLowerCase();
               const finalName = (override?.teacherName || teacherName || 'Docente').trim();
+              const finalMeetLink = override?.meetLink !== undefined ? override.meetLink : (meetLink !== undefined ? meetLink : (managedClass ? managedClass.meet_link : ''));
 
               if (finalEmail) {
                 await run(
                   this.sqliteDb,
-                  'INSERT INTO managed_teachers (name, email, subject, group_id, commission_id) VALUES (?, ?, ?, ?, ?)',
-                  [finalName, finalEmail, subjectName, groupId || null, parsedCommId]
+                  'INSERT INTO managed_teachers (name, email, subject, group_id, commission_id, meet_link) VALUES (?, ?, ?, ?, ?, ?)',
+                  [finalName, finalEmail, subjectName, groupId || null, parsedCommId, finalMeetLink]
                 );
               }
             }
+            await this.syncGroupTeachersToGlobal(subjectName, groupId || '');
           }
 
           this.sendJson(res, 200, { success: true });
@@ -2118,7 +2322,7 @@ export class HttpServer {
 
       // GET /api/academic-calendar/events
       if (pathname === '/api/academic-calendar/events' && req.method === 'GET') {
-        if (authUser.role !== 'super_admin') {
+        if (authUser.role !== 'super_admin' && authUser.role !== 'professor') {
           this.sendJson(res, 403, { success: false, error: 'Acceso denegado.' });
           return;
         }
@@ -2255,7 +2459,7 @@ export class HttpServer {
 
       // PUT /api/profile/settings
       if (pathname === '/api/profile/settings' && req.method === 'PUT') {
-        const { name, email, phone, notifyEmail, notifyWhatsapp } = await this.getBodyJson(req);
+        const { name, email, phone, notifyEmail, notifyWhatsapp, meetLink } = await this.getBodyJson(req);
         if (!name || !email) {
           this.sendJson(res, 400, { success: false, error: 'name y email requeridos.' });
           return;
@@ -2295,28 +2499,56 @@ export class HttpServer {
             await run(
               this.sqliteDb,
               `UPDATE managed_teachers 
-               SET name = ?, email = ?, notify_email = ?, notify_whatsapp = ?, updated_at = CURRENT_TIMESTAMP
-               WHERE id = ?`,
+               SET name = ?, email = ?, notify_email = ?, notify_whatsapp = ?, phone = COALESCE(?, phone), meet_link = COALESCE(?, meet_link), updated_at = CURRENT_TIMESTAMP
+               WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '')`,
               [
                 name,
                 email.toLowerCase().trim(),
                 notifyEmail ? 1 : 0,
                 notifyWhatsapp ? 1 : 0,
-                teacher.id
+                phone !== undefined ? phone : null,
+                meetLink !== undefined ? meetLink : null,
+                authUser.email
               ]
             );
           } else {
             await run(
               this.sqliteDb,
-              `INSERT INTO managed_teachers (name, email, notify_email, notify_whatsapp)
-               VALUES (?, ?, ?, ?)`,
+              `INSERT INTO managed_teachers (name, email, notify_email, notify_whatsapp, phone, meet_link)
+               VALUES (?, ?, ?, ?, ?, ?)`,
               [
                 name,
                 email.toLowerCase().trim(),
                 notifyEmail ? 1 : 0,
-                notifyWhatsapp ? 1 : 0
+                notifyWhatsapp ? 1 : 0,
+                phone || '',
+                meetLink || ''
               ]
             );
+          }
+
+          if (meetLink !== undefined) {
+            const assignments = await all<any>(
+              this.sqliteDb,
+              "SELECT DISTINCT subject FROM managed_teachers WHERE REPLACE(LOWER(email), '.', '') = REPLACE(LOWER(?), '.', '')",
+              [email.toLowerCase().trim()]
+            );
+            for (const assignment of assignments) {
+              if (assignment.subject) {
+                await run(
+                  this.sqliteDb,
+                  "UPDATE managed_classes SET meet_link = ?, updated_at = CURRENT_TIMESTAMP WHERE subject = ?",
+                  [meetLink, assignment.subject]
+                );
+                await run(
+                  this.sqliteDb,
+                  `UPDATE class_commission_schedule 
+                   SET meet_link = ?, updated_at = CURRENT_TIMESTAMP 
+                   WHERE managed_class_id IN (SELECT id FROM managed_classes WHERE subject = ?)`,
+                  [meetLink, assignment.subject]
+                );
+              }
+            }
           }
         }
 
@@ -2348,15 +2580,70 @@ export class HttpServer {
           );
         }
 
-        this.sendJson(res, 200, teacherRows.map(t => ({
-          id: String(t.id),
-          name: t.name,
-          email: t.email,
-          subject: t.subject,
-          groupId: t.group_id,
-          commissionId: t.commission_id ? String(t.commission_id) : null,
-          commissionLabel: t.commission_label
-        })));
+        const allSubjects = await all<any>(this.sqliteDb, 'SELECT id, name, year FROM academic_subjects');
+        const allGroups = await all<any>(this.sqliteDb, 'SELECT group_id, entry_year FROM whatsapp_groups');
+        const allGroupContexts = await all<any>(this.sqliteDb, 'SELECT id, group_id, year FROM group_context');
+        const allGroupContextCommissions = await all<any>(
+          this.sqliteDb,
+          `SELECT gcc.group_context_id, gcc.commission_id, c.name as commission_name
+           FROM group_context_commissions gcc
+           JOIN commissions c ON gcc.commission_id = c.id`
+        );
+        const yearConfigs = await all<any>(this.sqliteDb, 'SELECT year, commission_count FROM year_commission_configs');
+
+        const mappedAssignments = [];
+        for (const t of teacherRows) {
+          let gId = t.group_id;
+          if (!gId || gId === '') {
+            const normSub = normalizeSubjectName(t.subject || '');
+            const subRow = allSubjects.find(s => normalizeSubjectName(s.name) === normSub);
+            if (subRow) {
+              const targetEntryYear = new Date().getFullYear() - subRow.year + 1;
+              const matchedGroup = allGroups.find(g => g.entry_year === targetEntryYear);
+              if (matchedGroup) {
+                gId = matchedGroup.group_id;
+              }
+            }
+          }
+
+          let finalLabel = t.commission_label;
+          let finalCommId = t.commission_id ? String(t.commission_id) : null;
+
+          const normSub = normalizeSubjectName(t.subject || '');
+          const subRow = allSubjects.find(s => normalizeSubjectName(s.name) === normSub);
+          const subYear = subRow ? subRow.year : 1;
+          const yearConfig = yearConfigs.find(c => c.year === subYear);
+          const isUniqueCommission = yearConfig ? yearConfig.commission_count === 1 : true;
+
+          if (isUniqueCommission) {
+            finalLabel = 'Única';
+            finalCommId = null;
+          } else {
+            if (!finalLabel && t.commission_id && gId) {
+              const gContext = allGroupContexts.find(gc => gc.group_id === gId);
+              if (gContext) {
+                const gccRows = allGroupContextCommissions.filter(gcc => gcc.group_context_id === gContext.id);
+                gccRows.sort((a, b) => a.commission_name.localeCompare(b.commission_name));
+                const idx = gccRows.findIndex(gcc => gcc.commission_id === t.commission_id);
+                if (idx >= 0) {
+                  finalLabel = ['A', 'B', 'C', 'D'][idx] || 'A';
+                }
+              }
+            }
+          }
+
+          mappedAssignments.push({
+            id: String(t.id),
+            name: t.name,
+            email: t.email,
+            subject: t.subject,
+            groupId: gId || '',
+            commissionId: finalCommId,
+            commissionLabel: finalLabel
+          });
+        }
+
+        this.sendJson(res, 200, mappedAssignments);
         return;
       }
 
@@ -2805,10 +3092,26 @@ export class HttpServer {
 
       // POST /api/messages
       if (pathname === '/api/messages' && req.method === 'POST') {
-        const { content, targetId, targetType, targetName } = await this.getBodyJson(req);
+        const { content, targetId, targetType, targetName, subject } = await this.getBodyJson(req);
 
         let authorName = authUser.name || 'Profesor';
         let authorId = authUser.email;
+
+        // Resolve subject name if not provided (like in test cases)
+        let subjectName = subject;
+        if (!subjectName) {
+          try {
+            const row = await get<{ subject: string }>(
+              this.sqliteDb,
+              'SELECT subject FROM managed_teachers WHERE LOWER(email) = LOWER(?) LIMIT 1',
+              [authorId]
+            );
+            subjectName = row?.subject || 'Materia';
+          } catch (err) {
+            console.error('[HTTP Server] Error al resolver materia para el mensaje:', err);
+            subjectName = 'Materia';
+          }
+        }
 
         // Insert message
         const result = await run(
@@ -2820,8 +3123,11 @@ export class HttpServer {
         const insertedId = result.lastID;
 
         // Broadcast to groups of cohort
-        const formattedMsg = `🔔 *Mensaje del Profesor ${authorName}* 👨‍🏫\n\n` +
-          `${content}\n\n` +
+        const formattedMsg = `🔔 *MENSAJE DE PROFESOR* 👨‍🏫\n\n` +
+          `*De:* ${authorName} (${authorId})\n` +
+          `*Materia:* ${subjectName}\n` +
+          `*ID de mensaje:* ID: ${insertedId}\n\n` +
+          `*Mensaje:*\n${content}\n\n` +
           `💡 *Para responder al profesor, escribí en este grupo:*\n` +
           `!rid${insertedId} tu mensaje para responder al profesor`;
 

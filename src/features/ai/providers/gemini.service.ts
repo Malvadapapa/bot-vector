@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { DEFAULT_BOT_INSTRUCTIONS } from '../../../shared/config/instructions.js';
+import { DEFAULT_BOT_INSTRUCTIONS, FERIA_BOT_INSTRUCTIONS } from '../../../shared/config/instructions.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -21,15 +21,28 @@ const MAX_POLL_ATTEMPTS = 30;
 // Cadena de prioridad de modelos — ordenada por calidad para chat conversacional.
 // El servicio probará en orden, saltando los que no estén disponibles o estén en cooldown.
 const MODEL_PRIORITY_CHAIN = [
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-3.1-flash-lite',
+  // 1. Modelos Pro (Mayor capacidad de razonamiento)
+  'gemini-3.5-pro',
+  'gemini-3.1-pro',
+  'gemini-2.5-pro',
+  'gemini-1.5-pro',
+
+  // 2. Modelos Flash (Excelente balance de velocidad e inteligencia)
+  'gemini-3.5-flash',
   'gemini-3-flash',
-  'gemma-3-27b-it',
-  'gemma-4-26b-it',
-  'gemma-4-31b-it',
+  'gemini-2.5-flash',
   'gemini-2.0-flash',
+  'gemini-1.5-flash',
+
+  // 3. Modelos Flash-Lite (Eficiencia y bajo costo, menor razonamiento)
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
   'gemini-2.0-flash-lite',
+
+  // 4. Modelos Gemma de código abierto
+  'gemma-4-31b-it',
+  'gemma-4-26b-it',
+  'gemma-3-27b-it',
   'gemma-3-12b-it',
   'gemma-3-4b-it',
 ];
@@ -122,7 +135,7 @@ function matchModel(available: Set<string>, pattern: string): string | null {
 import { AIProvider } from './ai-provider.interface.js';
 
 export class GeminiService implements AIProvider {
-  private readonly apiKey = process.env.GEMINI_API_KEY || '';
+  private readonly apiKey: string;
   private readonly knowledgeDir = DEFAULT_KNOWLEDGE_DIR;
   private readonly cacheFilePath = DEFAULT_CACHE_FILE;
   private initialized = false;
@@ -133,6 +146,10 @@ export class GeminiService implements AIProvider {
   private sessions = new Map<string, { turns: SessionTurn[]; lastActivity: number }>();
   private uploadedFiles: UploadedFile[] = [];
   private cleanupTimer: NodeJS.Timeout | null = null;
+
+  constructor(apiKey?: string) {
+    this.apiKey = apiKey || process.env.GEMINI_API_KEY || '';
+  }
 
   public async initialize(): Promise<{ uploadedCount: number; modelName: string }> {
     if (this.initialized && this.modelChain.length > 0) {
@@ -157,6 +174,9 @@ export class GeminiService implements AIProvider {
     const preferredModel = process.env.GEMINI_MODEL || '';
     const priorityList = preferredModel ? [preferredModel, ...MODEL_PRIORITY_CHAIN.filter((m) => m !== preferredModel)] : MODEL_PRIORITY_CHAIN;
 
+    const isFeriaMode = process.env.FERIA_MODE === 'true';
+    const activeInstructions = isFeriaMode ? FERIA_BOT_INSTRUCTIONS : DEFAULT_BOT_INSTRUCTIONS;
+
     for (const pattern of priorityList) {
       const resolved = available.size > 0 ? matchModel(available, pattern) : pattern;
       if (!resolved) continue;
@@ -171,7 +191,7 @@ export class GeminiService implements AIProvider {
         },
       };
       if (!isGemma) {
-        opts.systemInstruction = DEFAULT_BOT_INSTRUCTIONS;
+        opts.systemInstruction = activeInstructions;
       }
 
       try {
@@ -202,7 +222,7 @@ export class GeminiService implements AIProvider {
     this.baseHistoryGemma = [
       {
         role: 'user',
-        parts: [{ text: `Instrucciones del sistema:\n${DEFAULT_BOT_INSTRUCTIONS}\n\n${baseUserText}` }, ...contextParts],
+        parts: [{ text: `Instrucciones del sistema:\n${activeInstructions}\n\n${baseUserText}` }, ...contextParts],
       },
       { role: 'model', parts: [{ text: 'Entendido. Base de conocimiento cargada y lista para usar.' }] },
     ];

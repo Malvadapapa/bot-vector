@@ -1,5 +1,5 @@
 import { getSettings } from './shared/config/settings.js';
-import { DEFAULT_BOT_INSTRUCTIONS } from './shared/config/instructions.js';
+import { DEFAULT_BOT_INSTRUCTIONS, FERIA_BOT_INSTRUCTIONS } from './shared/config/instructions.js';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
@@ -321,14 +321,82 @@ async function bootstrap() {
   const moderationService = new UserModerationService(userModerationRepository);
 
   // --- IA Providers y Fallback ---
-  const groqProvider = new GroqProvider(DEFAULT_BOT_INSTRUCTIONS);
-  const geminiService = new GeminiService();
+  const isFeriaMode = process.env.FERIA_MODE === 'true';
+  const systemInstructions = isFeriaMode ? FERIA_BOT_INSTRUCTIONS : DEFAULT_BOT_INSTRUCTIONS;
+
+  const geminiProviders: GeminiService[] = [];
+  const groqProviders: GroqProvider[] = [];
+
+  // Buscar todas las API keys de Gemini numeradas (ej. GEMINI_API_KEY_1)
+  const geminiKeys = Object.keys(process.env)
+    .filter(k => /^GEMINI_API_KEY_\d+$/.test(k))
+    .sort((a, b) => {
+      const numA = parseInt(a.replace('GEMINI_API_KEY_', ''), 10);
+      const numB = parseInt(b.replace('GEMINI_API_KEY_', ''), 10);
+      return numA - numB;
+    })
+    .map(k => process.env[k])
+    .filter(Boolean) as string[];
+
+  // Buscar todas las API keys de Groq numeradas (ej. GROQ_API_KEY_1)
+  const groqKeys = Object.keys(process.env)
+    .filter(k => /^GROQ_API_KEY_\d+$/.test(k))
+    .sort((a, b) => {
+      const numA = parseInt(a.replace('GROQ_API_KEY_', ''), 10);
+      const numB = parseInt(b.replace('GROQ_API_KEY_', ''), 10);
+      return numA - numB;
+    })
+    .map(k => process.env[k])
+    .filter(Boolean) as string[];
+
+  if (geminiKeys.length > 0) {
+    console.log(`[IA] Se detectaron ${geminiKeys.length} API keys de Gemini numeradas.`);
+    for (const key of geminiKeys) {
+      geminiProviders.push(new GeminiService(key));
+    }
+  } else if (process.env.GEMINI_API_KEY) {
+    geminiProviders.push(new GeminiService(process.env.GEMINI_API_KEY));
+  }
+
+  if (groqKeys.length > 0) {
+    console.log(`[IA] Se detectaron ${groqKeys.length} API keys de Groq numeradas.`);
+    for (const key of groqKeys) {
+      groqProviders.push(new GroqProvider(systemInstructions, key));
+    }
+  } else if (process.env.GROQ_API_KEY) {
+    groqProviders.push(new GroqProvider(systemInstructions, process.env.GROQ_API_KEY));
+  }
+
+  if (geminiProviders.length === 0 && groqProviders.length === 0) {
+    throw new Error('No se configuró ninguna API key de Gemini ni de Groq en las variables de entorno.');
+  }
 
   console.log('[IA] Inicializando proveedores de IA en orden de estrategia...');
-  await groqProvider.initialize();
-  await geminiService.initialize();
+  const allProviders: any[] = [];
+  
+  for (const gemini of geminiProviders) {
+    try {
+      await gemini.initialize();
+      allProviders.push(gemini);
+    } catch (e) {
+      console.error(`[IA] Error al inicializar proveedor Gemini:`, (e as any)?.message || e);
+    }
+  }
 
-  const fallbackAiService = new FallbackAIService([groqProvider, geminiService]);
+  for (const groq of groqProviders) {
+    try {
+      await groq.initialize();
+      allProviders.push(groq);
+    } catch (e) {
+      console.error(`[IA] Error al inicializar proveedor Groq:`, (e as any)?.message || e);
+    }
+  }
+
+  if (allProviders.length === 0) {
+    throw new Error('Todos los proveedores de IA fallaron al inicializarse.');
+  }
+
+  const fallbackAiService = new FallbackAIService(allProviders);
 
   // --- Inicializar AcademicGuardrail semántico local ---
   console.log('[Guardrail] Inicializando filtro semántico local (Hugging Face)...');

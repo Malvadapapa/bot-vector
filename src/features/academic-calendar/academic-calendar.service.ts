@@ -3,8 +3,9 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { getSettings } from '../../shared/config/settings.js';
 import { DynamicMessageService } from '../messages/dynamic-message.service.js';
-import { formatLocalDateOnly, get, run } from '../../shared/db/db-utils.js';
+import { formatLocalDateOnly, get, run, all } from '../../shared/db/db-utils.js';
 import { OutboundEmailService } from '../notifications/integrations/email.service.js';
+import { InstitutionalNotice } from '../notifications/notifications.models.js';
 
 import { ModerationAdminCommandService } from '../moderation/moderation-admin-command.service.js';
 import { AdminLoggingCommandService } from '../../application/admin/admin-logging-command.service.js';
@@ -323,7 +324,7 @@ export class AcademicCalendarService {
     }
 
     if (resolvedCommand === '!avisos') {
-      return this.formatInstitutionalNotices();
+      return this.formatInstitutionalNotices(groupId, userId);
     }
 
     if (resolvedCommand === '!noticias') {
@@ -368,7 +369,7 @@ export class AcademicCalendarService {
       const id = Number(match[1]);
       const message = match[2].trim();
 
-      const db = (this.noticeRepository as any).db;
+      const db = (this.reminderRepository as any).db;
 
       if (db) {
         // Try to match teacher message
@@ -678,7 +679,7 @@ export class AcademicCalendarService {
     const dayName = weekday;
     const dateStr = `${day} de ${MONTH_NAMES[month - 1]}`;
     const classes = await this.getClassesForWeekday(dayName, userId, groupId);
-    const notices = await this.getValidNoticesForDay(currentDt);
+    const notices = await this.getValidNoticesForDay(currentDt, groupId);
     const exams = await this.getExamsForDay(currentDt, userId, groupId);
 
     const chunks: string[] = [];
@@ -775,16 +776,185 @@ export class AcademicCalendarService {
     return ['📝 Próximos exámenes:', ...items].join('|||SPLIT|||');
   }
 
-  private async formatInstitutionalNotices(): Promise<string> {
-    const notices = await this.dynamicMessageService.getValidNotices(10);
-    if (!notices.length) return '📢 Avisos vigentes...\n- No hay avisos cargados por ahora.';
+  private async resolveSenderInfo(sourceEmail?: string): Promise<{ name: string; email: string }> {
+    const defaultInfo = { name: 'Institucional', email: sourceEmail || 'institucional@ispc.edu.ar' };
+    if (!sourceEmail) {
+      return defaultInfo;
+    }
+    const db = (this.reminderRepository as any).db;
+    const emailLower = sourceEmail.toLowerCase().trim();
+    try {
+      // 1. Search in user_profiles
+      const profile = await get<{ name: string }>(
+        db,
+        'SELECT name FROM user_profiles WHERE LOWER(email) = ? LIMIT 1',
+        [emailLower]
+      );
+      if (profile?.name) {
+        return { name: profile.name, email: sourceEmail };
+      }
+      // 2. Search in managed_teachers
+      const teacher = await get<{ name: string }>(
+        db,
+        'SELECT name FROM managed_teachers WHERE LOWER(email) = ? LIMIT 1',
+        [emailLower]
+      );
+      if (teacher?.name) {
+        return { name: teacher.name, email: sourceEmail };
+      }
+    } catch (err) {
+      console.error('[AcademicCalendarService] Error resolving notice sender info:', err);
+    }
+    if (emailLower.includes('institucional') || emailLower.includes('sistema') || emailLower.includes('admin')) {
+      return { name: 'Institucional', email: sourceEmail };
+    }
+    return { name: 'Administrador', email: sourceEmail };
+  }
+
+  private async getValidTeacherMessages(groupId?: string, userId?: string): Promise<InstitutionalNotice[]> {
+    const db = (this.reminderRepository as any).db;
+    if (!db) return [];
+
+    try {
+      // 1. Fetch group context entry_year
+      let entryYear: number | null = null;
+      if (groupId) {
+        const groupRow = await get<{ entry_year: number | null }>(
+          db,
+          'SELECT entry_year FROM whatsapp_groups WHERE group_id = ? LIMIT 1',
+          [groupId]
+        );
+        if (groupRow) {
+          entryYear = groupRow.entry_year;
+        }
+      }
+
+      // 2. Fetch user's active groups and their entry years
+      const userGroupIds: string[] = [];
+      const userGroupEntryYears: number[] = [];
+      if (userId) {
+        const userGroups = await all<{ group_id: string; entry_year: number | null }>(
+          db,
+          `SELECT gm.group_id, wg.entry_year 
+           FROM group_memberships gm
+           JOIN whatsapp_groups wg ON gm.group_id = wg.group_id
+           WHERE gm.user_id = ? AND gm.is_active = 1`,
+          [userId]
+        );
+        for (const ug of userGroups) {
+          userGroupIds.push(ug.group_id);
+          if (ug.entry_year !== null) {
+            userGroupEntryYears.push(ug.entry_year);
+          }
+        }
+      }
+
+      // 3. Fetch recent teacher messages (joined with managed_teachers for subject)
+      const rows = await all<any>(
+        db,
+        `SELECT m.*, t.subject 
+         FROM teacher_messages m 
+         LEFT JOIN managed_teachers t ON LOWER(m.author_id) = LOWER(t.email)
+         ORDER BY m.created_at DESC LIMIT 100`
+      );
+
+      const now = new Date();
+      const today = new Date(now.toISOString().slice(0, 10));
+      const validNotices: InstitutionalNotice[] = [];
+
+      for (const row of rows) {
+        // Parse UTC created_at to local date context safely
+        const rawDateStr = String(row.created_at || '');
+        const datePart = rawDateStr.includes(' ') ? rawDateStr.replace(' ', 'T') + 'Z' : rawDateStr;
+        const publishedDate = row.created_at ? new Date(datePart) : new Date();
+        const publishedDayOnly = new Date(publishedDate.toISOString().slice(0, 10));
+
+        // Weekly expiration logic: active until Monday at 00:00 of the following calendar week
+        const startDay = publishedDayOnly.getDay(); // 0 = Sunday, 1 = Monday, etc.
+        const daysToMonday = startDay === 1 ? 7 : (8 - startDay) % 7;
+        const expiration = new Date(publishedDayOnly);
+        expiration.setDate(expiration.getDate() + daysToMonday);
+
+        if (today >= expiration) {
+          continue; // Expired
+        }
+
+        // Audience target validation
+        let isForAudience = false;
+        if (groupId) {
+          if (row.target_id === groupId) {
+            isForAudience = true;
+          } else if (row.target_type === 'cohort' && entryYear !== null) {
+            const cohortVal = row.target_id.replace('camada:', '');
+            if (String(cohortVal) === String(entryYear)) {
+              isForAudience = true;
+            }
+          }
+        } else if (userId) {
+          if (userGroupIds.includes(row.target_id)) {
+            isForAudience = true;
+          } else if (row.target_type === 'cohort') {
+            const cohortVal = row.target_id.replace('camada:', '');
+            if (userGroupEntryYears.some(ey => String(ey) === String(cohortVal))) {
+              isForAudience = true;
+            }
+          }
+        }
+
+        if (isForAudience) {
+          const subjectName = row.subject || 'Materia';
+          validNotices.push({
+            title: `Mensaje de Profesor: ${subjectName}`,
+            body: row.content,
+            published_at: publishedDate,
+            start_date: publishedDayOnly,
+            end_date: expiration,
+            source_email: row.author_id,
+            unique_hash: `teacher-msg-${row.id}`,
+            grupo_selector: row.target_id,
+          });
+        }
+      }
+
+      return validNotices;
+    } catch (err) {
+      console.error('[AcademicCalendarService] Error fetching valid teacher messages:', err);
+      return [];
+    }
+  }
+
+  private async formatInstitutionalNotices(groupId?: string, userId?: string): Promise<string> {
+    const rawNotices = await this.dynamicMessageService.getValidNotices(100);
+    const notices = await this.filterNoticesByAudience(rawNotices, groupId);
+    const teacherNotices = await this.getValidTeacherMessages(groupId, userId);
+    const allNotices = [...notices, ...teacherNotices];
+
+    // Sort by publication date (published_at or start_date) descending
+    allNotices.sort((a, b) => {
+      const dateA = a.published_at || a.start_date || new Date(0);
+      const dateB = b.published_at || b.start_date || new Date(0);
+      return dateB.getTime() - dateA.getTime();
+    });
+
+    if (!allNotices.length) return '📢 Avisos vigentes...\n- No hay avisos cargados por ahora.';
 
     const icons = ['📢', '📣', '🔔', '📌', '📰'];
     const items: string[] = [];
-    for (let index = 0; index < notices.length; index += 1) {
-      const notice = notices[index];
+    const displayNotices = allNotices.slice(0, 10);
+
+    for (let index = 0; index < displayNotices.length; index += 1) {
+      const notice = displayNotices[index];
       const icon = icons[index % icons.length];
-      let msg = `${icon} ${notice.title}\n${notice.body}`;
+      const sender = await this.resolveSenderInfo(notice.source_email);
+      const dateVal = notice.published_at || notice.start_date;
+      const dateStr = dateVal ? formatLocalDateOnly(dateVal) : '';
+
+      let msg = `${icon} ${notice.title}\n` +
+                `fecha: ${dateStr}\n` +
+                `De: ${sender.name}\n` +
+                `email: ${sender.email}\n\n` +
+                `${notice.body}`;
+
       if (notice.end_date) {
         msg += `\n⚠️ Tienes hasta el ${formatLocalDateOnly(notice.end_date)} para realizar esta actividad`;
       }
@@ -800,7 +970,10 @@ export class AcademicCalendarService {
         ? AcademicCalendarService.INCOMPLETE_PROFILE_MESSAGE
         : AcademicCalendarService.INVALID_OR_MISSING_COMMISSION_MESSAGE;
     }
-    const notices = await this.dynamicMessageService.getValidNotices(100);
+    const rawNotices = await this.dynamicMessageService.getValidNotices(100);
+    const notices = await this.filterNoticesByAudience(rawNotices, groupId);
+    const teacherNotices = await this.getValidTeacherMessages(groupId, userId);
+    const allNotices = [...notices, ...teacherNotices];
     const userCommissionId = await this.getUserCommissionId(userId, groupId);
     const exams = this.filterExamsByCommission(await this.dynamicMessageService.getUpcomingExams(100, groupId), userCommissionId, Boolean(groupId));
     const start = new Date(currentDt);
@@ -858,7 +1031,7 @@ export class AcademicCalendarService {
         structured.push({ time: time || null, text });
       });
 
-      for (const n of notices) {
+      for (const n of allNotices) {
         const title = String((n as any).title || 'Aviso');
         const m = title.match(/^(\d{1,2}:\d{2})\s*(.*)$/);
         const time = m ? m[1] : null;
@@ -977,7 +1150,7 @@ export class AcademicCalendarService {
     }
 
     if (/\{\{\s*avisos_dinamico\s*\}\}/i.test(rendered)) {
-      const noticesText = await this.formatInstitutionalNotices();
+      const noticesText = await this.formatInstitutionalNotices(groupId);
       rendered = rendered.replace(/\{\{\s*avisos_dinamico\s*\}\}/gi, noticesText);
     }
 
@@ -1315,11 +1488,56 @@ export class AcademicCalendarService {
     return exams.filter((e) => e.exam_commission_id === undefined || e.exam_commission_id === null || e.exam_commission_id === userCommissionId);
   }
 
-  private async getValidNoticesForDay(day: Date): Promise<Array<{ title: string; body: string }>> {
-    const notices = await this.dynamicMessageService.getValidNotices(100);
-    return notices
+  private async getValidNoticesForDay(day: Date, groupId?: string): Promise<Array<{ title: string; body: string }>> {
+    const rawNotices = await this.dynamicMessageService.getValidNotices(100);
+    const notices = await this.filterNoticesByAudience(rawNotices, groupId);
+    const teacherNotices = await this.getValidTeacherMessages(groupId, undefined);
+    const allNotices = [...notices, ...teacherNotices];
+    return allNotices
       .filter((n) => this.isNoticeActiveOn(n, day))
       .map((n) => ({ title: n.title, body: n.body }));
+  }
+
+  private async filterNoticesByAudience(notices: InstitutionalNotice[], groupId?: string): Promise<InstitutionalNotice[]> {
+    let entryYear: number | null = null;
+    let hasGroupRow = false;
+    if (groupId) {
+      const db = (this.reminderRepository as any).db;
+      try {
+        const groupRow = await get<{ entry_year: number | null }>(
+          db,
+          'SELECT entry_year FROM whatsapp_groups WHERE group_id = ? LIMIT 1',
+          [groupId]
+        );
+        if (groupRow) {
+          entryYear = groupRow.entry_year;
+          hasGroupRow = true;
+        }
+      } catch (err) {
+        console.error('[AcademicCalendarService] Error fetching group entry_year for audience filtering:', err);
+      }
+    }
+
+    return notices.filter((n) => {
+      // Private chat: only show notices directed to "todos" / "all"
+      if (!groupId) {
+        return n.grupo_selector === 'todos' || n.grupo_selector === 'all';
+      }
+
+      // Direct JID match
+      if (n.grupo_selector === groupId) return true;
+      if (n.grupo_selector === 'todos' || n.grupo_selector === 'all') return true;
+
+      // Cursada vs General match
+      const isCursada = hasGroupRow && entryYear !== null;
+      if (n.grupo_selector === 'general' && !isCursada) return true;
+      if (n.grupo_selector === 'cursada' && isCursada) return true;
+
+      // Camada match
+      if (hasGroupRow && entryYear && n.grupo_selector === `camada:${entryYear}`) return true;
+
+      return false;
+    });
   }
 
   private async getExamsForDay(day: Date, userId?: string, groupId?: string): Promise<Array<{ subject: string; exam_time: string; exam_type: string }>> {

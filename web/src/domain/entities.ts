@@ -160,6 +160,7 @@ export interface ChatMessage {
   readByProfessor?: boolean;
   repliesCount?: number;
   unreadRepliesCount?: number;
+  subject?: string;            // the subject associated with this message
 }
 
 // ── Authentication ──────────────────────────────────────────

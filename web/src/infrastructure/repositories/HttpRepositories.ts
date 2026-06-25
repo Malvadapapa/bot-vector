@@ -41,8 +41,17 @@ import { toast } from 'sonner';
 const originalFetch = window.fetch;
 
 async function safeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const urlStr = typeof input === 'string'
+    ? input
+    : (input instanceof URL ? input.href : (input as Request).url || '');
+
+  const isExcluded = urlStr.includes('/api/admins') ||
+                     urlStr.includes('/api/authorized-emails') ||
+                     urlStr.includes('/api/impersonation') ||
+                     urlStr.includes('/api/simulation');
+
   const simulated = localStorage.getItem('simulated_user');
-  if (simulated) {
+  if (simulated && !isExcluded) {
     try {
       const parsed = JSON.parse(simulated);
       if (parsed?.email) {

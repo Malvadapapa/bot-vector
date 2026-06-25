@@ -2,13 +2,15 @@ import 'dotenv/config';
 import { AIProvider } from './ai-provider.interface.js';
 
 export class GroqProvider implements AIProvider {
-  private readonly apiKey = process.env.GROQ_API_KEY || '';
+  private readonly apiKey: string;
   private readonly apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
   private readonly modelsUrl = 'https://api.groq.com/openai/v1/models';
   private readonly defaultModel = 'llama-3.3-70b-versatile';
   private initialized = false;
 
-  constructor(private systemInstructions: string) {}
+  constructor(private systemInstructions: string, apiKey?: string) {
+    this.apiKey = apiKey || process.env.GROQ_API_KEY || '';
+  }
 
   public async initialize(): Promise<void> {
     if (this.initialized) return;

@@ -39,10 +39,10 @@ export class TerminalTui {
       parent: this.screen,
       left: 0,
       top: 0,
+      bottom: 1,
       width: '50%',
-      height: '100%',
       border: borderStyle,
-      label: ' 💬 FLUJO DE CONVERSACIONES Y PROCESO RAG ',
+      label: ' » FLUJO DE CONVERSACIONES Y PROCESO RAG ',
       tags: true,
       keys: true,
       vi: true,
@@ -67,16 +67,16 @@ export class TerminalTui {
         label: labelStyle,
       },
     });
-
+ 
     // 3. Panel Derecho: Logs del Sistema (50% Ancho)
     this.logPanel = blessed.log({
       parent: this.screen,
       left: '50%',
       top: 0,
+      bottom: 1,
       width: '50%',
-      height: '100%',
       border: borderStyle,
-      label: ' ⚙️ LOGS Y ERRORES DE INFRAESTRUCTURA ',
+      label: ' ⚙ LOGS Y ERRORES DE INFRAESTRUCTURA ',
       tags: true,
       keys: true,
       vi: true,
@@ -144,6 +144,26 @@ export class TerminalTui {
     this.screen.key(['escape', 'q', 'C-c'], () => {
       this.destroy();
       process.exit(0);
+    });
+
+    // 8. Barra de estado inferior (Modo Feria de Ciencias / Modo Producción)
+    const isFeria = process.env.FERIA_MODE === 'true';
+    const statusContent = isFeria
+      ? '{yellow-fg}{bold}MODO FERIA DE CIENCIAS ACTIVADO{/} - Filtros desactivados, IA libre, cuota diaria ampliada (50/usuario).'
+      : '{green-fg}{bold}MODO PRODUCCION NORMAL{/} - Filtros de intencion activos, cuotas regulares (2/usuario).';
+
+    blessed.box({
+      parent: this.screen,
+      bottom: 0,
+      left: 0,
+      width: '100%',
+      height: 1,
+      style: {
+        bg: 'black',
+        fg: 'white',
+      },
+      content: ` ${statusContent}`,
+      tags: true,
     });
 
     // Foco inicial por defecto
@@ -246,11 +266,31 @@ export class TerminalTui {
     return text;
   }
 
+  private sanitizeTextForTui(text: string): string {
+    if (!text) return '';
+    return text
+      .replace(/👤/g, '[User]')
+      .replace(/🤖/g, '[Bot]')
+      .replace(/⚠️/g, '[!]')
+      .replace(/📢/g, '[Aviso]')
+      .replace(/📣/g, '[Aviso]')
+      .replace(/🔔/g, '[Aviso]')
+      .replace(/📌/g, '[Pin]')
+      .replace(/💬/g, '»')
+      .replace(/⚙️/g, '⚙')
+      .replace(/☁️/g, '☁')
+      .replace(/✅/g, '[OK]')
+      // Replace any other surrogate pair / SMP character (emojis above 0xFFFF) with a bullet
+      .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '•')
+      // Remove variation selectors that can cause rendering issues
+      .replace(/\uFE0F/g, '');
+  }
+
   private initInterceptor(): void {
     this.interceptor = new StreamInterceptor((text) => {
       const cleaned = text.replace(/\n$/, '');
       if (cleaned.length > 0) {
-        this.logPanel.log(this.colorizeLogLine(cleaned));
+        this.logPanel.log(this.colorizeLogLine(this.sanitizeTextForTui(cleaned)));
       }
     });
     this.interceptor.start();
@@ -263,15 +303,15 @@ export class TerminalTui {
     const time = new Date().toLocaleTimeString();
     const color = type === 'user' ? 'cyan' : 'green';
     
-    let tag = type === 'user' ? '👤 STUDENT' : '🤖 BOT';
+    let tag = type === 'user' ? '[User] STUDENT' : '[Bot] BOT';
     if (type === 'bot' && recipientInfo) {
-      tag = `🤖 Respondiendo a: ${recipientInfo}`;
+      tag = `[Bot] Respondiendo a: ${this.sanitizeTextForTui(recipientInfo)}`;
     }
 
-    const contextStr = contextLabel ? ` {yellow-fg}${contextLabel}{/yellow-fg}` : '';
+    const contextStr = contextLabel ? ` {yellow-fg}${this.sanitizeTextForTui(contextLabel)}{/yellow-fg}` : '';
 
     this.chatPanel.log(
-      `[{white-fg}${time}{/white-fg}]${contextStr} {${color}-fg}{bold}${tag} (${sender}){/bold}{/${color}-fg}: ${text}`
+      `[{white-fg}${time}{/white-fg}]${contextStr} {${color}-fg}{bold}${tag} (${this.sanitizeTextForTui(sender)}){/bold}{/${color}-fg}: ${this.sanitizeTextForTui(text)}`
     );
     this.chatPanel.log('');
   }
@@ -281,9 +321,9 @@ export class TerminalTui {
    */
   public appendProcessTrace(trace: string): void {
     const time = new Date().toLocaleTimeString();
-    const styled = this.styleProcessTrace(trace);
+    const styled = this.styleProcessTrace(this.sanitizeTextForTui(trace));
     this.chatPanel.log(
-      `  [{white-fg}${time}{/white-fg}] {yellow-fg}⚙️ [PROCESO RAG]:{/yellow-fg} ${styled}`
+      `  [{white-fg}${time}{/white-fg}] {yellow-fg}⚙ [PROCESO RAG]:{/yellow-fg} ${styled}`
     );
     this.chatPanel.log('');
   }
